@@ -1,0 +1,25 @@
+{
+    "name": "MineSim.InputSystem",
+    "rootNamespace": "MineSim",
+    "references": [
+        "MineSim.Runtime",
+        "Unity.InputSystem"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "MINESIM_INPUTSYSTEM"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.inputsystem",
+            "expression": "1.0.0",
+            "define": "MINESIM_INPUTSYSTEM"
+        }
+    ],
+    "noEngineReferences": false
+}

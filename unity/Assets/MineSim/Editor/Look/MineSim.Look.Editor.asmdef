@@ -1,0 +1,30 @@
+{
+    "name": "MineSim.Look.Editor",
+    "rootNamespace": "MineSim.EditorTools",
+    "references": [
+        "MineSim.Runtime",
+        "MineSim.Editor",
+        "MineSim.Look",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "MINESIM_URP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "14.0.0",
+            "define": "MINESIM_URP"
+        }
+    ],
+    "noEngineReferences": false
+}

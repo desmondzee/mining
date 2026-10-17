@@ -1,0 +1,29 @@
+{
+    "name": "MineSim.Editor",
+    "rootNamespace": "MineSim.EditorTools",
+    "references": [
+        "MineSim.Runtime"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.cloud.gltfast",
+            "expression": "5.0.0",
+            "define": "MINESIM_GLTFAST"
+        },
+        {
+            "name": "com.atteneder.gltfast",
+            "expression": "4.0.0",
+            "define": "MINESIM_GLTFAST"
+        }
+    ],
+    "noEngineReferences": false
+}

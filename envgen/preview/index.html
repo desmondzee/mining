@@ -1,0 +1,305 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Quarry Demo Preview</title>
+<style>
+  :root { --bg: #0d0f12; --ink: #e8e3d8; --muted: #9a958a; --accent: #f2b63c; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  canvas { display: block; }
+  .tag { position: absolute; padding: 4px 8px; background: rgba(10,12,15,.72); border-left: 3px solid var(--accent); font-weight: 600; letter-spacing: .02em; pointer-events: none; }
+  .tag small { display: block; font-weight: 400; color: var(--muted); }
+  #status { position: absolute; left: 12px; bottom: 10px; color: var(--muted); }
+  .label { position: absolute; transform: translate(-50%, -100%); padding: 2px 6px; background: rgba(10,12,15,.75); border-radius: 4px; font-size: 11px; white-space: nowrap; pointer-events: none; }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/" } }
+</script>
+</head>
+<body>
+<div id="status">Loading quarry scan…</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const WORLD = new URLSearchParams(location.search).get('world') || 'quarry';
+const base = `../../data/worlds/${WORLD}/`;
+const status = document.getElementById('status');
+const world = await (await fetch(base + 'world.json', { cache: 'no-store' })).json();
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+renderer.shadowMap.enabled = true;
+renderer.setScissorTest(true);
+document.body.appendChild(renderer.domElement);
+
+const scene = new THREE.Scene();
+const sky = new THREE.Color(0xc9d3d6);
+scene.background = sky;
+scene.fog = new THREE.Fog(sky, 0.9 * Math.max(...world.size_m), 4.5 * Math.max(...world.size_m));
+scene.add(new THREE.HemisphereLight(0xfff1d6, 0x5a4a38, 1.1));
+const sun = new THREE.DirectionalLight(0xffd29a, 2.4);
+sun.position.set(-160, 120, -90);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -160, far: 600 });
+scene.add(sun);
+
+const loader = new GLTFLoader();
+if (world.assets.pano) {   // Marble-generated 360 panorama as sky + horizon
+  const tex = await new THREE.TextureLoader().loadAsync(base + world.assets.pano);
+  tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
+  scene.background = tex; scene.backgroundIntensity = 1.15;
+  scene.fog.color.set(0xb3aea3);
+}
+const m4 = (rows) => new THREE.Matrix4().set(...rows.flat());
+
+// --- ground: textured scan (scan worlds) or generated terrain
+const groundFile = world.assets.visual || world.assets.terrain_mesh;
+const ground = (await loader.loadAsync(base + groundFile)).scene;
+if (world.assets.visual && world.scan_transform) {
+  ground.matrixAutoUpdate = false;
+  ground.matrix.copy(m4(world.scan_transform.matrix));
+}
+ground.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.castShadow = true; } });
+scene.add(ground);
+
+// --- surroundings: a ground apron + distant hills so the scan doesn't float in space.
+// Inside the scan footprint the apron sits 4 m under the heightmap (hidden by the scan), outside it blends to rolling ground.
+// Prefer the generated surround.glb (envgen/surround.py, same frame as collider.glb); fall back to the inline apron.
+if (world.assets.surround) {
+  const sur = (await loader.loadAsync(base + world.assets.surround)).scene;
+  sur.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.material = new THREE.MeshLambertMaterial({ vertexColors: true }); } });
+  scene.add(sur);
+} else {
+  const meta = await (await fetch(base + 'heightmap_meta.json', { cache: 'no-store' })).json();
+  const hm = new Uint16Array(await (await fetch(base + 'heightmap.raw', { cache: 'no-store' })).arrayBuffer());
+  const N = meta.resolution, [ox, oz] = meta.origin, [sx, sz] = meta.size_m;
+  const hAt = (x, z) => {
+    const c = Math.round((x - ox) / sx * (N - 1)), r = Math.round((z - oz) / sz * (N - 1));
+    if (c < 0 || r < 0 || c >= N || r >= N) return null;
+    return meta.min_height_m + hm[r * N + c] / 65535 * meta.height_range_m;
+  };
+  const half = Math.max(sx, sz) / 2, R = 3000, rim = 0;
+  const geo = new THREE.PlaneGeometry(2 * R, 2 * R, 300, 300); geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position, col = [];
+  const n2 = (x, z) => Math.sin(x * 0.011) * Math.cos(z * 0.013) + 0.5 * Math.sin(x * 0.031 + z * 0.017) + 0.25 * Math.cos(x * 0.07 - z * 0.05);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), d = Math.max(Math.abs(x), Math.abs(z));
+    let inner = hAt(x, z);
+    if (inner !== null) for (const [dx, dz] of [[-12,0],[12,0],[0,-12],[0,12],[-12,-12],[12,12],[-12,12],[12,-12]]) { const h = hAt(x + dx, z + dz); if (h !== null) inner = Math.min(inner, h); }   // stay under steep faces
+    const out = THREE.MathUtils.smoothstep(d, half * 0.9, half * 1.8);
+    const hills = THREE.MathUtils.smoothstep(d, half * 2.5, R * 0.6);
+    const ground = rim + 2 + 4 * n2(x, z) + hills * (60 + 45 * n2(x * 0.4, z * 0.4));
+    pos.setY(i, inner === null ? ground : THREE.MathUtils.lerp(inner - 4, ground, out));
+    const g = 0.5 + 0.5 * n2(x * 2.1, z * 1.7), c = new THREE.Color().setRGB(0.20 + 0.12 * g, 0.27 + 0.10 * g, 0.13 + 0.05 * g);
+    col.push(c.r, c.g, c.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.computeVertexNormals();
+  const apron = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  apron.receiveShadow = true; scene.add(apron);
+}
+
+// --- roads as glowing amber ribbons, sites as beacons with labels
+const roadMat = new THREE.LineBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.9 });
+for (const r of world.roads || []) {
+  const pts = r.points.map(p => new THREE.Vector3(p[0], p[1] + 0.6, p[2]));
+  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), roadMat));
+}
+const siteColor = { ore: 0x3fd0b0, crusher: 0xe5484d, dump: 0x9b6bd6, parking: 0x4a8fe0, fuel: 0xf2b63c };
+const labels = [];
+for (const s of world.sites) {
+  const p = s.pos3 || [s.pos[0], 0, s.pos[1]];
+  const beacon = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 14, 8),
+    new THREE.MeshBasicMaterial({ color: siteColor[s.type] || 0xffffff }));
+  beacon.position.set(p[0], p[1] + 7, p[2]);
+  beacon.layers.set(1);   // overview only, never in the cab views
+  scene.add(beacon);
+  const el = document.createElement('div');
+  el.className = 'label'; el.textContent = s.name; document.body.appendChild(el);
+  labels.push({ el, pos: new THREE.Vector3(p[0], p[1] + 16, p[2]) });
+}
+
+// --- road graph routing (same idea as MineRoadGraph.GetRoute in Unity)
+const adj = {};
+for (const r of world.roads || []) {
+  const len = r.points.reduce((a, p, i) => i ? a + Math.hypot(p[0] - r.points[i-1][0], p[2] - r.points[i-1][2]) : 0, 0);
+  (adj[r.from] ||= []).push({ to: r.to, len, pts: r.points });
+  (adj[r.to] ||= []).push({ to: r.from, len, pts: [...r.points].reverse() });
+}
+function route(a, b) {
+  const dist = { [a]: 0 }, prev = {}, todo = new Set(Object.keys(adj));
+  while (todo.size) {
+    let u = null; for (const n of todo) if (dist[n] !== undefined && (u === null || dist[n] < dist[u])) u = n;
+    if (u === null || u === b) break;
+    todo.delete(u);
+    for (const e of adj[u] || []) { const d = dist[u] + e.len; if (dist[e.to] === undefined || d < dist[e.to]) { dist[e.to] = d; prev[e.to] = { u, e }; } }
+  }
+  const legs = []; for (let n = b; prev[n]; n = prev[n].u) legs.unshift(prev[n].e.pts);
+  return legs.flat().map(p => new THREE.Vector3(p[0], p[1], p[2]));
+}
+
+// --- trucks: Komatsu HD465-7 at real size, driven by its published characteristics
+const spec = world.design?.design_truck || { length_m: 9.35, payload_t: 55, turning_diameter_m: 17 };
+const TRUCK_SCALE = Number(new URLSearchParams(location.search).get('truckScale') || 1);
+const HD465 = {
+  payload_t: spec.payload_t ?? 55,
+  simCap: 8.0,                     // m/s, the team's sim cap (spec.md TruckAgent.maxSpeed)
+  minRadius: (spec.turning_diameter_m ?? 17) / 2,
+  latAccel: 0.15 * 9.81,           // comfortable haul-road cornering limit
+  accel: { empty: 0.8, loaded: 0.45 }, brake: 1.5,
+  loadS: 150, dumpS: 60,           // typical: ~4 excavator passes; tip + lower body
+  dwellScale: 0.1,                 // time-lapse factor for dwell only (shown on screen)
+};
+// Approximate grade-speed limits (km/h) for a 55 t rigid truck on a well-kept haul road.
+// Uphill is rimpull-limited, downhill is retarder-limited. Approximate, not from Komatsu's chart.
+function gradeLimitKmh(gradePct, loaded) {
+  const up = loaded ? [[0, 40], [3, 32], [5, 24], [8, 16], [10, 13], [13, 10], [16, 7], [25, 4]]
+                    : [[0, 50], [3, 45], [5, 38], [8, 28], [10, 24], [13, 18], [16, 14], [25, 8]];
+  const down = loaded ? [[0, 40], [5, 32], [8, 25], [10, 20], [13, 15], [25, 8]]
+                      : [[0, 50], [5, 40], [8, 32], [10, 28], [13, 20], [25, 10]];
+  const t = gradePct >= 0 ? up : down, g = Math.abs(gradePct);
+  for (let i = 1; i < t.length; i++) if (g <= t[i][0]) {
+    const [g0, v0] = t[i-1], [g1, v1] = t[i]; return v0 + (v1 - v0) * (g - g0) / (g1 - g0);
+  }
+  return t.at(-1)[1];
+}
+
+const truckSrc = (await loader.loadAsync('../../unity/Assets/Models/Trucks/komatsu_hd465.glb')).scene;
+const box = new THREE.Box3().setFromObject(truckSrc), size = box.getSize(new THREE.Vector3());
+const alongX = size.x > size.z;
+const unit = new THREE.Group();
+truckSrc.position.sub(box.getCenter(new THREE.Vector3())).setY(-box.min.y);
+truckSrc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+const inner = new THREE.Group(); inner.add(truckSrc);
+inner.scale.setScalar(TRUCK_SCALE * spec.length_m / Math.max(size.x, size.z));
+if (alongX) inner.rotation.y = Math.PI / 2;    // model front is -X -> face +Z
+unit.add(inner);
+
+// Per-point speed limit along a path: min(sim cap, grade limit, cornering limit)
+function profile(pts, loaded) {
+  const cum = [0]; for (let k = 1; k < pts.length; k++) cum.push(cum[k-1] + pts[k].distanceTo(pts[k-1]));
+  const vmax = pts.map((p, k) => {
+    const a = pts[Math.max(0, k - 2)], b = pts[Math.min(pts.length - 1, k + 2)];
+    const run = Math.hypot(b.x - a.x, b.z - a.z) || 1, grade = 100 * (b.y - a.y) / run;
+    let r = Infinity;
+    if (k > 1 && k < pts.length - 2) {   // circumradius of a, p, b in plan
+      const ax = a.x - p.x, az = a.z - p.z, bx = b.x - p.x, bz = b.z - p.z, cross = ax * bz - az * bx;
+      if (Math.abs(cross) > 1e-6) r = Math.max(HD465.minRadius, (Math.hypot(ax, az) * Math.hypot(bx, bz) * Math.hypot(b.x - a.x, b.z - a.z)) / (2 * Math.abs(cross)));
+    }
+    return { v: Math.min(HD465.simCap, gradeLimitKmh(grade, loaded) / 3.6, Math.sqrt(HD465.latAccel * r)), grade };
+  });
+  // look ahead so the truck brakes before corners and descents
+  for (let k = vmax.length - 2; k >= 0; k--) vmax[k].v = Math.min(vmax[k].v, Math.sqrt(vmax[k+1].v ** 2 + 2 * HD465.brake * (cum[k+1] - cum[k])));
+  return { pts, cum, vmax, total: cum.at(-1) };
+}
+
+const crusher = world.sites.find(s => s.type === 'crusher').id;
+const faces = world.sites.filter(s => s.type === 'ore');
+const trucks = world.trucks.map((t, i) => {
+  const face = faces[i % faces.length];
+  const haul = route(face.id, crusher);
+  const g = unit.clone(); scene.add(g);
+  const cam = new THREE.PerspectiveCamera(70, 16 / 9, 0.3, 1200);
+  g.add(cam); cam.position.set(-0.75, 5.5, 0.4).multiplyScalar(TRUCK_SCALE); cam.rotation.set(-0.12, Math.PI, 0);   // just behind/above the cab: front of the body in frame
+  return { id: t.id, face: face.name, g, cam, haul: profile(haul, true), ret: profile([...haul].reverse(), false),
+           phase: ['loading', 'haul', 'dumping', 'return'][i % 4], s: 0, v: 0, timer: i * 20, grade: 0 };
+});
+
+function place(t, dt) {
+  if (t.phase === 'loading' || t.phase === 'dumping') {
+    t.v = 0; t.timer += dt;
+    const need = (t.phase === 'loading' ? HD465.loadS : HD465.dumpS) * HD465.dwellScale;
+    if (t.timer >= need) { t.phase = t.phase === 'loading' ? 'haul' : 'return'; t.s = 0; t.timer = 0; }
+  } else {
+    const P = t.phase === 'haul' ? t.haul : t.ret, loaded = t.phase === 'haul';
+    let k = P.cum.findIndex(c => c >= t.s); if (k < 1) k = 1;
+    const target = P.vmax[k].v; t.grade = P.vmax[k].grade;
+    t.v = target > t.v ? Math.min(target, t.v + HD465.accel[loaded ? 'loaded' : 'empty'] * dt) : Math.max(target, t.v - HD465.brake * dt);
+    t.s += Math.max(t.v, 0.3) * dt;
+    if (t.s >= P.total) { t.phase = loaded ? 'dumping' : 'loading'; t.timer = 0; t.s = P.total; }
+  }
+  const P = (t.phase === 'haul' || t.phase === 'dumping') ? t.haul : t.ret;
+  const s = t.phase === 'dumping' || t.phase === 'loading' ? P.total : t.s;
+  let k = P.cum.findIndex(c => c >= s); if (k < 1) k = 1;
+  const a = P.pts[k-1], b = P.pts[k], f = (s - P.cum[k-1]) / Math.max(1e-6, P.cum[k] - P.cum[k-1]);
+  const p = a.clone().lerp(b, Math.min(1, f)), ahead = P.pts[Math.min(k + 2, P.pts.length - 1)];
+  t.g.position.copy(p);
+  if (ahead.distanceTo(p) > 0.5) {
+    const yaw = Math.atan2(ahead.x - p.x, ahead.z - p.z);
+    t.g.rotation.y += ((yaw - t.g.rotation.y + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 3);
+  }
+}
+
+// --- excavators: one per face (world.equipment, else beside the face site), swinging while loading
+const excSrc = (await loader.loadAsync('../../assets/models/excavator/excavator.glb')).scene;
+const ebox = new THREE.Box3().setFromObject(excSrc), esize = ebox.getSize(new THREE.Vector3());
+excSrc.position.sub(ebox.getCenter(new THREE.Vector3())).setY(-ebox.min.y);
+excSrc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+const EXC_LENGTH = 10;   // m, ~70-90 t class excavator matched to a 55 t truck (approximate)
+const excUnit = new THREE.Group(); excUnit.add(excSrc);
+excSrc.scale.setScalar(EXC_LENGTH / Math.max(esize.x, esize.z));
+const equipment = (world.equipment && world.equipment.length) ? world.equipment
+  : faces.map((f, i) => ({ id: `exc-${i}`, face: f.id, pos3: [f.pos3[0] + 7, f.pos3[1], f.pos3[2] + 7], heading_deg: 225 }));
+const excavators = equipment.filter(e => e.type === undefined || e.type === 'excavator').map(e => {
+  const g = excUnit.clone(); g.position.set(...e.pos3);
+  g.rotation.y = THREE.MathUtils.degToRad(e.heading_deg || 0);
+  scene.add(g); return { g, face: e.face, base: g.rotation.y, phase: Math.random() * 6 };
+});
+function animateExcavators(t) {
+  for (const x of excavators) {
+    const busy = trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
+    const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
+    x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
+  }
+}
+
+// --- overview camera: slow cinematic orbit
+const over = new THREE.PerspectiveCamera(42, 1, 1, 2000);
+over.layers.enable(1);
+const tags = ['Overview', ...trucks.map(t => t.id)].map((name, i) => {
+  const el = document.createElement('div'); el.className = 'tag';
+  el.innerHTML = i ? `${name}<small>cab camera · Komatsu HD465-7</small>` : `${world.name || 'Quarry'}<small>overview · ${world.source === 'scan' ? 'drone-scanned quarry' : 'generated pit'}</small>`;
+  document.body.appendChild(el); return el;
+});
+
+status.textContent = '';
+const clock = new THREE.Clock();
+renderer.setAnimationLoop(() => {
+  const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
+  for (const tr of trucks) place(tr, dt);
+  animateExcavators(t);
+  const W = innerWidth, H = innerHeight, half = Math.floor(W / 2), n = trucks.length, ch = Math.floor(H / n);
+
+  over.aspect = half / H; over.updateProjectionMatrix();
+  const R = 0.75 * Math.max(...world.size_m);
+  over.position.set(Math.cos(t * 0.05) * R, 0.47 * R, Math.sin(t * 0.05) * R);
+  over.lookAt(0, -25, 0);
+  renderer.setViewport(0, 0, half, H); renderer.setScissor(0, 0, half, H);
+  renderer.render(scene, over);
+  Object.assign(tags[0].style, { left: '12px', top: '12px' });
+
+  for (const l of labels) {
+    const v = l.pos.clone().project(over), vis = v.z < 1 && Math.abs(v.x) < 1 && Math.abs(v.y) < 1;
+    l.el.style.display = vis ? 'block' : 'none';
+    l.el.style.left = `${(v.x + 1) / 2 * half}px`; l.el.style.top = `${(1 - v.y) / 2 * H}px`;
+  }
+  trucks.forEach((tr, i) => {
+    tr.cam.aspect = (W - half) / ch; tr.cam.updateProjectionMatrix();
+    const y = H - (i + 1) * ch;
+    renderer.setViewport(half, y, W - half, ch); renderer.setScissor(half, y, W - half, ch);
+    renderer.render(scene, tr.cam);
+    Object.assign(tags[i + 1].style, { left: `${half + 12}px`, top: `${i * ch + 12}px` });
+    const load = tr.phase === 'haul' || tr.phase === 'dumping' ? HD465.payload_t : 0;
+    tags[i + 1].innerHTML = `${tr.id} · ${tr.phase.toUpperCase()}<small>Komatsu HD465-7 · ${(tr.v * 3.6).toFixed(0)} km/h · grade ${tr.grade.toFixed(1)}% · ${load} t · ${tr.face}${tr.phase === 'loading' || tr.phase === 'dumping' ? ' · time-lapse ×10' : ''}</small>`;
+  });
+});
+addEventListener('resize', () => renderer.setSize(innerWidth, innerHeight));
+</script>
+</body>
+</html>

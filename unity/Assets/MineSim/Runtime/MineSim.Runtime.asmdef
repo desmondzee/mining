@@ -1,0 +1,20 @@
+{
+    "name": "MineSim.Runtime",
+    "rootNamespace": "MineSim",
+    "references": [],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [
+        {
+            "name": "com.unity.modules.unitywebrequest",
+            "expression": "1.0.0",
+            "define": "MINESIM_UWR"
+        }
+    ],
+    "noEngineReferences": false
+}

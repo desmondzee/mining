@@ -14,6 +14,10 @@ Unity player / fakesim ── TCP :9000 ──▶ brain ── HTTP/WS :8080 ─
 | `web/` | Camera grid and goal map |
 | `unity/` | Unity project |
 | `tools/fetch_rocketbox.py` | downloads Rocketbox people into the Unity project |
+| `unity/Assets/MineSim/` | world importer, road graph, ground follow, cinematic look ([README](unity/Assets/MineSim/README.md)) |
+| `data/worlds/` | generated worlds: `quarry` (drone scan), `default` (procedural) |
+| `envgen/` | offline world generator and browser preview ([README](envgen/README.md)) |
+| `assets/models/` | excavator model and truck recolour script |
 
 ## Run on watson
 

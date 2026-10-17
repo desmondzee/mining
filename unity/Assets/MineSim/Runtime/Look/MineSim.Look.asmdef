@@ -1,0 +1,26 @@
+{
+    "name": "MineSim.Look",
+    "rootNamespace": "MineSim",
+    "references": [
+        "MineSim.Runtime",
+        "Unity.RenderPipelines.Core.Runtime",
+        "Unity.RenderPipelines.Universal.Runtime"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "MINESIM_URP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.render-pipelines.universal",
+            "expression": "14.0.0",
+            "define": "MINESIM_URP"
+        }
+    ],
+    "noEngineReferences": false
+}
