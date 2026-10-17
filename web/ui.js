@@ -4,87 +4,78 @@ const root = document.documentElement;
 const darkQuery = matchMedia("(prefers-color-scheme: dark)");
 
 const PALETTES = {
-  light: { grid: "rgba(0, 0, 0, 0.06)", obstacle: "#9a9aa0", path: "rgba(230, 100, 10, 0.6)", pedestrian: "#f06a0a", outline: "#efeee9", selected: "#111214" },
-  dark: { grid: "rgba(255, 255, 255, 0.05)", obstacle: "#5f6168", path: "rgba(255, 120, 20, 0.5)", pedestrian: "#ff7814", outline: "#111316", selected: "#ffffff" },
+  light: { grid: "rgba(26, 26, 26, 0.05)", road: "rgba(26, 26, 26, 0.16)", junction: "rgba(26, 26, 26, 0.35)", ink: "#1a1a1a", inkMuted: "#5b5b58", halo: "#f4f2ec", obstacle: "#b7b3a8", path: "rgba(168, 85, 69, 0.55)", pedestrian: "#a85545", outline: "#f4f2ec", selected: "#1a1a1a" },
+  dark: { grid: "rgba(255, 255, 255, 0.04)", road: "rgba(236, 235, 230, 0.16)", junction: "rgba(236, 235, 230, 0.4)", ink: "#ecebe6", inkMuted: "#a19f98", halo: "#121211", obstacle: "#4a4945", path: "rgba(214, 140, 110, 0.5)", pedestrian: "#d68c6e", outline: "#121211", selected: "#ecebe6" },
 };
 
-export const palette = { ...PALETTES.light };
+export const palette = { ...PALETTES.dark };
+export const THEMES = ["dark", "light", "auto"];
 
 const el = {
-  empty: document.getElementById("feeds-empty"),
-  feedsMeta: document.getElementById("feeds-meta"),
-  fleetMeta: document.getElementById("fleet-meta"),
-  lidarMeta: document.getElementById("lidar-meta"),
-  simStatus: document.getElementById("sim-status"),
+  toast: document.getElementById("toast"),
+  summary: document.getElementById("summary"),
 };
 
 let lastState = 0;
 let simConnected = false;
+let onThemeChange = null;
 
-function storedTheme() {
-  try { return localStorage.getItem(THEME_KEY) || "auto"; } catch { return "auto"; }
+export function storedTheme() {
+  try { return localStorage.getItem(THEME_KEY) || "dark"; } catch { return "dark"; }
 }
 
-function applyTheme(choice) {
-  if (choice === "auto") delete root.dataset.theme;
-  else root.dataset.theme = choice;
-  try {
-    if (choice === "auto") localStorage.removeItem(THEME_KEY);
-    else localStorage.setItem(THEME_KEY, choice);
-  } catch {}
-  for (const b of document.querySelectorAll("[data-theme-choice]")) b.setAttribute("aria-pressed", String(b.dataset.themeChoice === choice));
+export function applyTheme(choice) {
+  root.dataset.theme = choice;
+  try { localStorage.setItem(THEME_KEY, choice); } catch {}
   const dark = choice === "dark" || (choice === "auto" && darkQuery.matches);
   Object.assign(palette, dark ? PALETTES.dark : PALETTES.light);
+  onThemeChange?.();
 }
 
-for (const b of document.querySelectorAll("[data-theme-choice]")) b.addEventListener("click", () => applyTheme(b.dataset.themeChoice));
+export function onTheme(fn) {
+  onThemeChange = fn;
+}
+
 darkQuery.addEventListener("change", () => applyTheme(storedTheme()));
 applyTheme(storedTheme());
 
-function showEmpty(kind, title, body) {
-  if (!kind) {
-    el.empty.hidden = true;
+function showToast(title, body) {
+  if (!title) {
+    el.toast.hidden = true;
     return;
   }
-  el.empty.hidden = false;
-  el.empty.className = `empty-state ${kind}`;
-  el.empty.querySelector(".empty-title").textContent = title;
-  el.empty.querySelector(".empty-body").textContent = body;
+  if (el.toast.querySelector(".toast-title").textContent !== title) {
+    el.toast.querySelector(".toast-title").textContent = title;
+    el.toast.querySelector(".toast-body").textContent = body;
+  }
+  el.toast.hidden = false;
 }
 
 function renderConnection() {
   if (!lastState) {
-    showEmpty("reconnecting", "Connecting to brain", "Opening a connection to the control server.");
+    showToast("Connecting", "Opening a connection to the control server.");
+    el.summary.textContent = "connecting";
   } else if (Date.now() - lastState > STALE_MS) {
-    el.simStatus.textContent = "reconnecting";
-    el.simStatus.className = "pill off";
-    showEmpty("reconnecting", "Reconnecting to brain", "The dashboard lost its connection to the control server. Retrying automatically.");
+    showToast("Reconnecting", "The connection to the control server dropped. Retrying.");
+    el.summary.textContent = "reconnecting";
   } else if (!simConnected) {
-    showEmpty("offline", "Simulator offline", "Waiting for the simulator to connect. Feeds and telemetry resume on their own.");
+    showToast("Simulator offline", "Feeds and telemetry resume when it connects.");
   } else {
-    showEmpty(null);
+    showToast(null);
   }
 }
 
 setInterval(renderConnection, 1000);
 renderConnection();
 
-export function renderChrome(state, { tileFor, tiles, truckColour, selected }) {
+export function renderChrome(state, { tileFor, tiles }) {
   lastState = Date.now();
   simConnected = state.sim_connected;
   for (const name of state.cameras || []) tileFor(name);
-  for (const t of state.trucks) {
-    const tile = tiles.get(t.id);
-    if (!tile) continue;
-    tile.el.style.setProperty("--swatch", truckColour(t.id));
-    tile.statusEl.textContent = t.status;
-    tile.statusEl.className = `chip status status-${t.status}`;
-    tile.speedEl.textContent = `${t.speed.toFixed(1)} m/s`;
-  }
   const live = [...tiles.values()].filter((t) => t.el.classList.contains("live")).length;
-  el.feedsMeta.textContent = !tiles.size ? "" : simConnected ? `${live}/${tiles.size} live` : "paused";
   const moving = state.trucks.filter((t) => t.status !== "idle" && t.status !== "arrived").length;
-  el.fleetMeta.textContent = state.trucks.length ? `${moving}/${state.trucks.length} active` : "";
-  el.lidarMeta.textContent = selected || "no truck selected";
+  el.summary.textContent = simConnected
+    ? `live · ${moving}/${state.trucks.length} moving · ${live}/${tiles.size} cams`
+    : "sim offline";
   renderConnection();
 }
