@@ -13,7 +13,6 @@ using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
 #if MINESIM_SPLINES
-using Unity.Mathematics;
 using UnityEngine.Splines;
 #endif
 
@@ -546,7 +545,7 @@ namespace MineSim.EditorTools
                     {
                         spline.Clear();
                         foreach (var p in pts)
-                            spline.Add(new BezierKnot(new float3(p.x, p.y, p.z)), TangentMode.AutoSmooth);
+                            spline.Add(new BezierKnot(new Unity.Mathematics.float3(p.x, p.y, p.z)), TangentMode.AutoSmooth);
                     }
                     else Debug.LogWarning("[MineSim] SplineContainer had no default spline for road " + r.id);
                 }
