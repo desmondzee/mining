@@ -170,7 +170,7 @@
 |---|---|---|
 | Build | Tools > Mining > Build Quarry Scene (Quarry World), `QuarrySceneBuilder.BuildQuarry` | |
 | World | `data/worlds/quarry/` (scan visual, 300k-triangle `MeshCollider`, surround collider) | |
-| Bounds | [-217.5, -217.5, 217.5, 217.5] | `data/worlds/quarry/world.json:bounds` |
+| Bounds | [-217.5, -217.5, 217.5, 217.5] | |
 | Truck model | Komatsu HD465 | |
 | Obstacles | 3 excavators from `equipment`, one circle per excavator (collider bounds) | |
 | Debug layer | `MineDebug` (8): site markers, junctions, road lines, labels | `unity/ProjectSettings/TagManager.asset` |
