@@ -27,6 +27,12 @@ before(async () => {
   await page.route(`${ORIGIN}/**`, async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
+    if (path.startsWith("/api/view/")) {
+      requests.push({ method: req.method(), path, body: req.postData() });
+      const box = req.method() === "POST" ? JSON.parse(req.postData()).box : null;
+      STATE.views = { overview: { box } };
+      return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ box }) });
+    }
     if (path.startsWith("/api/trucks/") || path.startsWith("/radio/api/")) {
       requests.push({ method: req.method(), path, body: req.postData() });
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
@@ -151,4 +157,56 @@ test("backslash opens the schedule and selecting a truck makes it primary", asyn
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.getElementById("schedule").hidden);
   await page.waitForFunction(() => document.documentElement.dataset.view === "ops" && document.querySelector(".feed.primary")?.dataset.camera === "truck-2");
+});
+
+test("dragging on the overview zooms to the box and escape resets it", async () => {
+  await page.keyboard.press("o");
+  await page.waitForFunction(() => document.documentElement.dataset.view === "ops");
+  const feed = page.locator('.feed[data-camera="overview"]');
+  await page.waitForTimeout(500);
+  assert.equal(await feed.evaluate((el) => getComputedStyle(el).cursor), "crosshair");
+  const r = await feed.boundingBox();
+  const at = (fx, fy) => [r.x + r.width * fx, r.y + r.height * fy];
+  const drag = async (a, b) => {
+    await page.mouse.move(...a);
+    await page.mouse.down();
+    await page.mouse.move(...b, { steps: 4 });
+    await page.mouse.up();
+  };
+  requests.length = 0;
+  await drag(at(0.5, 0.5), at(0.505, 0.505));
+  await page.waitForTimeout(100);
+  assert.equal(requests.length, 0);
+
+  const [cw, ch] = await feed.evaluate((el) => [el.querySelector("canvas").width, el.querySelector("canvas").height]);
+  const s = Math.max(r.width / cw, r.height / ch);
+  const ox = (r.width - cw * s) / 2, oy = (r.height - ch * s) / 2;
+  const norm = (x, y) => [(x - r.x - ox) / (cw * s), (y - r.y - oy) / (ch * s)];
+  const a = at(0.2, 0.3), b = at(0.6, 0.7);
+  await drag(a, b);
+  await page.waitForFunction(() => document.querySelector('.feed[data-camera="overview"]').classList.contains("zoomed"));
+  await page.waitForTimeout(100);
+  assert.equal(requests.length, 1);
+  assert.deepEqual([requests[0].method, requests[0].path], ["POST", "/api/view/overview"]);
+  const box = JSON.parse(requests[0].body).box;
+  [...norm(...a), ...norm(...b)].forEach((v, i) => assert.ok(Math.abs(box[i] - v) < 0.01, `box ${box} vs ${v}`));
+  assert.notEqual(await feed.evaluate((el) => getComputedStyle(el).cursor), "crosshair");
+
+  await page.waitForTimeout(400);
+  await drag(at(0.1, 0.1), at(0.4, 0.4));
+  await page.waitForTimeout(100);
+  assert.equal(requests.length, 1);
+
+  await page.keyboard.press("/");
+  await page.locator("#palette.open").waitFor();
+  await page.keyboard.type("reset overview zoom");
+  assert.equal(await page.locator('#palette [role="option"][aria-selected="true"] .label').innerText(), "Reset overview zoom");
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() => document.getElementById("palette").hidden);
+  assert.equal(requests.length, 1);
+
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(150);
+  assert.deepEqual(requests.slice(1).map((q) => [q.method, q.path]), [["DELETE", "/api/view/overview"]]);
+  await page.waitForFunction(() => !document.querySelector('.feed[data-camera="overview"]').classList.contains("zoomed"), null, { timeout: 6000 });
 });
