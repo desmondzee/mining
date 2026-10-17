@@ -35,7 +35,7 @@ def main(src, dst):
     base = len(j["materials"])
     ids = {}
     for i, (name, (rgba, metal, rough)) in enumerate(PALETTE.items()):
-        j["materials"].append({"name": name, "pbrMetallicRoughness": {
+        j["materials"].append({"name": name, "doubleSided": True, "pbrMetallicRoughness": {
             "baseColorFactor": rgba, "metallicFactor": metal, "roughnessFactor": rough}})
         ids[name] = base + i
     j["materials"][ids["headlight"]]["emissiveFactor"] = [1.0, 0.95, 0.8]
