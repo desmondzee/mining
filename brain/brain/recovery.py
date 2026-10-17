@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from . import planning
-from .planning import driver
+from .planning import driver, roadgraph
 from .world import Truck
 
 STUCK_AFTER = 3.0
@@ -25,7 +25,9 @@ def rear_clear(nav: planning.NavMap, truck: Truck) -> bool:
     yaw = math.radians(truck.yaw)
     back = np.arange(0.5, REAR_CHECK + 0.5, 0.5)
     xs, zs = truck.x - np.sin(yaw) * back, truck.z - np.cos(yaw) * back
-    return not driver.off_road(nav, xs, zs, np.full(len(back), yaw), driver.TRUCK_HALF_W + driver.EDGE_MARGIN).any()
+    return not driver.off_road(
+        roadgraph.for_truck(nav, truck.x, truck.z), xs, zs, np.full(len(back), yaw), driver.TRUCK_HALF_W + driver.EDGE_MARGIN
+    ).any()
 
 
 def reverse(truck: Truck, nav: planning.NavMap, decision: driver.Decision, now: float | None = None) -> float | None:

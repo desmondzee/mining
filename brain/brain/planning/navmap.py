@@ -17,6 +17,7 @@ class Road:
     end: str
     points: np.ndarray
     one_way: bool
+    width: float = 0.0
 
     @property
     def length(self) -> float:
@@ -224,7 +225,7 @@ def load(world_dir: Path) -> NavMap:
     nodes = dict(sites)
     nodes.update({j["id"]: (float(j["pos"][0]), float(j["pos"][2])) for j in meta.get("junctions", [])})
     roads = [
-        Road(r["from"], r["to"], np.array([[p[0], p[2]] for p in r["points"]], dtype=float), bool(r.get("one_way")))
+        Road(r["from"], r["to"], np.array([[p[0], p[2]] for p in r["points"]], dtype=float), bool(r.get("one_way")), float(r.get("width_m", 0.0)))
         for r in meta.get("roads", [])
         if len(r.get("points", [])) > 1
     ]

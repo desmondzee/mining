@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import roadgraph
 from .navmap import NavMap, chaikin, resample
 
 MAX_V = 8.0
@@ -63,15 +64,15 @@ class Decision:
 def plan_route(
     nav: NavMap, start: tuple[float, float], goal: tuple[float, float], avoid: np.ndarray | None = None
 ) -> np.ndarray | None:
-    if avoid is not None and len(avoid):
+    has_avoid = avoid is not None and len(avoid) > 0
+    pts = roadgraph.route(nav, start, goal, avoid, OBSTACLE_RADIUS if has_avoid else 0.0)
+    if pts is None and has_avoid:
         blocked = nav.cells_near(avoid, OBSTACLE_RADIUS + 1.0)
         pts = nav.astar(start, goal, extra_blocked=blocked)
         if pts is None:
             pts = nav.astar(start, goal, inflate=False, extra_blocked=blocked)
-    else:
-        pts = nav.road_route(start, goal)
-        if pts is None:
-            pts = nav.astar(start, goal)
+    elif pts is None:
+        pts = nav.astar(start, goal)
         if pts is None:
             pts = nav.astar(start, goal, inflate=False)
     if pts is None:
