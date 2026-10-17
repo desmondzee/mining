@@ -1,0 +1,109 @@
+:root {
+  --bg: #16181c;
+  --panel: #1f2228;
+  --line: #2e323a;
+  --text: #e6e6e6;
+  --muted: #8b919c;
+  --accent: #f0b428;
+  --ok: #4cc38a;
+  --bad: #e5534b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 system-ui, -apple-system, sans-serif;
+}
+
+header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+h1 { font-size: 16px; margin: 0; }
+h2 { font-size: 13px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
+
+.pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.pill.on { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
+.pill.off { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
+
+main {
+  display: grid;
+  grid-template-columns: 1fr 420px;
+  gap: 16px;
+  padding: 16px;
+}
+
+#feeds {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+  gap: 12px;
+  align-content: start;
+}
+
+.feed {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.feed canvas { display: block; width: 100%; height: auto; background: #000; }
+.feed .label { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: var(--muted); }
+
+aside {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  align-self: start;
+}
+
+.hint { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+
+#map {
+  width: 100%;
+  aspect-ratio: 1;
+  background: #2a2520;
+  border-radius: 6px;
+  cursor: crosshair;
+}
+
+#trucks { list-style: none; padding: 0; margin: 12px 0 16px; display: grid; gap: 6px; }
+
+#lidar { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; }
+
+#trucks li {
+  display: grid;
+  grid-template-columns: 14px 1fr auto;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+#trucks li.selected { border-color: var(--accent); }
+#trucks .swatch { width: 12px; height: 12px; border-radius: 3px; }
+#trucks .meta { color: var(--muted); font-size: 12px; }
+
+#trucks button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  main { grid-template-columns: 1fr; }
+  #feeds { grid-template-columns: 1fr; }
+}

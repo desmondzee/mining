@@ -1,0 +1,20 @@
+name: mining
+
+services:
+  brain:
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    ports:
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9000:9000"
+    restart: unless-stopped
+
+  fakesim:
+    profiles: ["fake"]
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    command: ["fakesim", "--host", "brain", "--port", "9000", "--trucks", "3"]
+    depends_on: [brain]
+    restart: unless-stopped
