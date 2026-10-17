@@ -49,11 +49,7 @@
   position: absolute;
   inset: -28px -48px -24px -36px;
   z-index: -1;
-  background: radial-gradient(closest-side, rgba(8, 9, 11, 0.32), transparent);
-  -webkit-backdrop-filter: blur(14px);
-  backdrop-filter: blur(14px);
-  -webkit-mask-image: radial-gradient(closest-side, #000 35%, transparent);
-  mask-image: radial-gradient(closest-side, #000 35%, transparent);
+  background: radial-gradient(closest-side, rgba(8, 9, 11, 0.42), transparent);
 }
 
 .hud-speed {

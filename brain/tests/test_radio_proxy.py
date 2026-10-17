@@ -35,6 +35,12 @@ def test_http_get_forwards_cookies():
     assert r.json() == {"mode": "mock", "cookie": "radio_session=xyz"}
 
 
+def test_absolute_api_paths_reach_radio():
+    c = app_with("http://radio.test", httpx.MockTransport(fake_radio))
+    assert c.get("/api/radio/health").json()["mode"] == "mock"
+    assert c.post("/api/radio/command", json={"text": "all stop"}).json() == {"heard": "all stop"}
+
+
 def test_http_post_body_and_set_cookie():
     c = app_with("http://radio.test", httpx.MockTransport(fake_radio))
     r = c.post("/radio/api/radio/command", json={"text": "all stop"})
