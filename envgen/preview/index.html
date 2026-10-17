@@ -10,6 +10,7 @@
   canvas { display: block; }
   .tag { position: absolute; padding: 4px 8px; background: rgba(10,12,15,.72); border-left: 3px solid var(--accent); font-weight: 600; letter-spacing: .02em; pointer-events: none; }
   .tag small { display: block; font-weight: 400; color: var(--muted); }
+  #hint { position: absolute; right: 10px; bottom: 8px; padding: 2px 7px; font-size: 11px; color: var(--muted); background: rgba(10,12,15,.6); border-radius: 4px; pointer-events: none; }
   #status { position: absolute; left: 12px; bottom: 10px; color: var(--muted); }
   .label { position: absolute; transform: translate(-50%, -100%); padding: 2px 6px; background: rgba(10,12,15,.75); border-radius: 4px; font-size: 11px; white-space: nowrap; pointer-events: none; }
 </style>
@@ -20,6 +21,7 @@
 </head>
 <body>
 <div id="status">Loading quarry scan…</div>
+<div id="hint">1 trucks · 2 all · 3 excavators</div>
 <script type="module">
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -55,11 +57,12 @@ let groundY = () => 0;
 }
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5));   // 7 sub-views + overview: cap DPR so a laptop stays smooth
 renderer.setSize(innerWidth, innerHeight);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.05;
 renderer.shadowMap.enabled = true;
+renderer.shadowMap.autoUpdate = false;   // sun shadow is view-independent: render it once per frame, not once per viewport
 renderer.setScissorTest(true);
 document.body.appendChild(renderer.domElement);
 
@@ -296,16 +299,29 @@ const excUnit = new THREE.Group(); excUnit.add(excSrc);
 excSrc.scale.setScalar(EXC_LENGTH / Math.max(esize.x, esize.z));
 const equipment = (world.equipment && world.equipment.length) ? world.equipment
   : faces.map((f, i) => ({ id: `exc-${i}`, face: f.id, pos3: [f.pos3[0] + 7, f.pos3[1], f.pos3[2] + 7], heading_deg: 225 }));
-const excavators = equipment.filter(e => e.type === undefined || e.type === 'excavator').map(e => {
+// Model frame (after the glTF's Z-up -> Y-up node): longest bbox axis is Z, boom/arm reach toward +Z, cab on the +X side.
+// heading_deg is rotation.y with local +Z pointing at the face, so the boom already looks at the face.
+const excAlongX = esize.x > esize.z;   // same bbox test as the trucks (false for this model)
+if (excAlongX) excSrc.rotation.y = Math.PI / 2;
+const EXC_CAB = { x: 1.6, y: 3.2, z: -0.35 };    // m in the excavator group: operator eye, cab (left) side, ~3 m up
+const NUM = ['One', 'Two', 'Three', 'Four', 'Five', 'Six'];
+const excavators = equipment.filter(e => e.type === undefined || e.type === 'excavator').map((e, i) => {
   const g = excUnit.clone(); g.position.set(...e.pos3);
   g.rotation.y = THREE.MathUtils.degToRad(e.heading_deg || 0);
-  scene.add(g); return { g, face: e.face, base: g.rotation.y, phase: Math.random() * 6 };
+  scene.add(g);
+  // operator-cab camera rides the upper structure, looking forward over the boom, ~10 deg down
+  const cam = new THREE.PerspectiveCamera(70, 16 / 9, 0.3, 1200);
+  cam.rotation.order = 'YXZ'; cam.rotation.set(THREE.MathUtils.degToRad(-10), Math.PI, 0);
+  cam.position.set(EXC_CAB.x, EXC_CAB.y, EXC_CAB.z); g.add(cam);
+  const faceName = faces.find(f => f.id === e.face)?.name || e.face;
+  return { g, cam, face: e.face, faceName, name: `Excavator ${NUM[i] || i + 1}`, busy: false, base: g.rotation.y, phase: Math.random() * 6 };
 });
 function animateExcavators(t) {
   for (const x of excavators) {
     // LIVE: follow the radio's excavator state (digging -> swing, holding -> back to base heading)
     const busy = LIVE ? liveExc[x.face]?.state === 'digging'
       : trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
+    x.busy = !!busy;
     const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
     x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
   }
@@ -336,12 +352,31 @@ const tags = ['Overview', ...trucks.map(t => t.id)].map((name, i) => {
 });
 
 status.textContent = '';
+// right-half layout: 1 = trucks only, 2 = trucks + excavators grid (default), 3 = excavators only
+let layout = 2;
+addEventListener('keydown', e => { if (e.key === '1' || e.key === '2' || e.key === '3') layout = Number(e.key); });
+const excTags = excavators.map(x => {
+  const el = document.createElement('div'); el.className = 'tag';
+  el.innerHTML = `${x.name}<small>operator cab · ${x.faceName}</small>`;
+  document.body.appendChild(el); return el;
+});
+function subView(cam, tag, x, yTop, w, h, H) {
+  cam.aspect = w / h; cam.updateProjectionMatrix();
+  renderer.setViewport(x, H - yTop - h, w, h); renderer.setScissor(x, H - yTop - h, w, h);
+  renderer.render(scene, cam);
+  tag.style.display = 'block';
+  Object.assign(tag.style, { left: `${x + 12}px`, top: `${yTop + 12}px`, maxWidth: `${w - 24}px`, fontSize: w < 520 ? '11px' : '' });
+}
 const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
   for (const tr of trucks) place(tr, dt);
   animateExcavators(t);
-  const W = innerWidth, H = innerHeight, half = Math.floor(W / 2), n = trucks.length, ch = Math.floor(H / n);
+  const W = innerWidth, H = innerHeight, half = Math.floor(W / 2);
+  const showT = layout !== 3, showE = layout !== 1 && excavators.length > 0;
+  const cols = showT && showE ? 2 : 1, colW = Math.floor((W - half) / cols);
+  const rows = Math.max(showT ? trucks.length : 0, showE ? excavators.length : 0, 1), ch = Math.floor(H / rows);
+  renderer.shadowMap.needsUpdate = true;
 
   over.aspect = half / H; over.updateProjectionMatrix();
   if (performance.now() - lastUser > 12000) {   // idle: slow cinematic orbit around the current target
@@ -360,12 +395,16 @@ renderer.setAnimationLoop(() => {
     l.el.style.display = vis ? 'block' : 'none';
     l.el.style.left = `${(v.x + 1) / 2 * half}px`; l.el.style.top = `${(1 - v.y) / 2 * H}px`;
   }
+  excavators.forEach((x, i) => {
+    if (!showE) { excTags[i].style.display = 'none'; return; }
+    subView(x.cam, excTags[i], half + (showT ? colW : 0), i * ch, showT ? W - half - colW : W - half, ch, H);
+    const L = LIVE ? liveExc[x.face] : null;
+    const state = L ? String(L.state || 'holding') : (x.busy ? 'digging' : 'holding');
+    excTags[i].innerHTML = `${L?.callsign || x.name} · ${state.toUpperCase()} · ${L?.face_name || x.faceName}<small>operator cab · boom view</small>`;
+  });
   trucks.forEach((tr, i) => {
-    tr.cam.aspect = (W - half) / ch; tr.cam.updateProjectionMatrix();
-    const y = H - (i + 1) * ch;
-    renderer.setViewport(half, y, W - half, ch); renderer.setScissor(half, y, W - half, ch);
-    renderer.render(scene, tr.cam);
-    Object.assign(tags[i + 1].style, { left: `${half + 12}px`, top: `${i * ch + 12}px` });
+    if (!showT) { tags[i + 1].style.display = 'none'; return; }
+    subView(tr.cam, tags[i + 1], half, i * ch, colW, ch, H);
     const load = tr.phase === 'haul' || tr.phase === 'dumping' ? HD465.payload_t : 0;
     if (LIVE) { const L = liveState[tr.id] || {}; tags[i + 1].innerHTML = `${L.callsign || tr.id} · ${String(tr.phase).toUpperCase()}<small>Komatsu HD465-7 · ${(tr.v * 3.6).toFixed(0)} km/h · ${L.task || ''}${L.remaining_m ? ' · ' + Math.round(L.remaining_m) + ' m to go' : ''}</small>`; return; }
     tags[i + 1].innerHTML = `${tr.id} · ${tr.phase.toUpperCase()}<small>Komatsu HD465-7 · ${(tr.v * 3.6).toFixed(0)} km/h · grade ${tr.grade.toFixed(1)}% · ${load} t · ${tr.face}${tr.phase === 'loading' || tr.phase === 'dumping' ? ' · time-lapse ×10' : ''}</small>`;
