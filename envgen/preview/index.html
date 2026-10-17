@@ -193,6 +193,29 @@ function place(t, dt) {
   }
 }
 
+// --- excavators: one per face (world.equipment, else beside the face site), swinging while loading
+const excSrc = (await loader.loadAsync('../../assets/models/excavator/excavator.glb')).scene;
+const ebox = new THREE.Box3().setFromObject(excSrc), esize = ebox.getSize(new THREE.Vector3());
+excSrc.position.sub(ebox.getCenter(new THREE.Vector3())).setY(-ebox.min.y);
+excSrc.traverse(o => { if (o.isMesh) o.castShadow = true; });
+const EXC_LENGTH = 10;   // m, ~70-90 t class excavator matched to a 55 t truck (approximate)
+const excUnit = new THREE.Group(); excUnit.add(excSrc);
+excSrc.scale.setScalar(EXC_LENGTH / Math.max(esize.x, esize.z));
+const equipment = (world.equipment && world.equipment.length) ? world.equipment
+  : faces.map((f, i) => ({ id: `exc-${i}`, face: f.id, pos3: [f.pos3[0] + 7, f.pos3[1], f.pos3[2] + 7], heading_deg: 225 }));
+const excavators = equipment.filter(e => e.type === undefined || e.type === 'excavator').map(e => {
+  const g = excUnit.clone(); g.position.set(...e.pos3);
+  g.rotation.y = THREE.MathUtils.degToRad(e.heading_deg || 0);
+  scene.add(g); return { g, face: e.face, base: g.rotation.y, phase: Math.random() * 6 };
+});
+function animateExcavators(t) {
+  for (const x of excavators) {
+    const busy = trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
+    const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
+    x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
+  }
+}
+
 // --- overview camera: slow cinematic orbit
 const over = new THREE.PerspectiveCamera(42, 1, 1, 2000);
 const tags = ['Overview', ...trucks.map(t => t.id)].map((name, i) => {
@@ -206,6 +229,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
   for (const tr of trucks) place(tr, dt);
+  animateExcavators(t);
   const W = innerWidth, H = innerHeight, half = Math.floor(W / 2), n = trucks.length, ch = Math.floor(H / n);
 
   over.aspect = half / H; over.updateProjectionMatrix();
