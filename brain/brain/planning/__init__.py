@@ -68,7 +68,7 @@ def scorer() -> Scorer | None:
     except Exception as e:
         log.warning("cannot load planner checkpoint %s (%s); driving with the rule-based scorer", path, e)
         return None
-    log.info("driving with learned scorer %s %s", path, model.config)
+    log.info("driving with learned scorer %s on %s %s", path, getattr(model, "device", "cpu"), model.config)
     return model
 
 

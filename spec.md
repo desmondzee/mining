@@ -395,6 +395,9 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Enable | `PLANNER_CKPT` = path to an exported `.npz` (a `.pt` is accepted if a sibling `.npz` exists or torch is installed; `PLANNER_CHECKPOINT` also read) | |
 | Default | unset: rules. Docker compose sets `/app/models/ppo_v3.npz` (meiru-cam's PPO v3) with `./models` mounted read-only; missing or invalid file: warning log, rules | |
 | Runtime | numpy MLP forward, no torch in the brain image (`brain/brain/planning/learned.py`) | |
+| Device | `PLANNER_DEVICE` `auto` (default) / `cuda`: weights rebuilt as an in-memory ONNX graph (`onnx` + onnxruntime CUDA EP, TF32 off) when CUDA is available, else numpy; `cpu` keeps numpy; logits match numpy within 1e-4 | `brain/brain/planning/learned.py` |
+| Per-call latency (ppo_v3, watson, Isaac running) | scorer: numpy 0.24 ms, CUDA 0.10 ms; whole `drive` 3.6 ms (8.0 ms before the per-axis obstacle distance rewrite, synthetic 920 obstacles) | |
+| Batching | one scorer call per truck frame: decisions are event-driven per truck camera frame on the bridge, so the three trucks never share a tick to batch; the ONNX graph takes `(B, OBS_DIM)`, `(B, C, CAND_DIM)` | |
 | Export | `cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo_v3.pt` → `models/ppo_v3.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
 | Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt` whose repo or file name contains `--want`, default `ppo_v3`; `HF_TOKEN` for a private repo) → `models/ppo_v3.pt`, `models/ppo_v3.npz` | |
 | Network | scene MLP (obs → 256 → 256), path MLP (candidate → 128 → 128), head (384 → 256 → 1), ReLU | |
@@ -461,6 +464,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 |---|---|---|
 | Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| u16 LE meta_len \| meta JSON \| H.264 Annex B AU`; meta is the source frame's HUD metadata (see HUD), `meta_len` 0 if none | |
 | Video encoder | `VIDEO_ENCODER` `auto` (default: `h264_nvenc` when it opens, else libx264), `nvenc`, `x264`; a camera whose NVENC open fails drops to libx264. Docker image builds FFmpeg 9 with NVENC + libx264 and PyAV from source; the PyPI wheels have no NVENC. One encoder thread per camera shared by all viewers, no B-frames, SPS/PPS in band on every keyframe (IDR every keyframe interval), VBV cap = bitrate over 1 s | |
+| Brain CPU (watson, 7 cameras: overview 1280×720 + 6 × 640×360 JPEG at 15 fps, detector on 3 trucks, 3 trucks driving learned) | x264 + CPU detector + numpy planner: 365 %; NVENC + CUDA detector + CUDA planner: 70 % | |
+| NVENC encode (ms per frame incl. RGB → YUV) | 2.3–3.8 (x264: 2.3 at 640×360, 7.1 at 1280×720, 5 with noise) | |
 | NVENC settings | preset `p4`, `tune=ull`, `rc=cbr`, `zerolatency=1`, `delay=0` (one AU out per frame in), profile `baseline` → constrained baseline | |
 | Video stats | `GET /api/video` → `{encoder, cameras:{name:{codec, encoded, dropped, encode_ms}}}` | `brain/brain/app.py` |
 | Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |

@@ -138,7 +138,7 @@ def providers_for(device: str, available: list[str]) -> list[str]:
     return [CPU]
 
 
-def open_session(path: str, threads: int, device: str):
+def open_session(path, threads: int, device: str, cuda_options: dict | None = None):
     import onnxruntime as ort
 
     opts = ort.SessionOptions()
@@ -150,7 +150,7 @@ def open_session(path: str, threads: int, device: str):
         try:
             if hasattr(ort, "preload_dlls"):
                 ort.preload_dlls()
-            return ort.InferenceSession(path, opts, providers=providers)
+            return ort.InferenceSession(path, opts, providers=[(CUDA, cuda_options or {}), CPU])
         except Exception:
             log.exception("detector: CUDA session failed, using CPU")
     return ort.InferenceSession(path, opts, providers=[CPU])
