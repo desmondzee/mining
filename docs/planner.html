@@ -1,0 +1,539 @@
+<title>Haul Path Planner</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: a working console. Live map + model view on top, the contract and plans below, one column on phones. */
+:root {
+  --bg: #eef0ec;
+  --panel: #f9faf7;
+  --ink: #1b2124;
+  --muted: #5b6569;
+  --line: #d3d8d2;
+  --accent: #a87400;        /* hi-vis amber, darkened for text on light */
+  --accent-fill: #f2b51d;
+  --path: #0f7c8c;
+  --bad: #c2362b;
+  --good: #2f7d32;
+  --map-ink: #1b2124;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
+  --body: "IBM Plex Sans", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #15191b; --panel: #1d2326; --ink: #e5e8e3; --muted: #9aa4a6; --line: #2f383b;
+    --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070; --map-ink: #e5e8e3;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #15191b; --panel: #1d2326; --ink: #e5e8e3; --muted: #9aa4a6; --line: #2f383b;
+  --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070; --map-ink: #e5e8e3;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink); font-family: var(--body); font-size: 15px; line-height: 1.55;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  padding-block: 28px 64px;
+}
+.wrap { max-width: 1120px; margin: 0 auto; display: grid; gap: 40px; }
+h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance; margin: 0; }
+h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.01em; }
+h2 { font-size: 24px; font-weight: 600; }
+h3 { font-size: 17px; font-weight: 600; }
+p { margin: 0; max-width: 68ch; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
+header { display: grid; gap: 12px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip { font-family: var(--mono); font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
+.chip.hot { border-color: var(--accent-fill); color: var(--accent); }
+section { display: grid; gap: 16px; }
+.console { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; }
+@media (max-width: 860px) { .console { grid-template-columns: 1fr; } }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
+canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; border-radius: 3px; touch-action: manipulation; }
+#map { cursor: crosshair; }
+.controls { display: flex; flex-wrap: wrap; gap: 8px; }
+button {
+  font-family: var(--body); font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 4px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--bg); color: var(--ink);
+}
+button:hover { border-color: var(--accent-fill); }
+button:focus-visible, label:focus-within { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #1b2124; }
+label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.hint { font-size: 13px; color: var(--muted); }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.stat { display: grid; gap: 2px; }
+.stat .k { font-size: 11px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+.stat .v { font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+.pill { display: inline-block; font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 3px; }
+.pill.ok { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
+.pill.no { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
+.channels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.channels figure { margin: 0; display: grid; gap: 4px; }
+.channels figcaption { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
+.legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border-radius: 2px; background: var(--c); }
+.table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
+table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
+tr:last-child td { border-bottom: 0; }
+td code, p code, li code { font-family: var(--mono); font-size: 13px; }
+.group td { font-family: var(--display); font-weight: 600; background: color-mix(in srgb, var(--accent-fill) 10%, transparent); }
+.plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
+.plans ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.repos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
+.repo { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); min-width: 0; }
+.repo a { font-family: var(--mono); font-size: 13px; color: var(--path); text-decoration: none; overflow-wrap: anywhere; }
+.repo a:hover { text-decoration: underline; }
+.repo .tag { font-family: var(--mono); font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
+.repo p { font-size: 14px; color: var(--muted); }
+ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72ch; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+
+<div class="wrap">
+  <header>
+    <div class="eyebrow">Physical AI Hack · Mining fleet · Path finding + task assignment</div>
+    <h1>Haul Path Planner</h1>
+    <p>The planner takes the map around one truck and the truck state. It returns 16 waypoints for the next 8 seconds. A* solves this today (Plan A). A small network learns to copy A* (Plan B). This page runs A* live, so you can see the input and output.</p>
+    <div class="chips">
+      <span class="chip hot">Feature freeze 15:30</span>
+      <span class="chip hot">Submit before 16:00</span>
+      <span class="chip">Sim: Unity</span>
+      <span class="chip">Deploy: M5 / GB10</span>
+      <span class="chip">Train: Cambridge 2×3090</span>
+    </div>
+  </header>
+
+  <section aria-labelledby="live">
+    <h2 id="live">Live A* on a procedural mine</h2>
+    <div class="console">
+      <div class="panel">
+        <canvas id="map" width="600" height="600" aria-label="Mine map. Click to set the start, click again to set the goal."></canvas>
+        <div class="legend">
+          <span style="--c:#c9a15a">haul road</span>
+          <span style="--c:#3b3f41">blocked (rock or slope over 15%)</span>
+          <span style="--c:#7a4fb3">pit / crusher</span>
+          <span style="--c:var(--path)">path</span>
+          <span style="--c:var(--bad)">turn tighter than 15 m radius</span>
+        </div>
+        <div class="controls">
+          <button class="primary" id="btn-random">New query</button>
+          <button id="btn-map">New map</button>
+          <button id="btn-rock">Drop obstacle on path</button>
+          <label class="toggle"><input type="checkbox" id="opt-smooth" checked> Smooth path</label>
+        </div>
+        <p class="hint">Click the map to set the start. Click again to set the goal. "Drop obstacle on path" acts like a new CV detection, and A* plans again.</p>
+      </div>
+      <div class="panel">
+        <h3>What the model sees and returns</h3>
+        <p class="hint">A 128 m × 128 m window around the truck, rotated so that the truck faces up. The truck sits 32 m from the bottom edge. Cells are 2 m, so each channel is 64 × 64.</p>
+        <div class="channels" id="channels"></div>
+        <div class="stats" id="stats"></div>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="io">
+    <h2 id="io">Input / output contract (proposal)</h2>
+    <p>The planner team owns this contract. Unity, the CV teammate and the risk monitor read and write these fields. All positions are in metres, in the truck frame: +x forward, +y left.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Field</th><th>Shape</th><th>Source</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr class="group"><td colspan="4">Input: BEV raster, 6 × 64 × 64, 2 m cells</td></tr>
+          <tr><td>road</td><td><code>64×64</code></td><td>terrain teammate</td><td>1 on graded haul road, 0 elsewhere</td></tr>
+          <tr><td>slope</td><td><code>64×64</code></td><td>terrain heightmap</td><td>rise over run, divided by 0.15 and clipped to 1</td></tr>
+          <tr><td>static obstacles</td><td><code>64×64</code></td><td>map</td><td>rocks, berms, pit edges</td></tr>
+          <tr><td>CV obstacles</td><td><code>64×64</code></td><td>CV teammate</td><td>obstacle mask from the truck camera, projected to the ground</td></tr>
+          <tr><td>other vehicles</td><td><code>64×64</code></td><td>Unity</td><td>footprints of the other fleet vehicles</td></tr>
+          <tr><td>route / goal</td><td><code>64×64</code></td><td>dispatcher</td><td>Gaussian at the goal, or the goal direction at the window edge</td></tr>
+          <tr class="group"><td colspan="4">Input: vector state, 7 values</td></tr>
+          <tr><td>v, loaded, a_brake</td><td><code>3</code></td><td>Unity</td><td>the same values that the risk monitor uses</td></tr>
+          <tr><td>goal dx, dy, dyaw</td><td><code>3</code></td><td>dispatcher</td><td>goal pose in the truck frame</td></tr>
+          <tr><td>vehicle type</td><td><code>1</code></td><td>Unity</td><td>0 haul truck, 1 excavator, 2 drill, 3 dozer</td></tr>
+          <tr class="group"><td colspan="4">Output</td></tr>
+          <tr><td>waypoints</td><td><code>16×2</code></td><td>planner</td><td>(x, y) every 0.5 s for 8 s; the spacing gives the speed profile</td></tr>
+          <tr><td>assignments</td><td><code>JSON</code></td><td>LLM dispatcher</td><td><code>{"truck_id", "site_id", "reason"}</code> per truck, made again when a site or truck changes</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section aria-labelledby="plans">
+    <h2 id="plans">Two plans</h2>
+    <div class="plans">
+      <div class="panel">
+        <div class="eyebrow">Plan A · no training · demo fallback</div>
+        <h3>A* + smoothing + path follower</h3>
+        <ol>
+          <li>Build the cost grid from road, slope and obstacles.</li>
+          <li>Run A* from the truck to the goal.</li>
+          <li>Smooth the path and check the 15 m turning radius.</li>
+          <li>Send 16 waypoints to Unity. Unity follows them.</li>
+          <li>Plan again when CV reports a new obstacle.</li>
+        </ol>
+        <p class="hint">Grid A* gives sharp 45° steps. Smoothing removes most of them. Hybrid A* (A* that plans with the turning radius) removes all of them, but it costs more time.</p>
+      </div>
+      <div class="panel">
+        <div class="eyebrow">Plan B · imitation of A* · 1–5M parameters</div>
+        <h3>Small CNN that copies A*</h3>
+        <ol>
+          <li>Generate 1,000 maps with random start and goal on the Cambridge machine.</li>
+          <li>Run A* on each map. Cut each path into samples, one every 0.5 s: about 50 per path, about 50,000 samples in total.</li>
+          <li>Train the CNN: BEV + state in, A* waypoints out. Loss = mean distance error. About 10 min on one 3090.</li>
+          <li>Export to ONNX. Run with Core ML on the M5, or TensorRT on the GB10.</li>
+          <li>Show the model path and the A* path together in the demo.</li>
+        </ol>
+        <p class="hint">Online RL (Unity ML-Agents, PPO) can tune the model later. It needs millions of steps, so it is not in scope before 15:30.</p>
+      </div>
+    </div>
+  </section>
+
+  <section aria-labelledby="repos">
+    <h2 id="repos">Open-source projects to look at</h2>
+    <div class="repos">
+      <div class="repo"><span class="tag">See it · animations</span><a href="https://github.com/AtsushiSakai/PythonRobotics" target="_blank" rel="noopener">AtsushiSakai/PythonRobotics</a><p>A*, Hybrid A*, path smoothing and path following, each with a GIF. Look at "HybridAStar" for the turning-radius problem.</p></div>
+      <div class="repo"><span class="tag">See it · animations</span><a href="https://github.com/zhm-real/PathPlanning" target="_blank" rel="noopener">zhm-real/PathPlanning</a><p>Side-by-side animations of A*, D* Lite, RRT and others. D* Lite plans again quickly when an obstacle appears.</p></div>
+      <div class="repo"><span class="tag">Plan B · closest match</span><a href="https://github.com/omron-sinicx/neural-astar" target="_blank" rel="noopener">omron-sinicx/neural-astar</a><p>A network learns from map images to guide A*. It trains on A* paths, as in Plan B.</p></div>
+      <div class="repo"><span class="tag">Plan B · learned heuristic</span><a href="https://github.com/AIRI-Institute/TransPath" target="_blank" rel="noopener">AIRI-Institute/TransPath</a><p>A transformer predicts a cost map for grid path finding. A* then uses it.</p></div>
+      <div class="repo"><span class="tag">Driving · object-level planner</span><a href="https://github.com/autonomousvision/plant" target="_blank" rel="noopener">autonomousvision/plant</a><p>PlanT: a small transformer plans waypoints from a list of objects in CARLA. Same output as our planner.</p></div>
+      <div class="repo"><span class="tag">Driving · BEV → waypoints</span><a href="https://arxiv.org/abs/1812.03079" target="_blank" rel="noopener">ChauffeurNet (Waymo, paper)</a><p>Imitation learning from a top-down raster to future waypoints. Our input and output follow this design.</p></div>
+      <div class="repo"><span class="tag">Unity · RL later</span><a href="https://github.com/Unity-Technologies/ml-agents" target="_blank" rel="noopener">Unity-Technologies/ml-agents</a><p>PPO and imitation in Unity. Use it only if there is time after Plan B works.</p></div>
+      <div class="repo"><span class="tag">Driving · camera → path</span><a href="https://github.com/commaai/openpilot" target="_blank" rel="noopener">commaai/openpilot</a><p>Its model outputs a planned path from the camera. It is road-specific and larger, so use it as a reference only.</p></div>
+    </div>
+  </section>
+
+  <section aria-labelledby="open">
+    <h2 id="open">Open questions</h2>
+    <ul class="open">
+      <li>How large is the Unity map in metres? It sets the grid size and the A* time.</li>
+      <li>How does Unity send state to Python: WebSocket, ZeroMQ, or ML-Agents?</li>
+      <li>Does CV give a ground mask, or boxes with distances?</li>
+      <li>"0.5B → frame rate → GB10, 3 times": a 3× speed target, or 3 trucks at the same time?</li>
+    </ul>
+  </section>
+</div>
+
+<script>
+(() => {
+  const N = 100, CELL = 2;               // 200 m × 200 m world, 2 m cells
+  const MAX_SLOPE = 0.15, R_MIN = 15;    // haul truck limits
+  const WIN = 64, AHEAD = 48, LAT = 32;  // model window: 64 cells, truck 16 cells above the bottom edge
+  const STEP_DT = 0.5, V = 10;           // waypoint every 0.5 s at 10 m/s
+  const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
+
+  let seed = 7, world, start, goal, path = null, raw = null, clickPhase = 0, lastMs = 0, expanded = 0;
+  const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+
+  function noiseLayer(res) {
+    const g = [];
+    for (let i = 0; i <= res; i++) { g.push([]); for (let j = 0; j <= res; j++) g[i].push(rng()); }
+    const s = t => t * t * (3 - 2 * t);
+    const out = new Float32Array(N * N);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const fx = x / N * res, fy = y / N * res, ix = Math.floor(fx), iy = Math.floor(fy);
+      const tx = s(fx - ix), ty = s(fy - iy);
+      const a = g[iy][ix] * (1 - tx) + g[iy][ix + 1] * tx, b = g[iy + 1][ix] * (1 - tx) + g[iy + 1][ix + 1] * tx;
+      out[y * N + x] = a * (1 - ty) + b * ty;
+    }
+    return out;
+  }
+
+  function stamp(mask, cx, cy, r, v) {
+    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(N - 1, Math.ceil(cy + r)); y++)
+      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(N - 1, Math.ceil(cx + r)); x++)
+        if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) mask[y * N + x] = v;
+  }
+  function line(mask, x0, y0, x1, y1, w) {
+    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0));
+    for (let i = 0; i <= n; i++) stamp(mask, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, w, 1);
+  }
+
+  function makeWorld() {
+    const a = noiseLayer(4), b = noiseLayer(9);
+    const h = new Float32Array(N * N);
+    for (let i = 0; i < N * N; i++) h[i] = a[i] + 0.35 * b[i];
+    const slope0 = new Float32Array(N * N);
+    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+      const gx = (h[y * N + Math.min(N - 1, x + 1)] - h[y * N + Math.max(0, x - 1)]) / 2;
+      const gy = (h[Math.min(N - 1, y + 1) * N + x] - h[Math.max(0, y - 1) * N + x]) / 2;
+      slope0[y * N + x] = Math.hypot(gx, gy) / CELL;
+    }
+    // Scale relief so that about 12% of cells are too steep.
+    const sorted = Array.from(slope0).sort((p, q) => p - q);
+    const k = MAX_SLOPE / sorted[Math.floor(0.88 * sorted.length)];
+    const slope = slope0.map(s => s * k), height = h.map(v => v * k);
+
+    const road = new Uint8Array(N * N), rock = new Uint8Array(N * N), site = new Uint8Array(N * N);
+    const crusher = [6, 50 + Math.floor(rng() * 20 - 10)];
+    const pits = [[40 + rng() * 15, 15 + rng() * 15], [62 + rng() * 15, 50 + rng() * 15], [40 + rng() * 15, 80 + rng() * 12]];
+    line(road, crusher[0], crusher[1], 30, crusher[1], 1.6);
+    pits.forEach(p => { line(road, 30, crusher[1], p[0], p[1], 1.6); stamp(site, p[0], p[1], 5, 1); });
+    stamp(site, crusher[0], crusher[1], 4, 1);
+    for (let i = 0; i < 22; i++) stamp(rock, rng() * N, rng() * N, 1 + rng() * 2.5, 1);
+
+    const cost = new Float32Array(N * N);
+    for (let i = 0; i < N * N; i++) {
+      const graded = road[i] || site[i];
+      if (graded) rock[i] = 0;
+      cost[i] = rock[i] || (!graded && slope[i] > MAX_SLOPE) ? Infinity : (1 + 20 * slope[i]) * (graded ? 0.5 : 1);
+    }
+    return { height, slope, road, rock, site, cost, cv: new Uint8Array(N * N), pits, crusher };
+  }
+
+  function refreshCost(w) {
+    for (let i = 0; i < N * N; i++) {
+      const graded = w.road[i] || w.site[i];
+      const blocked = w.cv[i] || (w.rock[i] && !graded) || (!graded && w.slope[i] > MAX_SLOPE);
+      w.cost[i] = blocked ? Infinity : (1 + 20 * w.slope[i]) * (graded ? 0.5 : 1);
+    }
+  }
+
+  function astar(cost, s, g) {
+    const t0 = performance.now();
+    const G = new Float32Array(N * N).fill(Infinity), P = new Int32Array(N * N).fill(-1), closed = new Uint8Array(N * N);
+    const heap = [];
+    const push = (f, i) => { heap.push([f, i]); let c = heap.length - 1; while (c > 0) { const p = (c - 1) >> 1; if (heap[p][0] <= heap[c][0]) break; [heap[p], heap[c]] = [heap[c], heap[p]]; c = p; } };
+    const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let c = 0; for (;;) { const l = 2 * c + 1, r = l + 1; let m = c; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === c) break; [heap[m], heap[c]] = [heap[c], heap[m]]; c = m; } } return top; };
+    const hmin = 0.5, gx = g % N, gy = (g / N) | 0;
+    const H = i => { const dx = Math.abs(i % N - gx), dy = Math.abs(((i / N) | 0) - gy); return hmin * (Math.max(dx, dy) + 0.4142 * Math.min(dx, dy)); };
+    G[s] = 0; push(H(s), s); expanded = 0;
+    while (heap.length) {
+      const [, i] = pop();
+      if (closed[i]) continue;
+      closed[i] = 1; expanded++;
+      if (i === g) break;
+      const x = i % N, y = (i / N) | 0;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        if (!dx && !dy) continue;
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
+        const j = ny * N + nx;
+        if (!isFinite(cost[j]) || closed[j]) continue;
+        const ng = G[i] + (dx && dy ? 1.4142 : 1) * 0.5 * (cost[i] + cost[j]);
+        if (ng < G[j]) { G[j] = ng; P[j] = i; push(ng + H(j), j); }
+      }
+    }
+    lastMs = performance.now() - t0;
+    if (P[g] < 0 && g !== s) return null;
+    const out = [];
+    for (let i = g; i !== -1; i = P[i]) out.push([(i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL]);
+    return out.reverse();
+  }
+
+  function chaikin(pts, iters) {
+    let p = pts;
+    for (let k = 0; k < iters; k++) {
+      const q = [p[0]];
+      for (let i = 0; i < p.length - 1; i++) {
+        const [ax, ay] = p[i], [bx, by] = p[i + 1];
+        q.push([0.75 * ax + 0.25 * bx, 0.75 * ay + 0.25 * by], [0.25 * ax + 0.75 * bx, 0.25 * ay + 0.75 * by]);
+      }
+      q.push(p[p.length - 1]); p = q;
+    }
+    return p;
+  }
+
+  function resample(pts, step) {
+    const out = [pts[0]]; let carry = 0;
+    for (let i = 0; i < pts.length - 1; i++) {
+      const [ax, ay] = pts[i], [bx, by] = pts[i + 1], L = Math.hypot(bx - ax, by - ay);
+      let d = step - carry;
+      while (d <= L) { out.push([ax + (bx - ax) * d / L, ay + (by - ay) * d / L]); d += step; }
+      carry = L - (d - step);
+    }
+    return out;
+  }
+
+  // Indices of resampled points where the heading changes faster than 1 / R_MIN.
+  function tightTurns(pts) {
+    const r = resample(pts, 5), bad = [];
+    for (let i = 1; i < r.length - 1; i++) {
+      const h1 = Math.atan2(r[i][1] - r[i - 1][1], r[i][0] - r[i - 1][0]);
+      const h2 = Math.atan2(r[i + 1][1] - r[i][1], r[i + 1][0] - r[i][0]);
+      let d = Math.abs(h2 - h1); if (d > Math.PI) d = 2 * Math.PI - d;
+      if (d / 5 > 1 / R_MIN) bad.push(r[i]);
+    }
+    return bad;
+  }
+
+  function pathLength(p) { let s = 0; for (let i = 1; i < p.length; i++) s += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return s; }
+
+  function randomFree() {
+    for (;;) { const i = Math.floor(rng() * N * N); if (isFinite(world.cost[i])) return i; }
+  }
+
+  function plan() {
+    raw = astar(world.cost, start, goal);
+    path = raw && (document.getElementById("opt-smooth").checked ? chaikin(raw, 3) : raw);
+    draw();
+  }
+
+  function newQuery() {
+    for (let tries = 0; tries < 50; tries++) {
+      start = randomFree(); goal = randomFree();
+      const d = Math.hypot(start % N - goal % N, ((start / N) | 0) - ((goal / N) | 0));
+      if (d < 45) continue;
+      plan(); if (path) return;
+    }
+  }
+
+  const mapC = document.getElementById("map"), mctx = mapC.getContext("2d");
+  const S = mapC.width / N;
+
+  function terrainColor(i) {
+    const w = world;
+    if (w.cv[i]) return [194, 54, 43];
+    if (w.site[i]) return [122, 79, 179];
+    if (w.road[i]) return [201, 161, 90];
+    if (w.rock[i] || w.slope[i] > MAX_SLOPE) return [59, 63, 65];
+    const t = Math.min(1, Math.max(0, (w.height[i] - 0) / 1.6));
+    return [168 - 40 * t, 160 - 30 * t, 132 - 30 * t];
+  }
+
+  function drawPath(ctx, pts, toPx, color, width) {
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.beginPath();
+    pts.forEach((p, i) => { const [x, y] = toPx(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    ctx.stroke();
+  }
+
+  function draw() {
+    const img = mctx.createImageData(N, N);
+    for (let i = 0; i < N * N; i++) { const [r, g, b] = terrainColor(i); img.data.set([r, g, b, 255], i * 4); }
+    const off = document.createElement("canvas"); off.width = off.height = N; off.getContext("2d").putImageData(img, 0, 0);
+    mctx.imageSmoothingEnabled = false; mctx.drawImage(off, 0, 0, mapC.width, mapC.height);
+    const toPx = p => [p[0] / CELL * S, p[1] / CELL * S];
+    const pathCol = css("--path"), bad = css("--bad");
+    if (path) {
+      if (document.getElementById("opt-smooth").checked) drawPath(mctx, raw, toPx, "rgba(255,255,255,0.45)", 1.5);
+      drawPath(mctx, path, toPx, pathCol, 3.5);
+      tightTurns(path).forEach(p => { const [x, y] = toPx(p); mctx.fillStyle = bad; mctx.beginPath(); mctx.arc(x, y, 4.5, 0, 7); mctx.fill(); });
+      drawWindow(toPx);
+    }
+    [[start, "#ffffff"], [goal, css("--accent-fill")]].forEach(([i, c], k) => {
+      if (i == null) return;
+      const [x, y] = [(i % N + 0.5) * S, (((i / N) | 0) + 0.5) * S];
+      mctx.fillStyle = c; mctx.strokeStyle = "#1b2124"; mctx.lineWidth = 2; mctx.beginPath();
+      k ? mctx.rect(x - 7, y - 7, 14, 14) : mctx.arc(x, y, 7, 0, 7); mctx.fill(); mctx.stroke();
+    });
+    drawChannels(); drawStats();
+  }
+
+  // Truck pose: at the start, facing along the first 10 m of the path.
+  function pose() {
+    const p0 = path[0], r = resample(path, 10), p1 = r[1] || path[path.length - 1];
+    const th = Math.atan2(p1[1] - p0[1], p1[0] - p0[0]);
+    return { x: p0[0], y: p0[1], f: [Math.cos(th), Math.sin(th)], l: [Math.sin(th), -Math.cos(th)] };
+  }
+  // Window cell (row, col) -> world metres. Row 0 is the far edge ahead.
+  function cellToWorld(P, r, c) {
+    const fwd = (AHEAD - r - 0.5) * CELL, lat = (c + 0.5 - LAT) * CELL;
+    return [P.x + P.f[0] * fwd + P.l[0] * lat, P.y + P.f[1] * fwd + P.l[1] * lat];
+  }
+  function worldToCell(P, q) {
+    const dx = q[0] - P.x, dy = q[1] - P.y;
+    const fwd = dx * P.f[0] + dy * P.f[1], lat = dx * P.l[0] + dy * P.l[1];
+    return [lat / CELL + LAT, AHEAD - fwd / CELL];
+  }
+
+  function drawWindow(toPx) {
+    const P = pose();
+    const corners = [[0, 0], [0, WIN], [WIN, WIN], [WIN, 0]].map(([r, c]) => toPx(cellToWorld(P, r - 0.5, c - 0.5)));
+    mctx.setLineDash([6, 4]); mctx.strokeStyle = "#ffffff"; mctx.lineWidth = 1.5; mctx.beginPath();
+    corners.forEach(([x, y], i) => i ? mctx.lineTo(x, y) : mctx.moveTo(x, y)); mctx.closePath(); mctx.stroke(); mctx.setLineDash([]);
+  }
+
+  const CH = [
+    ["road", (i, w) => w.road[i] || w.site[i] ? 1 : 0],
+    ["slope", (i, w) => Math.min(1, w.slope[i] / MAX_SLOPE)],
+    ["static obstacles", (i, w) => w.rock[i] && !(w.road[i] || w.site[i]) ? 1 : 0],
+    ["CV obstacles", (i, w) => w.cv[i]],
+    ["route / goal", null],
+    ["output: 16 waypoints", null],
+  ];
+  const chanWrap = document.getElementById("channels");
+  const chanCtx = CH.map(([name]) => {
+    const fig = document.createElement("figure"), c = document.createElement("canvas");
+    c.width = c.height = WIN * 2; fig.append(c);
+    const cap = document.createElement("figcaption"); cap.textContent = name; fig.append(cap); chanWrap.append(fig);
+    return c.getContext("2d");
+  });
+
+  function sampleWindow(P, fn) {
+    const img = new ImageData(WIN, WIN);
+    for (let r = 0; r < WIN; r++) for (let c = 0; c < WIN; c++) {
+      const [wx, wy] = cellToWorld(P, r, c), gx = Math.floor(wx / CELL), gy = Math.floor(wy / CELL);
+      const v = gx < 0 || gy < 0 || gx >= N || gy >= N ? 0 : fn(gy * N + gx, world, wx, wy);
+      const k = (r * WIN + c) * 4, g = 30 + 215 * v;
+      img.data.set([g, g, g * 0.92, 255], k);
+    }
+    return img;
+  }
+
+  function drawChannels() {
+    if (!path) { chanCtx.forEach(ctx => ctx.clearRect(0, 0, WIN * 2, WIN * 2)); return; }
+    const P = pose(), gw = [(goal % N + 0.5) * CELL, (((goal / N) | 0) + 0.5) * CELL];
+    const fns = CH.slice(0, 4).map(c => c[1]);
+    fns.push((i, w, wx, wy) => Math.exp(-((wx - gw[0]) ** 2 + (wy - gw[1]) ** 2) / (2 * 12 ** 2)));
+    fns.forEach((fn, k) => blit(chanCtx[k], sampleWindow(P, fn)));
+    // Output panel: road channel as backdrop, 16 waypoints from the path at 10 m/s.
+    const ctx = chanCtx[5];
+    blit(ctx, sampleWindow(P, CH[0][1]));
+    ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(0, 0, WIN * 2, WIN * 2);
+    const wps = resample(path, V * STEP_DT).slice(1, 17);
+    ctx.fillStyle = css("--accent-fill");
+    wps.forEach(q => { const [x, y] = worldToCell(P, q); ctx.beginPath(); ctx.arc(x * 2, y * 2, 2.6, 0, 7); ctx.fill(); });
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(LAT * 2, AHEAD * 2 - 7); ctx.lineTo(LAT * 2 - 5, AHEAD * 2 + 5); ctx.lineTo(LAT * 2 + 5, AHEAD * 2 + 5); ctx.fill();
+  }
+  function blit(ctx, img) {
+    const off = document.createElement("canvas"); off.width = off.height = WIN; off.getContext("2d").putImageData(img, 0, 0);
+    ctx.imageSmoothingEnabled = false; ctx.drawImage(off, 0, 0, WIN * 2, WIN * 2);
+    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(LAT * 2, AHEAD * 2 - 7); ctx.lineTo(LAT * 2 - 5, AHEAD * 2 + 5); ctx.lineTo(LAT * 2 + 5, AHEAD * 2 + 5); ctx.fill();
+  }
+
+  function drawStats() {
+    const el = document.getElementById("stats");
+    if (!path) { el.innerHTML = '<div class="stat"><span class="k">result</span><span class="v"><span class="pill no">no path</span></span></div>'; return; }
+    const tight = tightTurns(path).length, L = pathLength(path);
+    const sx = (start % N + 0.5) * CELL, sy = (((start / N) | 0) + 0.5) * CELL, gx = (goal % N + 0.5) * CELL, gy = (((goal / N) | 0) + 0.5) * CELL;
+    const rows = [
+      ["A* time", lastMs.toFixed(1) + " ms"],
+      ["cells expanded", expanded.toLocaleString()],
+      ["path length", L.toFixed(0) + " m"],
+      ["length / straight", (L / Math.hypot(gx - sx, gy - sy)).toFixed(2)],
+      ["drive time @10 m/s", (L / V).toFixed(0) + " s"],
+      ["15 m radius", tight ? '<span class="pill no">' + tight + " tight turns</span>" : '<span class="pill ok">drivable</span>'],
+    ];
+    el.innerHTML = rows.map(([k, v]) => '<div class="stat"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>").join("");
+  }
+
+  mapC.addEventListener("click", e => {
+    const rect = mapC.getBoundingClientRect();
+    const x = Math.floor((e.clientX - rect.left) / rect.width * N), y = Math.floor((e.clientY - rect.top) / rect.height * N);
+    const i = y * N + x;
+    if (!isFinite(world.cost[i])) return;
+    if (clickPhase === 0) { start = i; path = null; clickPhase = 1; draw(); }
+    else { goal = i; clickPhase = 0; plan(); }
+  });
+  document.getElementById("btn-random").onclick = () => { clickPhase = 0; newQuery(); };
+  document.getElementById("btn-map").onclick = () => { world = makeWorld(); clickPhase = 0; newQuery(); };
+  document.getElementById("btn-rock").onclick = () => {
+    if (!raw) return;
+    const m = raw[Math.floor(raw.length * 0.55)];
+    stamp(world.cv, m[0] / CELL - 0.5, m[1] / CELL - 0.5, 3.2, 1);
+    refreshCost(world); plan();
+  };
+  document.getElementById("opt-smooth").onchange = () => { if (raw) plan(); };
+  matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
+  new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+
+  world = makeWorld();
+  newQuery();
+})();
+</script>
