@@ -17,7 +17,7 @@ PAD_VALUE = 114
 CONF = 0.35
 IOU = 0.5
 MAX_DET = 50
-THREADS = 4
+THREADS = 2
 WORKERS = 2
 MAX_AGE_S = 1.0
 DEPTH_PERCENTILE = 20
@@ -135,6 +135,7 @@ class Detector:
         opts = ort.SessionOptions()
         opts.intra_op_num_threads = threads
         opts.inter_op_num_threads = 1
+        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
         self.session = ort.InferenceSession(path, opts, providers=providers or ort.get_available_providers())
         inp = self.session.get_inputs()[0]
         self.input = inp.name

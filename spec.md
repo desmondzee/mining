@@ -297,7 +297,7 @@
 | Item | Value | Source |
 |---|---|---|
 | Inputs | pose, goal, RGB, depth, latest lidar points | |
-| Outputs | throttle 0..1, steer -1..1 (positive = right) | |
+| Outputs | throttle -1..1 (negative only for dead-end reverse; Isaac and fake sim honour it), steer -1..1 (positive = right) | |
 | Arrive radius (m) | 4 | `brain/brain/policy.py:ARRIVE_RADIUS` |
 | Stop distance (m) | 6 | `brain/brain/policy.py:STOP_DIST` |
 | Slow distance (m) | 15 | `brain/brain/policy.py:SLOW_DIST` |
@@ -326,14 +326,18 @@
 | Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CKPT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
-| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre | |
-| Ground column width (deg) | 0.5 | `brain/brain/policy.py:COLUMN_DEG` |
-| Ground rise tolerance (m) | 0.2 | `brain/brain/policy.py:GROUND_TOL` |
-| Ground max slope | tan 20° per column, outwards from sensor y − `LIDAR_HEIGHT` | |
-| Speed cap (m/s) | 5.0 | `brain/brain/policy.py:MAX_SPEED` |
-| Speed cap override | `MAX_SPEED` env var, applied to the chosen throttle after the chooser | |
-| Near-goal speed (m/s) | 3.0 | `brain/brain/policy.py:GOAL_SPEED` |
-| Near-goal distance (m) | 25.0 | `brain/brain/policy.py:GOAL_SLOW_DIST` |
+| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre (`brain/brain/policy.py:planner_points`) | |
+| Ground returns | per 0.5° lidar column, outwards: a return is ground if it rises at most tan 20° × distance + 0.2 m above the last ground return (start: sensor y − `LIDAR_HEIGHT`) (`brain/brain/policy.py:ground_mask`) | |
+| Ground column (deg) | 0.5 | `brain/brain/policy.py:COLUMN_DEG` |
+| Ground tolerance (m) | 0.2 | `brain/brain/policy.py:GROUND_TOL` |
+| Speed cap | env `MAX_SPEED`, applied to the chosen throttle after the chooser | |
+| Speed cap default (m/s) | 5.0 | `brain/brain/policy.py:MAX_SPEED` |
+| Speed near goal (m/s) | 3.0 | `brain/brain/policy.py:GOAL_SPEED` |
+| Near goal distance (m) | 25.0 | `brain/brain/policy.py:GOAL_SLOW_DIST` |
+| Dead-end recovery | no safe forward candidate for the stuck time: straight reverse (status `reversing`, throttle −speed / 8) while the nav grid 3 m behind is clear for the whole width, up to the reverse distance, then replan; no rear lidar, so other vehicles behind are not checked | `brain/brain/recovery.py` |
+| Stuck time (s) | 3.0 | `brain/brain/recovery.py:STUCK_AFTER` |
+| Reverse speed (m/s) | 1.5 | `brain/brain/recovery.py:REVERSE_SPEED` |
+| Reverse distance (m) | 10.0 | `brain/brain/recovery.py:REVERSE_DIST` |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
@@ -617,7 +621,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | NMS IoU | 0.5 | `brain/brain/detector.py:IOU` |
 | Max detections | 50 | `brain/brain/detector.py:MAX_DET` |
 | Runtime | onnxruntime (extra `detector`), providers from `DETECTOR_PROVIDERS` else all available (CPU on watson) | |
-| Intra-op threads | 4 | `brain/brain/detector.py:THREADS` |
+| Intra-op threads | 2 | `brain/brain/detector.py:THREADS` |
 | Worker threads | 2 | `brain/brain/detector.py:WORKERS` |
 | Scheduling | one pending frame per camera (newer replaces older), workers take the oldest pending camera; truck cameras only | |
 | Meta | `det: {t, items:[{box, cls, conf, dist}]}`; `t` = arrival time of the frame the boxes came from; latest result per camera carried on every later frame | `brain/brain/bridge.py` |

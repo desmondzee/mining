@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from . import planning
+from . import planning, recovery
 from .world import Truck
 
 ARRIVE_RADIUS = 4.0
@@ -113,6 +113,9 @@ def act(
         if points is not None and sensor is not None and math.isfinite(ground):
             points = planner_points(points, sensor, truck, ground, planning.lidar_height())
         d = planning.follow(truck, nav, points, planning.scorer(), planning.lidar_height(), now)
+        back = recovery.reverse(truck, nav, d, now)
+        if back is not None:
+            return Action(back, 0.0, "reversing")
         return Action(min(d.throttle, speed_cap(truck)), d.steer, d.status)
 
     steer = max(-1.0, min(1.0, heading_error(truck, gx, gz) / STEER_GAIN_DEG))
