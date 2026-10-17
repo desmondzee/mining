@@ -19,6 +19,16 @@ const el = {
 let lastState = 0;
 let simConnected = false;
 let onThemeChange = null;
+let extraStatus = () => null;
+
+export function setStatusSource(fn) {
+  extraStatus = fn;
+}
+
+function setSummary(text, tone = "") {
+  if (el.summary.textContent !== text) el.summary.textContent = text;
+  el.summary.className = `meta ${tone}`;
+}
 
 export function storedTheme() {
   try { return localStorage.getItem(THEME_KEY) || "dark"; } catch { return "dark"; }
@@ -54,14 +64,17 @@ function showToast(title, body) {
 function renderConnection() {
   if (!lastState) {
     showToast("Connecting", "Opening a connection to the control server.");
-    el.summary.textContent = "connecting";
+    setSummary("connecting");
   } else if (Date.now() - lastState > STALE_MS) {
     showToast("Reconnecting", "The connection to the control server dropped. Retrying.");
-    el.summary.textContent = "reconnecting";
+    setSummary("brain reconnecting", "warn");
   } else if (!simConnected) {
     showToast("Simulator offline", "Feeds and telemetry resume when it connects.");
+    setSummary("sim offline", "warn");
   } else {
     showToast(null);
+    const extra = extraStatus();
+    setSummary(extra ? extra.text : "", extra ? extra.tone : "");
   }
 }
 
@@ -72,10 +85,5 @@ export function renderChrome(state, { tileFor, tiles }) {
   lastState = Date.now();
   simConnected = state.sim_connected;
   for (const name of state.cameras || []) tileFor(name);
-  const live = [...tiles.values()].filter((t) => t.el.classList.contains("live")).length;
-  const moving = state.trucks.filter((t) => t.status !== "idle" && t.status !== "arrived").length;
-  el.summary.textContent = simConnected
-    ? `live · ${moving}/${state.trucks.length} moving · ${live}/${tiles.size} cams`
-    : "sim offline";
   renderConnection();
 }

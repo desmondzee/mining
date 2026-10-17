@@ -69,6 +69,8 @@ export function createPalette({ root, commands }) {
   let restore = null;
   let closeTimer = 0;
   let recent = loadRecent();
+  let armed = null;
+  let armTimer = 0;
 
   function remember(id) {
     recent = [id, ...recent.filter((r) => r !== id)].slice(0, RECENT_MAX);
@@ -76,16 +78,19 @@ export function createPalette({ root, commands }) {
   }
 
   function results(query) {
-    const all = commands();
     const q = query.trim();
+    const all = commands(q);
     if (!q) {
       const byId = new Map(all.map((c) => [c.id, c]));
       const rec = recent.map((id) => byId.get(id)).filter(Boolean).map((c) => ({ ...c, group: "recent" }));
       const taken = new Set(rec.map((c) => c.id));
-      return [...rec, ...all.filter((c) => !c.searchOnly && !taken.has(c.id))];
+      return [...rec, ...all.filter((c) => !c.searchOnly && !c.always && !taken.has(c.id))];
     }
     const recentRank = new Map(recent.map((id, i) => [id, (RECENT_MAX - i) * 0.08]));
-    const scored = all.map((c) => ({ c, s: score(q, c) + (recentRank.get(c.id) || 0) })).filter((r) => r.s > 0);
+    const scored = all.map((c) => {
+      const base = c.always ? 0.001 : score(q, c);
+      return { c, s: base && base + (recentRank.get(c.id) || 0) };
+    }).filter((r) => r.s > 0);
     scored.sort((a, b) => b.s - a.s);
     const top = scored.slice(0, 40);
     const order = [];
@@ -93,7 +98,16 @@ export function createPalette({ root, commands }) {
     return order.flatMap((g) => top.filter((r) => r.c.group === g).map((r) => r.c));
   }
 
+  function disarm() {
+    clearTimeout(armTimer);
+    if (!armed) return;
+    const opt = list.querySelector(`#po-${armed.index}`);
+    if (opt) { opt.classList.remove("armed"); highlight(opt.querySelector(".label"), armed.cmd.title, input.value); }
+    armed = null;
+  }
+
   function render() {
+    disarm();
     const query = input.value;
     items = results(query);
     active = 0;
@@ -171,6 +185,16 @@ export function createPalette({ root, commands }) {
   function run(i) {
     const cmd = items[i];
     if (!cmd) return;
+    if (cmd.confirm && armed?.cmd.id !== cmd.id) {
+      disarm();
+      armed = { cmd, index: i };
+      const opt = list.querySelector(`#po-${i}`);
+      opt.classList.add("armed");
+      opt.querySelector(".label").textContent = cmd.confirm;
+      armTimer = setTimeout(disarm, 2000);
+      return;
+    }
+    disarm();
     remember(cmd.id);
     close(cmd.keepFocus);
     cmd.run();
@@ -185,10 +209,8 @@ export function createPalette({ root, commands }) {
     input.value = query;
     render();
     document.documentElement.classList.add("palette-open");
-    requestAnimationFrame(() => {
-      root.classList.add("open");
-      input.focus({ preventScroll: true });
-    });
+    input.focus({ preventScroll: true });
+    requestAnimationFrame(() => root.classList.add("open"));
   }
 
   function close(keepFocus) {
@@ -207,8 +229,8 @@ export function createPalette({ root, commands }) {
 
   input.addEventListener("input", render);
   input.addEventListener("keydown", (e) => {
-    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) { e.preventDefault(); setActive(active + 1); }
-    else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) { e.preventDefault(); setActive(active - 1); }
+    if (e.key === "ArrowDown" || (e.ctrlKey && e.key === "n")) { e.preventDefault(); disarm(); setActive(active + 1); }
+    else if (e.key === "ArrowUp" || (e.ctrlKey && e.key === "p")) { e.preventDefault(); disarm(); setActive(active - 1); }
     else if (e.key === "Home") { e.preventDefault(); setActive(0); }
     else if (e.key === "End") { e.preventDefault(); setActive(items.length - 1); }
     else if (e.key === "Enter") { e.preventDefault(); run(active); }
@@ -217,7 +239,7 @@ export function createPalette({ root, commands }) {
   });
   list.addEventListener("pointermove", (e) => {
     const opt = e.target.closest(".palette-option");
-    if (opt && Number(opt.dataset.index) !== active) setActive(Number(opt.dataset.index), true);
+    if (opt && Number(opt.dataset.index) !== active) { if (armed) disarm(); setActive(Number(opt.dataset.index), true); }
   });
   list.addEventListener("click", (e) => {
     const opt = e.target.closest(".palette-option");

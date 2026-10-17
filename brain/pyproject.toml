@@ -9,6 +9,8 @@ dependencies = [
     "numpy>=2.0",
     "pillow>=10.4",
     "av>=19.0.1",
+    "httpx>=0.27",
+    "websockets>=13",
 ]
 
 [project.scripts]

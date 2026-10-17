@@ -26,6 +26,33 @@
     <section id="surface-map" class="surface" data-surface="map" aria-label="Map">
       <canvas id="map" width="1200" height="1200" role="img" aria-label="Top-down site map. Click to send the selected truck to a point."></canvas>
     </section>
+    <section id="surface-fleet" class="surface page" data-surface="fleet" aria-label="Fleet">
+      <div class="page-inner">
+        <dl class="kpis" id="kpis">
+          <div><dt>loads</dt><dd data-kpi="loads">0</dd></div>
+          <div><dt>tonnes</dt><dd data-kpi="tonnes">0</dd></div>
+          <div><dt>avg cycle</dt><dd data-kpi="cycle">—</dd></div>
+          <div><dt>idle</dt><dd data-kpi="idle">—</dd></div>
+        </dl>
+        <p class="kpi-since meta" id="kpi-since"></p>
+        <ul class="roster" id="roster" aria-label="Vehicles"></ul>
+      </div>
+    </section>
+    <section id="surface-radio" class="surface page" data-surface="radio" aria-label="Radio">
+      <ol class="transcript" id="transcript" aria-live="polite"></ol>
+    </section>
+    <section id="surface-judge" class="surface page" data-surface="judge" aria-label="Judge">
+      <div class="judge">
+        <ol class="transcript large" id="judge-transcript" aria-live="polite"></ol>
+        <aside class="judge-side">
+          <div class="qr" id="qr" aria-label="Radio QR code"></div>
+          <p class="judge-hint">scan, then press and hold to talk</p>
+          <p class="judge-url meta" id="judge-url"></p>
+          <p class="judge-pin" id="judge-pin" hidden></p>
+          <p class="judge-kpis meta" id="judge-kpis"></p>
+        </aside>
+      </div>
+    </section>
   </main>
 
   <header class="chrome chrome-top">
@@ -36,8 +63,11 @@
     </div>
     <nav class="tabs" aria-label="Views">
       <span class="tab" data-tab="video">video</span>
-      <span class="tab" data-tab="lidar">lidar</span>
       <span class="tab" data-tab="map">map</span>
+      <span class="tab" data-tab="lidar">lidar</span>
+      <span class="tab" data-tab="fleet">fleet</span>
+      <span class="tab" data-tab="radio">radio</span>
+      <span class="tab" data-tab="judge">judge</span>
       <span class="tab" data-tab="split">split</span>
       <span class="tab-rule" aria-hidden="true"></span>
     </nav>
@@ -51,6 +81,9 @@
     </div>
     <p id="caption-hint" class="caption-hint meta"></p>
   </footer>
+
+  <div id="alert" class="alert" role="alert" hidden></div>
+  <p id="notice" class="notice" role="status" hidden></p>
 
   <div id="toast" class="toast" role="status" hidden>
     <p class="toast-title"></p>

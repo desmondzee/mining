@@ -5,8 +5,18 @@ const IDLE_MS = 3200;
 const root = document.documentElement;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
-export const VIEWS = ["video", "lidar", "map", "split"];
-export const SPLITS = ["video map", "video lidar", "map lidar", "video map lidar"];
+export const VIEWS = ["video", "map", "lidar", "fleet", "radio", "judge", "split"];
+export const SPLITS = ["video map", "video lidar", "video radio", "map lidar", "map radio", "video map lidar", "video map radio"];
+const SEAM = "0.5px";
+const narrow = matchMedia("(max-width: 720px)");
+
+function splitRects(n) {
+  const main = narrow.matches ? { top: "0", left: "0", right: "0", bottom: `calc(45% + ${SEAM})` } : { top: "0", left: "0", bottom: "0", right: `calc(36% + ${SEAM})` };
+  if (n === 2) return [main, narrow.matches ? { top: `calc(55% + ${SEAM})`, left: "0", right: "0", bottom: "0" } : { top: "0", right: "0", bottom: "0", left: `calc(64% + ${SEAM})` }];
+  return narrow.matches
+    ? [main, { top: `calc(55% + ${SEAM})`, left: "0", bottom: "0", right: `calc(50% + ${SEAM})` }, { top: `calc(55% + ${SEAM})`, right: "0", bottom: "0", left: `calc(50% + ${SEAM})` }]
+    : [main, { top: "0", right: "0", left: `calc(64% + ${SEAM})`, bottom: `calc(45% + ${SEAM})` }, { bottom: "0", right: "0", left: `calc(64% + ${SEAM})`, top: `calc(55% + ${SEAM})` }];
+}
 
 function load(key, fallback, valid) {
   try {
@@ -50,9 +60,21 @@ export function createShell({ onView, onCamera }) {
     tabRule.style.transform = `translateX(${t.offsetLeft}px) scaleX(${t.offsetWidth})`;
   }
 
+  function layoutSplit() {
+    const names = view === "split" ? split.split(" ") : [];
+    const rects = splitRects(names.length);
+    for (const el of views.querySelectorAll(".surface")) {
+      const i = names.indexOf(el.dataset.surface);
+      const r = i >= 0 ? rects[i] : null;
+      for (const side of ["top", "right", "bottom", "left"]) el.style[side] = r ? r[side] : "";
+      el.classList.toggle("shown", i >= 0 || el.dataset.surface === view);
+    }
+  }
+
   function applyView(silent) {
     root.dataset.view = view;
     root.dataset.split = split;
+    layoutSplit();
     for (const t of tabs) t.classList.toggle("active", t.dataset.tab === view);
     placeRule();
     if (!silent) onView?.(view);
@@ -95,6 +117,7 @@ export function createShell({ onView, onCamera }) {
   wake();
 
   addEventListener("resize", placeRule);
+  narrow.addEventListener("change", layoutSplit);
   document.fonts?.ready.then(placeRule);
   applyView(true);
 

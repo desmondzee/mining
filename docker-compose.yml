@@ -10,6 +10,7 @@ services:
       - "127.0.0.1:9000:9000"
     environment:
       WORLD_DIR: /app/data/worlds/quarry
+      RADIO_URL: ${RADIO_URL:-http://radio:8090}
     volumes:
       - ./data:/app/data:ro
     restart: unless-stopped
