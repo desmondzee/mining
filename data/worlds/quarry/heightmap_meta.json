@@ -4,15 +4,15 @@
   "format": "uint16 little-endian, row-major",
   "row0": "south edge (min z); col0 = west edge (min x)",
   "size_m": [
-    435.0,
-    435.0
+    725.0,
+    725.0
   ],
   "origin": [
-    -217.5,
-    -217.5
+    -362.5,
+    -362.5
   ],
-  "min_height_m": -84.029,
-  "max_height_m": 13.23,
-  "height_range_m": 97.26,
+  "min_height_m": -140.091,
+  "max_height_m": 21.917,
+  "height_range_m": 162.008,
   "note": "world_y = min_height_m + value/65535 * height_range_m. Unity: terrain size = (size_m[0], height_range_m, size_m[1]), position y = min_height_m; may need 'Flip Vertically' depending on importer."
 }

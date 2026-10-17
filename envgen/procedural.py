@@ -505,8 +505,6 @@ def main():
     s_max = C.block_pool(sl, k, np.max)
     road = C.block_pool(np.isin(zone, (ROAD, PAD)).astype(float), k, np.mean) > 0.5
     cost = C.cost_from_slope(s_mean, s_max, road)
-    nav = C.navgrid_dict(Hc, cost, ORIGIN, CELL)
-    C.write_json(out / "navgrid.json", nav, compact=True)
 
     design = spec.to_dict()
     world = {
@@ -524,10 +522,20 @@ def main():
     }
     errs = C.check_road_graph(world)
     assert not errs, f"road graph invalid: {errs}"
+    # open every road corridor (>= 10 m) and a pad around each site in the navgrid (heights untouched)
+    cost = C.carve_road_corridors(cost, ORIGIN, CELL, world, heights=Hc)
     # load / dump stop poses, ready-line slots (trucks spawn on them) and one excavator per ore face
     op_errs = C.add_operating_points(world, cost, Hc, ORIGIN, CELL, spec.truck,
                                      hfun=lambda xz: sample(H, np.atleast_2d(np.asarray(xz, float))))
     assert not op_errs, f"operating points invalid: {op_errs}"
+    cost = C.carve_road_corridors(cost, ORIGIN, CELL, world, heights=Hc)        # + pads at load / dump points, slots
+    nav_errs, nav_sum = C.navgrid_check(world, cost, ORIGIN, CELL, spec.truck.width_m)
+    print(f"navgrid check: corridor widths {nav_sum['min_corridor_width_m']}; site pairs "
+          f"{nav_sum['pairs_connected']}, nav point pairs {nav_sum['nav_point_pairs_connected']}; {nav_errs or 'OK'}")
+    assert not nav_errs, f"navgrid check failed: {nav_errs}"
+    design["navgrid_check"] = nav_sum
+    nav = C.navgrid_dict(Hc, cost, ORIGIN, CELL)
+    C.write_json(out / "navgrid.json", nav, compact=True)
     for r in roads:
         want = spec.ramp_width_m if r["type"] == "ramp" else spec.road_width_m
         assert r["width_m"] == want, (r["id"], r["width_m"], want)
