@@ -142,6 +142,53 @@ def write_json(path, obj, compact=False):
             json.dump(obj, f, indent=2)
 
 
+PRESERVED_ASSETS = ("pano", "pano_source", "surround")
+
+
+def preserve_assets(out_dir, world, keys=PRESERVED_ASSETS):
+    """Carry asset entries written by other tools (Marble sky backdrop `pano` = "sky_pano.jpg" + `pano_source`,
+    `surround`) over from the existing world.json into the one about to be written, if the referenced file
+    still exists in the world folder. Call BEFORE write_json(world.json)."""
+    out_dir = Path(out_dir)
+    try:
+        prev = json.loads((out_dir / "world.json").read_text()).get("assets", {})
+    except Exception:  # noqa: BLE001 - first run / unreadable
+        return
+    a = world.setdefault("assets", {})
+    for k in keys:
+        v = prev.get(k)
+        if v is None:
+            continue
+        if k.endswith("_source"):                                  # metadata goes with its file
+            base = prev.get(k[: -len("_source")])
+            if base and (out_dir / base).exists():
+                a[k] = v
+        elif isinstance(v, str) and (out_dir / v).exists():
+            a[k] = v
+
+
+def refresh_surround(out_dir, world):
+    """Rebuild data/worlds/<id>/surround.glb (envgen/surround.py) from the freshly written heightmap and keep
+    world.json assets.surround. Call AFTER world.json / heightmap.raw / terrain.glb are written. If the
+    generator fails, an existing surround.glb is still referenced (it may then be stale)."""
+    out_dir = Path(out_dir)
+    try:
+        from . import surround as SR
+        old = SR.DATA_DIR
+        SR.DATA_DIR = out_dir.parent                               # same worlds dir as this pipeline
+        try:
+            path, mesh = SR.build(world["id"])
+        finally:
+            SR.DATA_DIR = old
+        world.setdefault("assets", {})["surround"] = "surround.glb"
+        print(f"  surround: rebuilt {path.name} ({len(mesh.faces)} tris)")
+    except Exception as e:  # noqa: BLE001 - surroundings are cosmetic
+        print(f"  WARNING: surround.glb not rebuilt: {e}")
+        if (out_dir / "surround.glb").exists():
+            world.setdefault("assets", {})["surround"] = "surround.glb"
+            write_json(out_dir / "world.json", world)
+
+
 def navgrid_dict(Hc, cost, origin, cell_m):
     return {
         "width": int(Hc.shape[1]), "height": int(Hc.shape[0]), "cell_m": float(cell_m),
@@ -230,15 +277,40 @@ def write_preview(path, H, colors, spacing, world, px=800):
     for j in world.get("junctions", []):
         x, y = to_px((j["pos"][0], j["pos"][2]))
         d.ellipse([x - 4, y - 4, x + 4, y + 4], fill=(255, 255, 255), outline=(0, 0, 0))
+    labels = []
     for s in world["sites"]:
         x, y = to_px(s["pos"])
         col = SITE_COLORS.get(s["type"], (255, 255, 255))
         d.ellipse([x - 8, y - 8, x + 8, y + 8], fill=col, outline=(0, 0, 0), width=2)
         tw = d.textlength(s["name"], font=font) if hasattr(d, "textlength") else 8 * len(s["name"])
-        d.text((x + 11, y - 8) if x + 11 + tw < px - 2 else (x - 11 - tw, y - 8), s["name"], fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
+        labels.append(((x + 11, y - 8) if x + 11 + tw < px - 2 else (x - 11 - tw, y - 8), s["name"]))
+    def arrow(p, hdg, col, L=22.0):
+        """arrow of L px centred on world point p, pointing along heading hdg (0 = +z = up in the image)."""
+        a = np.radians(hdg)
+        u = np.array([np.sin(a), -np.cos(a)])                    # image y grows downward
+        n = np.array([-u[1], u[0]])
+        c = np.array(to_px(p))
+        tip, tail = c + u * L / 2, c - u * L / 2
+        d.line([tuple(tail), tuple(tip)], fill=(0, 0, 0), width=4)
+        d.line([tuple(tail), tuple(tip)], fill=col, width=2)
+        d.polygon([tuple(tip + u * 3), tuple(tip - u * 4 + n * 4), tuple(tip - u * 4 - n * 4)], fill=col,
+                  outline=(0, 0, 0))
+
     for t in world["trucks"]:
         x, y = to_px(t["spawn"])
         d.rectangle([x - 3, y - 3, x + 3, y + 3], fill=(255, 220, 0), outline=(0, 0, 0))
+    for s in world["sites"]:
+        for key, col in (("load_point", (60, 255, 120)), ("dump_point", (255, 80, 200))):
+            if s.get(key):
+                q = s[key]
+                arrow(np.array([q["pos3"][0], q["pos3"][2]]), q["heading_deg"], col)
+        for q in s.get("slots", []):
+            arrow(np.array([q["pos3"][0], q["pos3"][2]]), q["heading_deg"], (255, 220, 0), L=12.0)
+    for e in world.get("equipment", []):
+        x, y = to_px((e["pos3"][0], e["pos3"][2]))
+        d.rectangle([x - 4, y - 4, x + 4, y + 4], fill=(255, 140, 0), outline=(0, 0, 0))
+    for xy, txt in labels:                                       # labels last, on top of the markers
+        d.text(xy, txt, fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
     im.save(path)
 
 
@@ -593,24 +665,62 @@ def place_sites_hillside(H, cost, origin, cell, n_ore=3, avoid=None, fixed=None,
     # per band, prefer ground the crusher can reach without ever exceeding 10% (then 12, 15, 20 %, any)
     reach = {}
     faces, face_gmax = [], []
-    for i, band in enumerate(bands):
-        rc = None
+
+    def pick_face(i, where, extra_score=0.0):
         for gmax in (0.10, 0.12, 0.15, 0.20, None):
             if gmax not in reach:
                 reach[gmax] = grade_reachable(H, cost, cell, rc_crusher, gmax) if gmax else comp
             for need in (10.0, 7.0, 5.0, 3.5):
-                sc = 3 * np.minimum(bclear, 15) / 15 + 1.5 * (steep_d <= 15)
-                rc = pick(sc, max(35.0, 0.12 * S.ext), band & reach[gmax] & (bclear >= need) & (dcr >= 50),
+                sc = 3 * np.minimum(bclear, 15) / 15 + 1.5 * (steep_d <= 15) + extra_score
+                rc = pick(sc, max(35.0, 0.12 * S.ext), where & reach[gmax] & (bclear >= need) & (dcr >= 50),
                           strict=True)
                 if rc is not None:
-                    break
-            if rc is not None:
-                break
+                    print(f"  face band {i}: y {H[rc]:.1f}, clear radius {bclear[rc]:.1f} m, crusher reachable at "
+                          f"<= {round(gmax * 100) if gmax else 'any'}% grade")
+                    return rc, gmax
+        return None, None
+
+    # lowest + highest band first, then every intermediate face is constrained to lie BETWEEN them: strictly
+    # between in elevation, and in plan roughly on the way from the lower to the upper face (projection onto
+    # the lower->upper segment in the middle of it, limited sideways offset)
+    order_b = [0, len(bands) - 1] + list(range(1, len(bands) - 1)) if len(bands) > 1 else [0]
+    got = {}
+    for i in order_b[:2]:
+        rc, gm = pick_face(i, bands[i])
         if rc is not None:
-            faces.append(rc)
-            face_gmax.append(gmax)
-            print(f"  face band {i}: y {H[rc]:.1f}, clear radius {bclear[rc]:.1f} m, crusher reachable at "
-                  f"<= {round(gmax * 100) if gmax else 'any'}% grade")
+            got[i] = (rc, gm)
+    if 0 in got and (len(bands) - 1) in got and len(bands) > 2:
+        lo_rc, hi_rc = got[0][0], got[len(bands) - 1][0]
+        h_lo, h_hi = float(H[lo_rc]), float(H[hi_rc])
+        p_lo, p_hi = np.array(lo_rc, float), np.array(hi_rc, float)
+        dv = p_hi - p_lo
+        L2 = max(float(dv @ dv), 1e-9)
+        t_seg = ((S.rr - p_lo[0]) * dv[0] + (S.cc - p_lo[1]) * dv[1]) / L2
+        perp = np.abs((S.rr - p_lo[0]) * dv[1] - (S.cc - p_lo[1]) * dv[0]) / np.sqrt(L2) * cell
+        seg_len = np.sqrt(L2) * cell
+        up_lo, up_hi = float(up[lo_rc]), float(up[hi_rc])
+        nm = len(bands) - 2
+        for k, i in enumerate(order_b[2:]):
+            f = (k + 1) / (nm + 1)                                  # target fraction lower -> upper
+            h_t = h_lo + f * (h_hi - h_lo)
+            margin = max(3.0, 0.15 * (h_hi - h_lo))
+            between_h = (H > h_lo + margin) & (H < h_hi - margin)
+            between_up = (up > min(up_lo, up_hi)) & (up < max(up_lo, up_hi))
+            sc = -4.0 * np.abs(H - h_t) / max(h_hi - h_lo, 1e-6) - 2.0 * np.abs(t_seg - f)
+            rc = None
+            for tw, pw in ((0.2, 0.35), (0.15, 0.5), (0.1, 0.65)):
+                win = between_h & between_up & (t_seg > f - 0.5 + tw) & (t_seg < f + 0.5 - tw) & \
+                    (perp <= max(40.0, pw * seg_len))
+                rc, gm = pick_face(i, bench_flat & win, sc)
+                if rc is not None:
+                    break
+            if rc is None:                                          # last resort: elevation only
+                rc, gm = pick_face(i, comp & between_h, sc)
+            if rc is not None:
+                got[i] = (rc, gm)
+    for i in sorted(got):
+        faces.append(got[i][0])
+        face_gmax.append(got[i][1])
     while len(faces) < min(2, n_ore):                                # fallback: anything on the face
         faces.append(pick(3 * clear_pad + up, 30.0, face_ground))
     faces.sort(key=lambda rc: H[rc])
@@ -701,6 +811,247 @@ def make_trucks(sites, roads, cost, origin, cell, truck=None, n=3):
                        "spawn": [round(float(q[0]), 1), round(float(q[1]), 1)], "heading_deg": heading,
                        "capacity_t": getattr(truck, "payload_t", 200), "model": getattr(truck, "name", None)})
     return trucks
+
+
+# ---------------------------------------------------------------- operating points (equipment, load / dump, slots)
+def _heading(d):
+    """heading_deg (0 = +z, clockwise) of a 2D direction [dx, dz]."""
+    return round(float(np.degrees(np.arctan2(d[0], d[1]))) % 360, 1)
+
+
+def _road_end_dir(world, sid, frm=None, back_m=8.0):
+    """Unit direction a truck travels when it ARRIVES at site sid along the road graph (from node frm, default
+    the first road touching sid), measured over the last ~back_m m of that road."""
+    roads = world["roads"]
+    road = None
+    if frm is not None:
+        rt = road_route(roads, frm, sid)
+        if rt:
+            road = next(r for r in roads if r["id"] == rt[-1])
+    if road is None:
+        road = next((r for r in roads if sid in (r["from"], r["to"])), None)
+    if road is None:
+        return None
+    pts = np.array([[q[0], q[2]] for q in road["points"]])
+    if road["from"] == sid:
+        pts = pts[::-1]                                     # ordered toward sid
+    end = pts[-1]
+    s = np.concatenate([[0], np.cumsum(np.linalg.norm(np.diff(pts[::-1], axis=0), axis=1))])
+    k = int(np.searchsorted(s, back_m))
+    prev = pts[::-1][min(max(k, 1), len(pts) - 1)]
+    d = end - prev
+    return d / max(np.linalg.norm(d), 1e-6)
+
+
+def _road_tree(world, step=0.5):
+    from scipy.spatial import cKDTree
+    pts = []
+    for r in world["roads"]:
+        P = np.array([[q[0], q[2]] for q in r["points"]])
+        if len(P) >= 2:
+            pts.append(resample(P, step))
+        else:
+            pts.append(P)
+    return cKDTree(np.concatenate(pts))
+
+
+def road_ends(world):
+    return np.array([[r["points"][e][0], r["points"][e][2]] for r in world["roads"] for e in (0, -1)])
+
+
+def add_operating_points(world, cost, heights, origin, cell, truck=None, hfun=None, slot_gap=None, ring=(8.0, 10.0),
+                         end_tol=5.0):
+    """Adds (in place) the driving-policy stop poses and the loading equipment, all on the navgrid:
+      ore sites      -> "load_point": {pos3, heading_deg}  (road end at the face; heading = arrival direction)
+      crusher / dump -> "dump_point": {pos3, heading_deg}  (road end at the tip; heading = arrival direction)
+      parking        -> "slots": [{pos3, heading_deg} x n_trucks]  (side by side, facing out along the exit road)
+      world["equipment"] -> one excavator per ore site, `ring` m from its load point toward the highwall / uphill,
+                         off the road centrelines, beside (not ahead of / behind) the truck, facing the load point.
+    Trucks' spawn / heading are set to the slots. cost / heights: navgrid arrays [rows=z, cols=x] (cell centres).
+    Returns the list of problems from check_operating_points (empty = OK)."""
+    from scipy import ndimage
+    if hfun is None:
+        hfun = lambda xz: bilinear(heights, origin, cell, xz, centred=True)
+    h, w = cost.shape
+    sites = {s["id"]: s for s in world["sites"]}
+    park = next(s for s in world["sites"] if s["type"] == "parking")
+    reach = reachable_from(cost, world_to_cell(park["pos"], origin, cell))
+    sl = slope_deg(heights, cell)
+    d_imp = ndimage.distance_transform_edt(np.pad(cost > 0, 1))[1:-1, 1:-1] * cell   # m to impassable / border
+    tree = _road_tree(world)
+
+    def cell_ok(xz):
+        r, c = world_to_cell(xz, origin, cell)
+        return 0 <= r < h and 0 <= c < w and bool(reach[r, c]), (r, c)
+
+    def pose(xz, d):
+        return {"pos3": pos3(xz, hfun), "heading_deg": _heading(d)}
+
+    crusher = next((s for s in world["sites"] if s["type"] == "crusher"), None)
+    ores = [s for s in world["sites"] if s["type"] == "ore"]
+    first_ore = ores[0]["id"] if ores else None
+    for s in world["sites"]:
+        if s["type"] == "ore":
+            d = _road_end_dir(world, s["id"], crusher["id"] if crusher else None)
+            s["load_point"] = pose(s["pos"], d if d is not None else [0.0, 1.0])
+        elif s["type"] in ("crusher", "dump"):
+            d = _road_end_dir(world, s["id"], first_ore)
+            s["dump_point"] = pose(s["pos"], d if d is not None else [0.0, 1.0])
+
+    # ---- excavators
+    equipment = []
+    rads = np.arange(ring[0], ring[1] + 1e-6, 0.5)
+    angs = np.radians(np.arange(0, 360, 7.5))
+    for k, s in enumerate(ores):
+        lp = np.array(s["load_point"]["pos3"])[[0, 2]]
+        fwd = _road_end_dir(world, s["id"], crusher["id"] if crusher else None)
+        fwd = np.array([0.0, 1.0]) if fwd is None else fwd
+        y0 = float(hfun([lp])[0])
+        # highwall = steep / impassable ground rising above the bay; drop-offs = ground falling away below it
+        steep = (cost <= 0) | (sl > 25)
+        d_wall = ndimage.distance_transform_edt(~(steep & (heights > y0 + 3.0))) * cell
+        d_drop = ndimage.distance_transform_edt(~(steep & (heights < y0 - 3.0))) * cell
+        best = None
+        tiers = ((7.5, (60, 130), 2.5, 4.0), (6.5, (50, 140), 2.0, 4.0), (6.0, (45, 150), 1.5, 3.0),
+                 (5.5, (40, 160), 1.5, 2.0), (5.0, (30, 170), 1.0, 0.0))
+        for road_clear, (amin, amax), imp_min, drop_min in tiers:
+            cands = []
+            for rad in rads:
+                for a in angs:
+                    q = lp + rad * np.array([np.sin(a), np.cos(a)])      # a: heading-style angle
+                    ok, (r, c) = cell_ok(q)
+                    if not ok or sl[r, c] > 12.0:
+                        continue
+                    phi = np.degrees(np.arccos(np.clip((q - lp) @ fwd / rad, -1, 1)))   # 0 = dead ahead
+                    if not (amin <= phi <= amax):
+                        continue
+                    dr, _ = tree.query(q)
+                    if dr < road_clear:
+                        continue
+                    dy = float(hfun([q])[0]) - y0
+                    if abs(dy) > 4.0:                                      # toe of the face: ~level with the bay
+                        continue
+                    if d_imp[r, c] < imp_min or d_drop[r, c] < drop_min:   # own footprint; not on a crest
+                        continue
+                    score = (3.0 * (1 - min(d_wall[r, c], 25.0) / 25.0)     # toward the highwall above the bay
+                             - 2.0 * (1 - min(d_drop[r, c], 10.0) / 10.0)   # away from crest / drop-offs
+                             + 0.4 * np.clip(dy, -2, 3)                     # uphill side
+                             - 0.08 * sl[r, c] - 0.15 * abs(rad - 9.0)
+                             + 1.0 * np.sin(np.radians(phi)) + 0.02 * min(dr, 15.0))
+                    cands.append((score, q))
+            if cands:
+                best = max(cands, key=lambda t: t[0])[1]
+                break
+        if best is None:
+            print(f"  WARNING: no excavator spot for {s['id']}")
+            continue
+        equipment.append({"id": f"exc-{k}", "type": "excavator", "name": f"Excavator {k + 1}", "face": s["id"],
+                          "pos3": pos3(best, hfun), "heading_deg": _heading(lp - best), "model": "excavator"})
+    world["equipment"] = equipment
+
+    # ---- parking slots (side by side, facing along the exit road), trucks spawn on them
+    n = max(len(world.get("trucks", [])), 3)
+    out = _road_end_dir(world, park["id"])                     # arrival direction -> exit is the reverse
+    ex = -out if out is not None else np.array([0.0, 1.0])
+    side = np.array([ex[1], -ex[0]])
+    tw = getattr(truck, "width_m", 4.24)
+    gap = slot_gap or max(tw + 0.6, min(max(6.0, 1.6 * tw), 2 * (end_tol - 0.1) / max(n - 1, 1)))
+    p0 = np.array(park["pos"], float)
+    best = None
+    for back in (0.0, 1.0, -1.0, 2.0, -2.0, 3.0, -3.0):          # slide the row along the exit if a slot is blocked
+        for g in (gap, 0.95 * gap):
+            row = [p0 + ex * back + side * g * (i - (n - 1) / 2) for i in range(n)]
+            if all(cell_ok(q)[0] for q in row):
+                best = row
+                break
+        if best:
+            break
+    if best is None:
+        best = [p0 + side * gap * (i - (n - 1) / 2) for i in range(n)]
+    park["slots"] = [pose(q, ex) for q in best]
+    for i, (t, sl_) in enumerate(zip(world.get("trucks", []), park["slots"])):
+        t["spawn"] = [sl_["pos3"][0], sl_["pos3"][2]]
+        t["heading_deg"] = sl_["heading_deg"]
+        t["slot"] = i
+    return check_operating_points(world, cost, origin, cell, end_tol=max(end_tol, gap * (n - 1) / 2 + 0.05))
+
+
+def check_operating_points(world, cost, origin, cell, end_tol=5.0, road_clear=5.0):
+    """Problems with load/dump points, parking slots and excavators (empty list = OK)."""
+    h, w = cost.shape
+    park = next(s for s in world["sites"] if s["type"] == "parking")
+    reach = reachable_from(cost, world_to_cell(park["pos"], origin, cell))
+    ends = road_ends(world)
+    tree = _road_tree(world)
+    errs = []
+
+    def on_grid(p, what):
+        r, c = world_to_cell([p[0], p[2]], origin, cell)
+        if not (0 <= r < h and 0 <= c < w and reach[r, c]):
+            errs.append(f"{what} at {p} is not on a reachable passable cell")
+            return False
+        return True
+
+    for s in world["sites"]:
+        pts = [("load_point", s.get("load_point"))] if s["type"] == "ore" else \
+            [("dump_point", s.get("dump_point"))] if s["type"] in ("crusher", "dump") else \
+            [(f"slots[{i}]", q) for i, q in enumerate(s.get("slots", []))] if s["type"] == "parking" else []
+        if s["type"] == "parking" and len(s.get("slots", [])) < len(world.get("trucks", [])):
+            errs.append(f"parking has {len(s.get('slots', []))} slots for {len(world['trucks'])} trucks")
+        for name, q in pts:
+            if q is None:
+                errs.append(f"{s['id']}: missing {name}")
+                continue
+            p = q["pos3"]
+            on_grid(p, f"{s['id']}.{name}")
+            de = float(np.min(np.hypot(ends[:, 0] - p[0], ends[:, 1] - p[2])))
+            if de > end_tol:
+                errs.append(f"{s['id']}.{name} is {de:.1f} m from the nearest road end (> {end_tol:.1f})")
+    for i, (t, q) in enumerate(zip(world.get("trucks", []), park.get("slots", []))):
+        if np.hypot(t["spawn"][0] - q["pos3"][0], t["spawn"][1] - q["pos3"][2]) > 0.05:
+            errs.append(f"{t['id']} spawn != parking slot {i}")
+    ores = {s["id"] for s in world["sites"] if s["type"] == "ore"}
+    faces = [e["face"] for e in world.get("equipment", []) if e["type"] == "excavator"]
+    if sorted(faces) != sorted(ores):
+        errs.append(f"excavators cover {sorted(faces)}, ore faces {sorted(ores)}")
+    for e in world.get("equipment", []):
+        on_grid(e["pos3"], e["id"])
+        dr, _ = tree.query([e["pos3"][0], e["pos3"][2]])
+        if dr < road_clear:
+            errs.append(f"{e['id']} is {dr:.1f} m from a road centreline (< {road_clear})")
+    return errs
+
+
+def check_face_order(world):
+    """Hillside: Middle Face must lie between Lower and Upper Face in elevation, in road distance from the
+    crusher and (roughly) in plan. Returns a list of problems and a summary dict."""
+    by = {s["name"]: s for s in world["sites"] if s["type"] == "ore"}
+    if not all(k in by for k in ("Lower Face", "Middle Face", "Upper Face")):
+        return [], {}
+    L, M, U = by["Lower Face"], by["Middle Face"], by["Upper Face"]
+    roads = {r["id"]: r for r in world["roads"]}
+    crusher = next(s for s in world["sites"] if s["type"] == "crusher")["id"]
+
+    def route_len(sid):
+        rt = road_route(world["roads"], crusher, sid)
+        if rt is None:
+            return float("inf")
+        return float(sum(np.sum(np.hypot(np.diff(np.array(roads[r]["points"])[:, 0]),
+                                         np.diff(np.array(roads[r]["points"])[:, 2]))) for r in rt))
+    dl, dm, du = route_len(L["id"]), route_len(M["id"]), route_len(U["id"])
+    pl, pm, pu = (np.array(s["pos"], float) for s in (L, M, U))
+    seg = pu - pl
+    t = float((pm - pl) @ seg / max(seg @ seg, 1e-9))
+    perp = float(abs((pm - pl)[0] * seg[1] - (pm - pl)[1] * seg[0]) / max(np.linalg.norm(seg), 1e-9))
+    errs = []
+    if not (L["pos3"][1] < M["pos3"][1] < U["pos3"][1]):
+        errs.append(f"elevation not Lower < Middle < Upper: {L['pos3'][1]}, {M['pos3'][1]}, {U['pos3'][1]}")
+    if not (dl < dm < du):
+        errs.append(f"route distance from crusher not Lower < Middle < Upper: {dl:.0f}, {dm:.0f}, {du:.0f}")
+    if not (0.1 < t < 0.9) or perp > max(40.0, 0.65 * np.linalg.norm(seg)):
+        errs.append(f"Middle Face not between in plan: t {t:.2f} along Lower->Upper, {perp:.0f} m sideways")
+    return errs, {"y": [L["pos3"][1], M["pos3"][1], U["pos3"][1]], "route_m": [round(dl), round(dm), round(du)],
+                  "plan_t": round(t, 2), "plan_offset_m": round(perp, 1)}
 
 
 # ---------------------------------------------------------------- grade-aware road network (least-cost tree)

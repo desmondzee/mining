@@ -51,6 +51,12 @@ Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -16
 scene.add(sun);
 
 const loader = new GLTFLoader();
+if (world.assets.pano) {   // Marble-generated 360 panorama as sky + horizon
+  const tex = await new THREE.TextureLoader().loadAsync(base + world.assets.pano);
+  tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
+  scene.background = tex; scene.backgroundIntensity = 1.15;
+  scene.fog.color.set(0xb3aea3);
+}
 const m4 = (rows) => new THREE.Matrix4().set(...rows.flat());
 
 // --- ground: textured scan (scan worlds) or generated terrain

@@ -524,6 +524,10 @@ def main():
     }
     errs = C.check_road_graph(world)
     assert not errs, f"road graph invalid: {errs}"
+    # load / dump stop poses, ready-line slots (trucks spawn on them) and one excavator per ore face
+    op_errs = C.add_operating_points(world, cost, Hc, ORIGIN, CELL, spec.truck,
+                                     hfun=lambda xz: sample(H, np.atleast_2d(np.asarray(xz, float))))
+    assert not op_errs, f"operating points invalid: {op_errs}"
     for r in roads:
         want = spec.ramp_width_m if r["type"] == "ramp" else spec.road_width_m
         assert r["width_m"] == want, (r["id"], r["width_m"], want)
@@ -537,7 +541,9 @@ def main():
                                            "measured": round(meta["ramp_min_centreline_radius_m"], 1),
                                            "ok": meta["ramp_min_centreline_radius_m"] >= spec.min_curve_radius_m}
     design["as_built"] = asb
+    C.preserve_assets(out, world)                                    # keep pano / pano_source / surround
     C.write_json(out / "world.json", world)
+    C.refresh_surround(out, world)                                   # surround.glb matches the new heightmap
     C.write_preview(out / "preview.png", H, col, RES, world)
 
     bad = C.check_reachability(world, nav)
@@ -548,6 +554,14 @@ def main():
     print(f"design truck {spec.truck.name}: violations {design['violations'] or 'none'}; "
           f"warnings {design['warnings'] or 'none'}")
     print(MG.report(asb))
+    for x in sites:
+        for k2 in ("load_point", "dump_point"):
+            if k2 in x:
+                print(f"  {x['id']:10s} {k2}: {x[k2]['pos3']} hdg {x[k2]['heading_deg']}")
+        for i, q in enumerate(x.get("slots", [])):
+            print(f"  {x['id']:10s} slot {i}: {q['pos3']} hdg {q['heading_deg']}")
+    for e in world["equipment"]:
+        print(f"  {e['id']} @ {e['face']}: {e['pos3']} hdg {e['heading_deg']}")
 
 
 if __name__ == "__main__":

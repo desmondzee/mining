@@ -277,7 +277,14 @@ def main():
                  "tris": int(len(F)), "collider_tris": int(len(col_mesh.faces))},
     }
     errs = C.check_road_graph(world)
+    op_errs = C.add_operating_points(world, cost, H, origin, cell, spec.truck,
+                                     hfun=lambda xz: C.bilinear(H, origin, cell, xz, centred=True))
+    face_errs, face_sum = C.check_face_order(world) if layout == "hillside" else ([], {})
+    if face_sum:
+        world["design"]["face_order"] = face_sum
+    C.preserve_assets(out, world)                                    # keep pano / pano_source / surround
     C.write_json(out / "world.json", world)
+    C.refresh_surround(out, world)                                   # surround.glb matches the new heightmap
     C.write_preview(out / "preview.png", H, col, cell, world)
     bad = C.check_reachability(world, nav)
     print(f"  sites: " + ", ".join(f"{x['id']}@{x['pos3']}" for x in sites))
@@ -292,7 +299,22 @@ def main():
           f"{np.linalg.norm(by['fuel'] - by['parking']):.0f} m, dump<->crusher {np.linalg.norm(by['dump'] - by['crusher']):.0f} m")
     if steep:
         print(f"  design.notes exceptions: {[r['id'] for r in steep]}")
-    print(f"  road graph: {errs or 'OK'}; unreachable: {bad or 'none'}")
+    for x in sites:
+        for k in ("load_point", "dump_point"):
+            if k in x:
+                print(f"  {x['id']:8s} {k}: {x[k]['pos3']} hdg {x[k]['heading_deg']}")
+        for i, q in enumerate(x.get("slots", [])):
+            print(f"  {x['id']:8s} slot {i}: {q['pos3']} hdg {q['heading_deg']}")
+    for e in world["equipment"]:
+        print(f"  {e['id']} @ {e['face']}: {e['pos3']} hdg {e['heading_deg']}")
+    if face_sum:
+        print(f"  face order (Lower, Middle, Upper): {face_sum}")
+    print(f"  road graph: {errs or 'OK'}; unreachable: {bad or 'none'}; operating points: {op_errs or 'OK'}; "
+          f"face order: {face_errs or 'OK'}")
+    assert not errs, errs
+    assert not bad, bad
+    assert not op_errs, op_errs
+    assert not face_errs, face_errs
     print(f"wrote {out} in {time.time() - T0:.1f}s: {n}x{n} cells @ {cell:.2f} m, passable {(cost > 0).mean():.0%}")
 
 
