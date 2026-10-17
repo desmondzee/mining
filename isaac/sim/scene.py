@@ -23,6 +23,7 @@ PERSON_COLOUR = (1.0, 0.47, 0.08)
 WARMUP = 30
 PROPS_LOADER = "isaac/props/load.py"
 PROPS_JSON = "props.json"
+PROPS_ASSETS = "isaac/assets/props"
 
 
 def gf(m: np.ndarray) -> Gf.Matrix4d:
@@ -58,35 +59,6 @@ def pinhole(stage, path: str, hfov: float, w: int, h: int) -> UsdGeom.Camera:
     return cam
 
 
-def stage_triangles(stage, root: str) -> tuple[np.ndarray, np.ndarray] | None:
-    cache = UsdGeom.XformCache()
-    pts, tris, base = [], [], 0
-    prim = stage.GetPrimAtPath(root)
-    if not prim:
-        return None
-    for p in Usd.PrimRange(prim):
-        if not p.IsA(UsdGeom.Mesh):
-            continue
-        mesh = UsdGeom.Mesh(p)
-        v = np.asarray(mesh.GetPointsAttr().Get(), np.float64)
-        counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get())
-        idx = np.asarray(mesh.GetFaceVertexIndicesAttr().Get())
-        if not len(v) or not len(counts):
-            continue
-        xf = np.asarray(cache.GetLocalToWorldTransform(p), np.float64)
-        v = v @ xf[:3, :3] + xf[3, :3]
-        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
-        fan = [(s, s + k, s + k + 1) for s, c in zip(starts, counts) for k in range(1, c - 1)]
-        if not fan:
-            continue
-        pts.append(v[:, [0, 2, 1]])
-        tris.append(idx[np.array(fan)][:, ::-1] + base)
-        base += len(v)
-    if not pts:
-        return None
-    return np.concatenate(pts), np.concatenate(tris)
-
-
 class IsaacRenderer:
     def __init__(self, app, sim, args, config: dict) -> None:
         self.app, self.sim, self.config = app, sim, config
@@ -120,7 +92,8 @@ class IsaacRenderer:
                     joints[j] = UsdGeom.Xformable(prim).AddOrientOp()
             self.excavators.append((b, base, joints))
 
-        self.add_props(world, sim)
+        if config.get("props", True):
+            self.add_props(world, sim)
 
         truck_usd = convert(W.REPO / W.TRUCK_GLB, cache, "truck", sim.truck_matrix)
         self.trucks, cameras = [], []
@@ -246,11 +219,12 @@ class IsaacRenderer:
         spec = importlib.util.spec_from_file_location("mining_props_load", loader)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.add_props(self.stage, json.loads(props.read_text()), W.REPO / "assets")
-        tris = stage_triangles(self.stage, "/World/Props")
-        if tris is not None and sim.caster is not None:
+        data, assets = json.loads(props.read_text()), W.REPO / PROPS_ASSETS
+        added = module.add_props(self.stage, data, assets)
+        tris = module.prop_triangles(data, assets)
+        if len(tris[1]) and sim.caster is not None:
             sim.caster.set_props(*tris)
-        print(f"props: {props} loaded, {0 if tris is None else len(tris[1])} triangles for raycasts", flush=True)
+        print(f"props: {added['props']} props, {added['berm_files']} berm files, missing {added['missing']}, {len(tris[1])} triangles for raycasts", flush=True)
 
     def make_fx(self, sim, preset: str):
         if preset == "off":

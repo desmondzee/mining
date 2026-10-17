@@ -6,6 +6,7 @@
   "overview_res": [1280, 720],
   "material": {"enabled": true, "lift_deg": 0.0},
   "extra_excavators": [],
+  "props": true,
   "step": "step_nowait",
   "lidar_frame": "sensor",
   "renderer": "RealTimePathTracing",
