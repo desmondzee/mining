@@ -371,7 +371,14 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 |---|---|---|
 | World | `data/worlds/quarry/` (`world.json`, `navgrid.json`), override with `WORLD_DIR`; `default` is also shipped | |
 | Road carving | nav-grid cells within half a road's `width_m` of its centreline are made passable at load | |
-| Route | road graph (Dijkstra over world.json roads, endpoints snapped within the node snap), else A* on the grown grid, else A* on the raw grid; Chaikin smoothing, 2 m spacing | |
+| Route | point graph over world.json road polylines (Dijkstra, also on replans with obstacles within the obstacle radius banned), start and goal attached to nearest road points with A* end legs, else A* on the grown grid, else A* on the raw grid; Chaikin smoothing, 2 m spacing | |
+| Road graph spacing (m) | 2.0 | `brain/brain/planning/roadgraph.py:SPACING_M` |
+| Road graph link distance (m) | 4.0 | `brain/brain/planning/roadgraph.py:LINK_M` |
+| Road attach window (m) | 6.0 | `brain/brain/planning/roadgraph.py:ATTACH_M` |
+| Road attach candidates | 6 | `brain/brain/planning/roadgraph.py:ATTACH_K` |
+| Straight end leg (m) | 3.0 | `brain/brain/planning/roadgraph.py:LEG_STRAIGHT_M` |
+| Corridor | candidates must keep the body on cells within half a road's width of a centreline, so the truck centre stays within half width minus truck half width minus edge margin; the full nav grid applies within the site relax radius, when the truck starts outside the corridor, and when the corridor leaves only holding | |
+| Site relax radius (m) | 20.0 | `brain/brain/planning/roadgraph.py:SITE_RELAX_M` |
 | Node snap (m) | 15.0 | `brain/brain/planning/navmap.py:NODE_SNAP_M` |
 | Route edge cost | step cost + edge cost × (1 − clearance / safe clearance), clearance = cell centre to nearest blocked cell | |
 | Edge cost | 2.0 | `brain/brain/planning/navmap.py:EDGE_COST` |

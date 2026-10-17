@@ -8,7 +8,7 @@ import pytest
 from brain import planning
 from brain.fakesim import Truck as SimTruck
 from brain.planning.driver import LIDAR_HEIGHT, lidar_ranges, split_lidar
-from brain.planning.navmap import load
+from brain.planning.navmap import load, resample
 from brain.policy import act, planner_points, sensor_rotation
 from brain.world import Truck
 
@@ -112,7 +112,7 @@ def road_side_point(nav, route, i, offset):
 def test_passes_vehicle_parked_at_road_edge(nav):
     start, goal = site(nav, "parking"), site(nav, "crusher")
     route = planning.plan_route(nav, start, goal)
-    blocker = road_side_point(nav, route, len(route) // 2, 3.0)
+    blocker = road_side_point(nav, route, len(route) // 2, 5.5)
     arrived, clear, statuses = run(nav, start, goal, [blocker])
     assert arrived and clear > 3.0
 
@@ -234,3 +234,40 @@ def test_tilted_front_lidar_truck_drives(monkeypatch):
     assert act(truck, None, None, points, now=0.0).status == "holding"
     a = act(truck, None, None, points, now=0.0, sensor=sensor)
     assert a.status != "holding" and a.throttle > 0
+
+
+def lateral_deviation(nav, route):
+    pts = np.vstack([resample(r.points, 0.25) for r in nav.roads])
+    return np.array([np.hypot(*(pts - p).T).min() for p in route])
+
+
+def test_routes_between_parking_and_sites_follow_road_centrelines(nav):
+    if "ore_1" not in nav.sites:
+        pytest.skip("quarry only")
+    start = site(nav, "parking")
+    for name, goal in nav.sites.items():
+        route = planning.plan_route(nav, start, goal)
+        if goal != start and len(route) > 30:
+            assert lateral_deviation(nav, route[10:-10]).max() < 1.0, name
+
+
+def test_corridor_excludes_off_road_cells(nav):
+    from brain.planning import roadgraph
+
+    c = roadgraph.corridor_nav(nav)
+    route = planning.plan_route(nav, site(nav, "parking"), site(nav, "crusher"))
+    assert not c.blocked_at(route[:, 0], route[:, 1]).any()
+    assert (c.blocked & ~nav.blocked).sum() > 0
+    off = np.argwhere(~nav.blocked & c.blocked)[0]
+    assert roadgraph.for_truck(nav, *nav.cell_centre(*off)) is nav
+
+
+def test_replans_with_obstacle_stay_on_road_graph(nav):
+    start, goal = site(nav, "parking"), site(nav, "crusher")
+    base = planning.plan_route(nav, start, goal)
+    side = np.array([road_side_point(nav, base, len(base) // 2, 6.0)])
+    route = planning.plan_route(nav, start, goal, avoid=side)
+    assert route is not None
+    assert lateral_deviation(nav, route[10:-10]).max() < 1.0
+    centre = planning.plan_route(nav, start, goal, avoid=base[len(base) // 2][None])
+    assert centre is not None and np.hypot(*(centre - base[len(base) // 2]).T).min() > 3.5

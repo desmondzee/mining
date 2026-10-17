@@ -4,7 +4,7 @@ import time
 import numpy as np
 
 from ..world import Truck
-from . import driver
+from . import driver, roadgraph
 from .driver import Decision, Scorer
 from .navmap import NavMap
 
@@ -38,19 +38,24 @@ def follow(
     now: float | None = None,
 ) -> Decision:
     now = time.monotonic() if now is None else now
-    decision, truck.path_idx = driver.drive(
-        nav,
-        np.asarray(truck.path),
-        truck.path_idx,
-        truck.x,
-        truck.z,
-        truck.yaw,
-        truck.speed,
-        truck.steer,
-        points,
-        scorer,
-        lidar_height,
-    )
+    narrow = roadgraph.for_truck(nav, truck.x, truck.z)
+    for grid in [narrow] if narrow is nav else [narrow, nav]:
+        decision, idx = driver.drive(
+            grid,
+            np.asarray(truck.path),
+            truck.path_idx,
+            truck.x,
+            truck.z,
+            truck.yaw,
+            truck.speed,
+            truck.steer,
+            points,
+            scorer,
+            lidar_height,
+        )
+        if decision.status != "holding":
+            break
+    truck.path_idx = idx
     truck.ghost_paths = np.round(decision.candidates[decision.safe], 1).tolist()
     truck.planner, truck.choice = decision.planner, decision.choice if len(decision.candidates) else -1
     truck.candidates = np.round(decision.candidates, 1).tolist()
