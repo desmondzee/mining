@@ -161,8 +161,7 @@ def load_collider(path, scale, ground_offset, up="auto"):
 
 
 def rasterize(mesh, cell=None, max_cells=220):
-    """Top-surface heightmap by downward ray casting at cell centres."""
-    from scipy import ndimage
+    """Top-surface heightmap by downward ray casting at cell centres (shared helpers in common)."""
     v = mesh.vertices
     lo = np.percentile(v[:, [0, 2]], 1, axis=0)
     hi = np.percentile(v[:, [0, 2]], 99, axis=0)
@@ -170,105 +169,9 @@ def rasterize(mesh, cell=None, max_cells=220):
     cell = cell or max(0.5, round(float(ext.max()) / max_cells, 2))
     w, h = int(np.ceil(ext[0] / cell)), int(np.ceil(ext[1] / cell))
     origin = [float(lo[0]), float(lo[1])]
-    cx = origin[0] + (np.arange(w) + 0.5) * cell
-    cz = origin[1] + (np.arange(h) + 0.5) * cell
-    X, Z = np.meshgrid(cx, cz)
-    top = v[:, 1].max() + 5
-    orig = np.stack([X.ravel(), np.full(X.size, top), Z.ravel()], 1)
-    dirs = np.tile([0.0, -1.0, 0.0], (len(orig), 1))
-    t0 = time.time()
-    try:
-        from trimesh.ray.ray_pyembree import RayMeshIntersector
-    except Exception:
-        from trimesh.ray.ray_triangle import RayMeshIntersector
-    loc, ray_idx, _ = RayMeshIntersector(mesh).intersects_location(orig, dirs, multiple_hits=True)
-    Hflat = np.full(X.size, -np.inf)
-    np.maximum.at(Hflat, ray_idx, loc[:, 1])  # highest hit = top surface
-    H = Hflat.reshape(h, w)
-    print(f"  raycast {w}x{h} cells @ {cell} m in {time.time() - t0:.1f}s, hit {np.isfinite(H).mean():.0%}")
-    valid = np.isfinite(H)
-    dist, (ir, ic) = ndimage.distance_transform_edt(~valid, return_indices=True)
-    H = ndimage.median_filter(H[ir, ic], size=3)
-    hole = dist > 3  # large gaps (no geometry) -> impassable
+    H, _ = C.raycast_grid(mesh, origin, cell, w, h)
+    H, hole, _ = C.fill_holes(H, gap_cells=3)  # large gaps (no geometry) -> impassable
     return H, origin, cell, hole
-
-
-def place_sites(H, cost, origin, cell, n_ore=3):
-    """Pick ore sites low in the terrain and crusher/dump/parking/fuel on large flat open areas."""
-    from scipy import ndimage
-    comp = C.largest_component(cost > 0)
-    flat = comp & (C.slope_deg(H, cell) < 6)
-    clear = ndimage.distance_transform_edt(np.pad(flat, 1))[1:-1, 1:-1] * cell  # m to non-flat/edge
-    ext = max(H.shape) * cell
-    min_sep = ext * 0.18
-    chosen = []
-
-    def pick(score):
-        s = score.copy()
-        for rc in chosen:
-            rr, cc = np.ogrid[: H.shape[0], : H.shape[1]]
-            s[np.hypot(rr - rc[0], cc - rc[1]) * cell < min_sep] = -np.inf
-        rc = np.unravel_index(np.argmax(s), s.shape)
-        if not np.isfinite(s[rc]):
-            rc = np.unravel_index(np.argmax(np.where(comp, clear, -np.inf)), s.shape)
-        chosen.append(rc)
-        return rc
-
-    hn = (H - H[comp].min()) / max(np.ptp(H[comp]), 1e-6)
-    base = np.where(comp, np.minimum(clear, 12.0), -np.inf)
-    sites = []
-    ore_names = ["Pit Floor", "Lower Bench", "Upper Bench", "Side Bench"]
-    for i in range(n_ore):  # low + reasonably open
-        rc = pick(base - 25 * hn)
-        sites.append({"id": f"ore_{i+1}", "type": "ore", "name": ore_names[i % 4],
-                      "pos": C.cell_to_world(rc, origin, cell), "tonnes": [8000, 6000, 4500][i % 3]})
-    for sid, typ, name in [("crusher", "crusher", "Primary Crusher"), ("dump", "dump", "Waste Dump"),
-                           ("parking", "parking", "Ready Line"), ("fuel", "fuel", "Fuel Bay")]:
-        rc = pick(np.where(comp, clear + 5 * hn, -np.inf))
-        sites.append({"id": sid, "type": typ, "name": name, "pos": C.cell_to_world(rc, origin, cell)})
-
-    # trucks: nearest distinct passable cells around parking, ~2 truck lengths apart
-    pr = chosen[n_ore + 2]
-    rr, cc = np.nonzero(comp)
-    order = np.argsort(np.hypot(rr - pr[0], cc - pr[1]))
-    spawns = []
-    for k in order:
-        p = (rr[k], cc[k])
-        if all(np.hypot(p[0] - q[0], p[1] - q[1]) * cell >= 6 for q in spawns):
-            spawns.append(p)
-        if len(spawns) == 5:
-            break
-    trucks = [{"id": f"T{i+1}", "callsign": f"Truck {i+1}", "spawn": C.cell_to_world(p, origin, cell),
-               "heading_deg": 0, "capacity_t": 200} for i, p in enumerate(spawns)]
-    return sites, trucks
-
-
-def derive_roads(H, cost, origin, cell, sites):
-    """Marble worlds have no authored roads: least-cost (A*) navgrid paths between sites, smoothed."""
-    from scipy.ndimage import gaussian_filter1d
-    by = {s["id"]: s for s in sites}
-    ores = [s["id"] for s in sites if s["type"] == "ore"]
-    pairs = ([("parking", o) for o in ores] + [(o, "crusher") for o in ores] + [(o, "dump") for o in ores]
-             + [("parking", "fuel")])
-    hfun = lambda xz: C.bilinear(H, origin, cell, xz, centred=True)
-    roads = []
-    for a, b in pairs:
-        pa, pb = by[a]["pos"], by[b]["pos"]
-        cells = C.least_cost_path(cost, C.world_to_cell(pa, origin, cell), C.world_to_cell(pb, origin, cell))
-        if cells is None:
-            print(f"  no path {a} -> {b}")
-            continue
-        xz = np.array([C.cell_to_world(rc, origin, cell) for rc in cells], float)
-        xz[0], xz[-1] = pa, pb
-        if len(xz) > 4:  # smooth interior, keep endpoints pinned on the sites
-            sm = gaussian_filter1d(xz, sigma=2.0, axis=0, mode="nearest")
-            sm[0], sm[-1] = pa, pb
-            xz = sm
-        roads.append(C.road_entry(f"{a}_to_{b}", f"{by[a]['name']} to {by[b]['name']}", "haul", a, b,
-                                  xz, hfun, 12.0))
-    for st in sites:
-        st["pos3"] = C.pos3(st["pos"], hfun)
-    return roads
 
 
 def build_world(out: Path, wid, name, up="auto", cell=None):
@@ -285,19 +188,19 @@ def build_world(out: Path, wid, name, up="auto", cell=None):
     sl = C.slope_deg(H, cell)
     cost = C.cost_from_slope(sl)
     cost[hole] = -1.0
-    sites, trucks = place_sites(H, cost, origin, cell)
-    roads = derive_roads(H, cost, origin, cell, sites)
+    from . import mine_spec as MS
+    spec = MS.preset()
+    sites = C.place_sites_auto(H, cost, origin, cell)
+    junctions, roads, road_mask = C.build_road_network(H, cost, origin, cell, sites, spec.road_width_m,
+                                                       spec.ramp_width_m)
+    cost = np.where(road_mask & (cost > 0), 1.0, cost)
+    trucks = C.make_trucks(sites, roads, cost, origin, cell, spec.truck)
     size = [round(H.shape[1] * cell, 2), round(H.shape[0] * cell, 2)]
 
     nav = C.navgrid_dict(H, cost, origin, cell)
     C.write_json(out / "navgrid.json", nav, compact=True)
 
-    # colors: dirt -> rock by slope, darker when low; holes dark
-    hn = (H - H.min()) / max(np.ptp(H), 1e-6)
-    rock = C.smoothstep((sl - 15) / 20)[..., None]
-    col = np.array([0.62, 0.52, 0.38]) * (1 - rock) + np.array([0.45, 0.43, 0.42]) * rock
-    col = col * (0.8 + 0.2 * hn[..., None])
-    col[hole] = (0.2, 0.2, 0.2)
+    col = C.terrain_colors(H, sl, hole)
     C.export_terrain_glb(out / "terrain.glb", H, col, origin, size, n=min(321, max(H.shape)))
     C.write_heightmap_raw(out, H, origin, size)
 
@@ -306,6 +209,7 @@ def build_world(out: Path, wid, name, up="auto", cell=None):
     world = {
         "id": wid, "name": name or meta.get("display_name") or "Marble Pit", "source": "marble",
         "size_m": size, "origin": origin,
+        "bounds": [origin[0], origin[1], round(origin[0] + size[0], 2), round(origin[1] + size[1], 2)],
         "assets": {"splat": has("splat_500k.spz"), "splat_lowres": has("splat_100k.spz"),
                    "collider": "collider.glb", "terrain_mesh": "terrain.glb", "pano": has("pano.jpg"),
                    "concept": has("concept.png"), "heightmap_raw": "heightmap.raw",
@@ -315,7 +219,7 @@ def build_world(out: Path, wid, name, up="auto", cell=None):
                             "rotation_euler_deg": [180, 0, 0] if frame == "opencv" else [0, 0, 0],
                             "frame": frame,
                             "order": "p = raw*scale; p.y -= ground_offset (raw frame); then rotate"},
-        "sites": sites, "junctions": [], "roads": roads,
+        "sites": sites, "junctions": junctions, "roads": roads,
         "trucks": trucks, "navgrid": "navgrid.json",
         "marble": {"world_id": meta.get("world_id"), "marble_url": meta.get("world_marble_url"),
                    "caption": caption, "model": meta.get("model")},

@@ -513,7 +513,7 @@ def make_trucks(sites, roads, cost, origin, cell, truck=None, n=3):
 
 
 # ---------------------------------------------------------------- grade-aware road network (least-cost tree)
-def grade_graph(H, cost, cell, max_grade=0.10, smooth=1.0, k1=40.0, k2=400.0):
+def grade_graph(H, cost, cell, max_grade=0.10, smooth=1.0, k1=100.0, k2=2000.0):
     """Directed 8-neighbour sparse graph. Edge weight = length * mean cell cost * grade penalty, where the
     penalty grows steeply once |dh|/length exceeds max_grade (so paths follow ramps, not fall lines)."""
     from scipy import sparse
@@ -546,8 +546,13 @@ def build_road_network(H, cost, origin, cell, sites, road_width=15.0, ramp_width
     """
     from scipy.sparse.csgraph import dijkstra
     from scipy.ndimage import gaussian_filter1d
+    from scipy import ndimage
     h, w = H.shape
-    G = grade_graph(H, cost, cell, max_grade)
+    # a road needs a corridor ~road_width wide: routing cost rises near impassable cells (cliff tops, holes)
+    half = road_width / 2
+    clr = ndimage.distance_transform_edt(np.pad(cost > 0, 1))[1:-1, 1:-1] * cell
+    rcost = np.where(cost > 0, cost * (1.0 + 2.0 * np.clip((half - clr) / half, 0, 1)), cost)
+    G = grade_graph(H, rcost, cell, max_grade)
     by = {s["id"]: s for s in sites}
     if order is None:
         rank = {"crusher": 0, "dump": 1, "ore": 2, "parking": 3, "fuel": 4}   # parking / fuel join last (spurs)
@@ -625,7 +630,7 @@ def build_road_network(H, cost, origin, cell, sites, road_width=15.0, ramp_width
         xz = np.array([cell_to_world(divmod(f, w), origin, cell) for f in path], float)
         xz[0], xz[-1] = node_pos[a], node_pos[b]
         if len(xz) > 4:
-            sm = gaussian_filter1d(xz, sigma=2.0, axis=0, mode="nearest")
+            sm = gaussian_filter1d(xz, sigma=1.0, axis=0, mode="nearest")  # light: don't cut switchbacks
             sm[0], sm[-1] = xz[0], xz[-1]
             xz = sm
         y = hfun(xz)
@@ -642,7 +647,6 @@ def build_road_network(H, cost, origin, cell, sites, road_width=15.0, ramp_width
         st["pos3"] = pos3(st["pos"], hfun)
     jl = [{"id": j, "name": f"Junction {j.split('_')[1]}", "pos": pos3(node_pos[j], hfun)} for j in junctions]
     # road surface mask (centreline buffered to half width), passable cells only
-    from scipy import ndimage
     d = ndimage.distance_transform_edt(~centre.reshape(h, w)) * cell
     mask = (d <= road_width / 2) & (cost > 0)
     return jl, out, mask

@@ -158,3 +158,10 @@ Unity mapping: contract (x, y, z) -> Unity Vector3(x, y, z) directly.
 - The default site ids are unchanged except the bench ore sites, which are now `pit_south` and `pit_west`. Their ids derive from compass direction, so look sites up by `type`.
 - `procedural.py --truck komatsu_hd465|cat785d|cat797f|komatsu930e`. The big-truck presets auto-size the world (500–600 m, heightmap 1025 when > 500 m).
 
+
+### Scanned worlds (envgen/scan.py, additive)
+- `python -m envgen.scan <scan.glb> --id quarry [--extent 260] [--metric] [--target-tris 300000]` imports a photogrammetry GLB.
+- `world.json.source` may be `"scan"`. `assets.visual` = `"visual.glb"` (the original textured GLB, untouched); `assets.collider` = `"collider.glb"` (decimated, untextured, already in world frame); `terrain_mesh`, `heightmap_raw`, navgrid, sites, roads, junctions, trucks (`truck-0..2`) and `bounds` are as for other worlds. Sites use the Marble ids (`ore_1..3`, `crusher`, `dump`, `parking`, `fuel`).
+- `world.json.scan_transform` places `visual.glb` in the world: `p_world = scale * (R @ p_gltf) + translation`. `p_gltf` is a vertex in glTF scene space (node transforms applied, Y up). `rotation_matrix` is R, which is axis-aligned. `rotation_euler_deg` is R as XYZ euler. `matrix` is the same 4x4 (row-major, column vectors). In Unity, apply it to the imported model root in contract axes (Unity mapping is (x, y, z) -> (x, y, z)). If your glTF importer mirrors an axis on import, mirror the translation's matching component too. `y = 0` is the scan's 90th-percentile terrain height (rim / surrounding ground), so the pit is negative.
+- `world.json.scan` holds import stats (`pit_depth_m`, `floor_y`, `hole_fraction`, triangle counts). `design` carries only the haul-road part of the spec plus `as_built.road_max_grade_pct_20m`.
+- Shared pipeline pieces now live in `common.py`: `raycast_grid`, `fill_holes`, `place_sites_auto`, `build_road_network` (a grade-aware least-cost tree with junctions; grades over 10% are strongly penalised), and `make_trucks`. `worldlabs.py --from-dir` uses them too, so Marble worlds now also get junctions, `bounds` and `truck-0..2`.
