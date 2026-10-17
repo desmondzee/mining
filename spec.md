@@ -437,6 +437,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 |---|---|---|
 | Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| u16 LE meta_len \| meta JSON \| H.264 Annex B AU`; meta is the source frame's HUD metadata (see HUD), `meta_len` 0 if none | |
 | Video encoder | `VIDEO_ENCODER` `auto` (default: `h264_nvenc` when it opens, else libx264), `nvenc`, `x264`; a camera whose NVENC open fails drops to libx264. Docker image builds FFmpeg 9 with NVENC + libx264 and PyAV from source; the PyPI wheels have no NVENC. One encoder thread per camera shared by all viewers, no B-frames, SPS/PPS in band on every keyframe (IDR every keyframe interval), VBV cap = bitrate over 1 s | |
+| Brain CPU (watson, 7 cameras: overview 1280×720 + 6 × 640×360 JPEG at 15 fps, detector on 3 trucks, 3 trucks driving learned) | x264 + CPU detector + numpy planner: 365 %; NVENC + CUDA detector + CUDA planner: 70 % | |
+| NVENC encode (ms per frame incl. RGB → YUV) | 2.3–3.8 (x264: 2.3 at 640×360, 7.1 at 1280×720, 5 with noise) | |
 | NVENC settings | preset `p4`, `tune=ull`, `rc=cbr`, `zerolatency=1`, `delay=0` (one AU out per frame in), profile `baseline` → constrained baseline | |
 | Video stats | `GET /api/video` → `{encoder, cameras:{name:{codec, encoded, dropped, encode_ms}}}` | `brain/brain/app.py` |
 | Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |
