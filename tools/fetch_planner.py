@@ -1,19 +1,19 @@
 #!/usr/bin/env python3
 """Download the learned planner checkpoint from Hugging Face and export it for the brain.
 
-    uv run --with torch --with numpy tools/fetch_planner.py              # newest ppo (else bc) .pt in the org
+    uv run --with torch --with numpy tools/fetch_planner.py              # newest .pt named ppo_v3 in the org
     uv run --with torch --with numpy tools/fetch_planner.py --list
-    uv run --with torch --with numpy tools/fetch_planner.py --repo pi-hack-mining/planner --file ppo_v4.pt
+    uv run --with torch --with numpy tools/fetch_planner.py --want ppo_v4
+    uv run --with torch --with numpy tools/fetch_planner.py --repo pi-hack-mining/planner --file ppo_v3.pt
 
-Writes models/<name>.pt and models/<name>.npz, then copies the .npz to models/ppo.npz (the brain's
-default PLANNER_CHECKPOINT in docker-compose) unless --no-install. HF_TOKEN is sent if set.
+Saves models/<want>.pt and exports models/<want>.npz (docker-compose default PLANNER_CKPT is
+/app/models/ppo_v3.npz). HF_TOKEN is sent if set (needed if the repo is private).
 """
 
 import argparse
 import hashlib
 import json
 import os
-import shutil
 import sys
 import urllib.request
 from pathlib import Path
@@ -42,9 +42,8 @@ def checkpoints(org: str) -> list[tuple[str, str, str]]:
     return found
 
 
-def rank(item: tuple[str, str, str]) -> int:
-    name = (item[0] + "/" + item[1]).lower()
-    return 0 if "ppo" in name else 1 if "bc" in name else 2
+def matches(item: tuple[str, str, str], want: str) -> bool:
+    return want.lower() in (item[0] + "/" + item[1]).lower()
 
 
 def main() -> None:
@@ -53,8 +52,8 @@ def main() -> None:
     p.add_argument("--repo")
     p.add_argument("--file")
     p.add_argument("--out-dir", type=Path, default=ROOT / "models")
+    p.add_argument("--want", default="ppo_v3", help="checkpoint name to look for and to save as")
     p.add_argument("--list", action="store_true")
-    p.add_argument("--no-install", action="store_true")
     args = p.parse_args()
 
     if args.repo and args.file:
@@ -62,16 +61,19 @@ def main() -> None:
     else:
         found = sorted((c for c in checkpoints(args.org) if not args.repo or c[0] == args.repo), key=lambda c: c[2], reverse=True)
         if args.list or not found:
-            for c in sorted(found, key=rank):
+            for c in found:
                 print("%s  %s  %s" % c)
             if not found:
-                sys.exit(f"no .pt checkpoints under {HF}/{args.repo or args.org}")
+                sys.exit(f"no .pt checkpoints visible under {HF}/{args.repo or args.org} (private repo? set HF_TOKEN)")
             return
-        repo, fname, _ = min(found, key=rank)
+        hits = [c for c in found if matches(c, args.want)]
+        if not hits:
+            sys.exit(f"no .pt matching {args.want!r}; found: " + ", ".join(f"{r}/{f}" for r, f, _ in found))
+        repo, fname, _ = hits[0]
 
     data = get(f"{HF}/{repo}/resolve/main/{fname}")
     args.out_dir.mkdir(parents=True, exist_ok=True)
-    pt = args.out_dir / Path(fname).name
+    pt = args.out_dir / f"{args.want}.pt"
     pt.write_bytes(data)
     print(f"{repo}/{fname} -> {pt} sha256 {hashlib.sha256(data).hexdigest()}")
 
@@ -83,10 +85,7 @@ def main() -> None:
         config = export(pt, pt.with_suffix(".npz"))
     except CheckpointError as e:
         sys.exit(f"{pt}: {e}")
-    print(f"exported {pt.with_suffix('.npz')} {json.dumps(config)}")
-    if not args.no_install and pt.with_suffix(".npz").name != "ppo.npz":
-        shutil.copyfile(pt.with_suffix(".npz"), args.out_dir / "ppo.npz")
-        print(f"installed {args.out_dir / 'ppo.npz'}")
+    print(f"exported {pt.with_suffix('.npz')} {json.dumps({**config, 'repo': repo, 'file': fname})}")
 
 
 if __name__ == "__main__":

@@ -323,7 +323,7 @@
 | Planner max speed (m/s) | 8.0 | `brain/brain/planning/driver.py:MAX_V` |
 | Planner arrive radius (m) | 5.0 | `brain/brain/planning/driver.py:ARRIVE_RADIUS` |
 | Output | throttle = target speed / 8, steer = candidate steer | |
-| Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CHECKPOINT` loads (see Learned planner) | |
+| Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CKPT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
@@ -353,16 +353,16 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 
 | Item | Value | Source |
 |---|---|---|
-| Enable | `PLANNER_CHECKPOINT` = path to an exported `.npz` (a `.pt` is accepted if torch is installed or a sibling `.npz` exists; `PLANNER_CKPT` still read) | |
-| Default | unset: rules. Docker compose sets `/app/models/ppo.npz` with `./models` mounted read-only; missing or invalid file: warning log, rules | |
+| Enable | `PLANNER_CKPT` = path to an exported `.npz` (a `.pt` is accepted if a sibling `.npz` exists or torch is installed; `PLANNER_CHECKPOINT` also read) | |
+| Default | unset: rules. Docker compose sets `/app/models/ppo_v3.npz` (meiru-cam's PPO v3) with `./models` mounted read-only; missing or invalid file: warning log, rules | |
 | Runtime | numpy MLP forward, no torch in the brain image (`brain/brain/planning/learned.py`) | |
-| Export | `cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo.pt` → `models/ppo.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
-| Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt`, ppo before bc) → `models/<name>.pt`, `models/<name>.npz`, copied to `models/ppo.npz` | |
+| Export | `cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo_v3.pt` → `models/ppo_v3.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
+| Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt` whose repo or file name contains `--want`, default `ppo_v3`; `HF_TOKEN` for a private repo) → `models/ppo_v3.pt`, `models/ppo_v3.npz` | |
 | Network | scene MLP (obs → 256 → 256), path MLP (candidate → 128 → 128), head (384 → 256 → 1), ReLU | |
 | Choice | argmax logit over safe candidates; no safe candidate → hold (target speed 0, steer 0) | |
 | Output | throttle = candidate target speed / 8, steer = candidate steer; same action semantics as sim2d (target speed, first-order response 1.5 /s, bicycle model) | |
 | Train | `uv run --with numpy --with torch --with scipy python -m sim2d.datagen --out data/bc.npz`, then `sim2d.train_bc --out runs/bc.pt`, then `sim2d.train_ppo --init runs/bc.pt --out runs/ppo.pt` | |
-| Evaluate | `python -m sim2d.evaluate --worlds quarry --policy expert\|runs/ppo.pt\|models/ppo.npz` | |
+| Evaluate | `python -m sim2d.evaluate --worlds quarry --policy expert\|runs/ppo_v3.pt\|models/ppo_v3.npz` | |
 | sim2d worlds | `data/worlds/<id>` (override `SIM2D_WORLDS_DIR`); worlds used `SIM2D_WORLDS`, default `default,quarry` | |
 | Tests | `uv run --with numpy --with torch --with scipy --with pytest pytest tests -q` (constants, candidates, grid and feature parity with `DriveEnv.observe()`, numpy vs torch logits within 1e-5) | |
 
