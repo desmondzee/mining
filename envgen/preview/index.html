@@ -4,15 +4,20 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Quarry Demo Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500&family=JetBrains+Mono:wght@400&display=swap">
 <style>
-  :root { --bg: #0d0f12; --ink: #e8e3d8; --muted: #9a958a; --accent: #f2b63c; }
-  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
+  :root { --bg: #0e0e0d; --ink: #ecebe6; --muted: rgba(236, 235, 230, 0.6); --accent: #9aa5e6;
+    --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif; --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+    --glass: rgba(14, 14, 13, 0.42); --glass-border: rgba(255, 255, 255, 0.1); --shadow: 0 1px 2px rgba(0, 0, 0, 0.45); }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 var(--font-sans); overflow: hidden; -webkit-font-smoothing: antialiased; }
   canvas { display: block; }
-  .tag { position: absolute; padding: 4px 8px; background: rgba(10,12,15,.72); border-left: 3px solid var(--accent); font-weight: 600; letter-spacing: .02em; pointer-events: none; }
-  .tag small { display: block; font-weight: 400; color: var(--muted); }
-  #hint { position: absolute; right: 10px; bottom: 8px; padding: 2px 7px; font-size: 11px; color: var(--muted); background: rgba(10,12,15,.6); border-radius: 4px; pointer-events: none; }
-  #status { position: absolute; left: 12px; bottom: 10px; color: var(--muted); }
-  .label { position: absolute; transform: translate(-50%, -100%); padding: 2px 6px; background: rgba(10,12,15,.75); border-radius: 4px; font-size: 11px; white-space: nowrap; pointer-events: none; }
+  .tag { position: absolute; padding: 6px 10px; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 8px; -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px); font-weight: 500; letter-spacing: -0.005em; pointer-events: none; }
+  .tag small { display: block; font-family: var(--font-mono); font-size: 10.5px; font-weight: 400; color: var(--muted); }
+  #hint { position: absolute; right: 16px; bottom: 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-shadow: var(--shadow); pointer-events: none; }
+  #status { position: absolute; left: 16px; bottom: 14px; font-family: var(--font-mono); font-size: 11px; color: var(--muted); text-shadow: var(--shadow); }
+  .label { position: absolute; transform: translate(-50%, -100%); padding: 2px 7px; background: var(--glass); border: 1px solid var(--glass-border); border-radius: 6px; font-size: 11px; white-space: nowrap; pointer-events: none; }
 </style>
 <script type="importmap">
 { "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
