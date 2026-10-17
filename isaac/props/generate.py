@@ -38,6 +38,8 @@ EQUIPMENT_CLEAR = 10.0
 QUARRY_REACH = 60.0
 QUARRY_MAX_Y = -30.0
 MAX_SLOPE_DEG = 32.0
+PLANT_SITES = ("crusher", "parking", "fuel")
+PLANT_CLEAR = 60.0
 
 BERM_HEIGHT = 1.5
 BERM_BASE = 4.0
@@ -131,6 +133,7 @@ class Site:
         self.junctions = np.array([[j["pos"][0], j["pos"][2]] for j in self.world["junctions"]], float)
         self.equipment = np.array([[e["pos3"][0], e["pos3"][2]] for e in self.world.get("equipment", [])], float).reshape(-1, 2)
         self.bounds = self.world["bounds"]
+        self.plant = np.array([s["pos"] for s in self.world["sites"] if s["type"] in PLANT_SITES], float).reshape(-1, 2)
         self.rng = np.random.default_rng(seed)
         self.heights = unit_heights(assets)
         self.rocks = [f"polyhaven/{a}.usdc" for a in POLYHAVEN_ROCKS if f"polyhaven/{a}.usdc" in self.heights]
@@ -186,6 +189,8 @@ class Site:
         sx, sz, sy = d * rng.uniform(0.85, 1.15), d * rng.uniform(0.85, 1.15), d * rng.uniform(0.8, 1.15)
         r = 0.55 * max(sx, sz)
         xz = np.asarray(xz, float)
+        if len(self.plant) and np.hypot(*(self.plant - xz).T).min() < PLANT_CLEAR:
+            return None
         if not self.clear(xz, r, crossing, overlap):
             return None
         if pile is None:
@@ -349,7 +354,7 @@ def place_piles(site: Site, centres: list[np.ndarray]) -> tuple[int, int]:
         tries += 1
         c = centres[int(rng.integers(len(centres)))] + rng.normal(0, 12, 2)
         radius, height = rng.uniform(4.0, 7.0), rng.uniform(2.0, 3.5)
-        if not site.clear(c, radius + 1.0):
+        if not site.clear(c, radius + 1.0) or (len(site.plant) and np.hypot(*(site.plant - c).T).min() < PLANT_CLEAR + radius):
             continue
         y, n, lo = site.terrain.frame(c[None], radius)
         if math.isnan(y[0]) or y[0] > QUARRY_MAX_Y or math.degrees(math.acos(n[0][1])) > 12:
@@ -530,7 +535,7 @@ def generate(world_dir: Path = WORLD_DIR, assets: Path = ASSETS_DIR, seed: int =
         b["asset"] = f"generated/{berm_usd.name}"
     toes = toe_candidates(site)
     sel = toes[site.rng.permutation(len(toes))[: max(1, len(toes) // 4)]] if len(toes) else toes
-    spoil = [np.array(s["pos"], float) for s in site.world["sites"] if s["type"] in ("dump", "crusher", "ore")]
+    spoil = [np.array(s["pos"], float) for s in site.world["sites"] if s["type"] in ("dump", "ore")]
     stats = {}
     stats["isolated_boulders"] = place_isolated(site)
     stats["rock_piles"], stats["pile_boulders"] = place_piles(site, spoil)
