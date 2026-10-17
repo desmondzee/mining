@@ -23,12 +23,33 @@ log = logging.getLogger(__name__)
 STATE_HZ = 10
 LIDAR_VIEWER_HZ = 10
 DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+MIN_BOX = 0.02
+MAX_BOX_ASPECT = 8.0
+ZOOM_CAMERAS = ("overview",)
 
 
 class Goal(BaseModel):
     x: float | None = None
     z: float | None = None
     site: str | None = None
+
+
+class View(BaseModel):
+    box: list[float]
+
+
+def check_box(box: list[float]) -> list[float]:
+    if len(box) != 4 or not all(math.isfinite(v) for v in box):
+        raise HTTPException(422, "box must be [x0, y0, x1, y1]")
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    if not (0 <= x0 and 0 <= y0 and x1 <= 1 and y1 <= 1):
+        raise HTTPException(422, "box must lie within 0..1")
+    if w < MIN_BOX or h < MIN_BOX:
+        raise HTTPException(422, f"box must be at least {MIN_BOX} in each dimension")
+    if max(w / h, h / w) > MAX_BOX_ASPECT:
+        raise HTTPException(422, f"box aspect must be within 1:{MAX_BOX_ASPECT:g}")
+    return [round(v, 4) for v in box]
 
 
 def load_world_meta(world_dir: Path) -> dict:
@@ -143,6 +164,24 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
             raise HTTPException(404, f"no lidar scan for {truck_id}")
         meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose}
         return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
+
+    def find_view(camera: str) -> dict:
+        if camera not in ZOOM_CAMERAS:
+            raise HTTPException(404, f"camera {camera} has no zoom")
+        return world.views.setdefault(camera, {"box": None})
+
+    @app.post("/api/view/{camera}")
+    def post_view(camera: str, view: View):
+        if find_view(camera)["box"] is not None:
+            raise HTTPException(409, f"{camera} is already zoomed")
+        bridge.send_view(camera, check_box(view.box))
+        return world.views[camera]
+
+    @app.delete("/api/view/{camera}")
+    def delete_view(camera: str):
+        find_view(camera)
+        bridge.send_view(camera, None)
+        return world.views[camera]
 
     @app.websocket("/ws/video")
     async def ws_video(ws: WebSocket, codec: str = "h264"):
