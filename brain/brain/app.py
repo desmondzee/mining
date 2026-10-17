@@ -287,6 +287,24 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
 
     radio_proxy.mount(app)
     if web_dir and web_dir.is_dir():
+        build = str(int(time.time()))
+        root = web_dir.resolve()
+
+        @app.get("/", include_in_schema=False)
+        @app.get("/index.html", include_in_schema=False)
+        def index():
+            html = (root / "index.html").read_text()
+            for name in ("style.css", "hud.css", "app.js"):
+                html = html.replace(f'"{name}"', f'"/v/{build}/{name}"')
+            return Response(html, media_type="text/html", headers={"cache-control": "no-store"})
+
+        @app.get("/v/{ver}/{path:path}", include_in_schema=False)
+        def versioned(ver: str, path: str):
+            f = (root / path).resolve()
+            if root not in f.parents or not f.is_file():
+                raise HTTPException(404)
+            return FileResponse(f, headers={"cache-control": "no-store"})
+
         app.mount("/", NoStoreStatic(directory=web_dir, html=True), name="web")
 
     return app

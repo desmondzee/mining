@@ -204,3 +204,16 @@ def test_web_files_are_not_cached():
     with TestClient(create_app()) as c:
         r = c.get("/app.js")
         assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+
+
+def test_index_points_at_versioned_assets():
+    from fastapi.testclient import TestClient
+    from brain.app import create_app
+
+    with TestClient(create_app()) as c:
+        html = c.get("/").text
+        assert '"/v/' in html and '"app.js"' not in html
+        path = html.split('src="')[1].split('"')[0]
+        r = c.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+        assert c.get(path.replace("app.js", "../pyproject.toml")).status_code == 404
