@@ -2,6 +2,7 @@ import asyncio
 import io
 import json
 import struct
+import zlib
 
 import numpy as np
 from PIL import Image
@@ -9,6 +10,7 @@ from PIL import Image
 PREFIX = struct.Struct("<II")
 MAX_HEADER = 64 * 1024
 MAX_PAYLOAD = 64 * 1024 * 1024
+LIDAR_ZLIB_LEVEL = 6
 
 
 class ProtocolError(Exception):
@@ -47,6 +49,16 @@ def encode_frame(
 
 def pack_points(points: np.ndarray) -> bytes:
     return np.clip(np.round(points * 100), -32768, 32767).astype("<i2").tobytes()
+
+
+def compress_points(points: np.ndarray) -> bytes:
+    cm = np.frombuffer(pack_points(points), "<i2").reshape(-1, 3).T
+    return zlib.compress(np.diff(cm, axis=1, prepend=np.int16(0)).astype("<i2").tobytes(), LIDAR_ZLIB_LEVEL)
+
+
+def decompress_points(data: bytes) -> np.ndarray:
+    planes = np.frombuffer(zlib.decompress(data), "<i2").reshape(3, -1)
+    return np.cumsum(planes, axis=1, dtype=np.int16).T.astype(np.float32) / 100
 
 
 def encode_lidar(truck: str, points: np.ndarray, pose: dict) -> bytes:

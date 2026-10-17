@@ -3,24 +3,81 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Quarry Control</title>
+  <title>Quarry</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="style.css">
+  <script>
+    try { const t = localStorage.getItem("quarry-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
 </head>
 <body>
-  <header>
-    <h1>Quarry Control</h1>
-    <span id="sim-status" class="pill off">sim offline</span>
-    <span id="summary" class="summary"></span>
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-dot" aria-hidden="true"></span>
+      <h1>Quarry</h1>
+      <span class="divider" aria-hidden="true"></span>
+      <span id="summary" class="summary mono"></span>
+    </div>
+    <div class="topbar-actions">
+      <span id="sim-status" class="pill off" role="status">sim offline</span>
+      <div class="segmented" role="group" aria-label="Theme">
+        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
+        <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
+        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
+      </div>
+    </div>
   </header>
-  <main>
-    <section id="feeds" aria-label="Camera feeds"></section>
-    <aside>
-      <h2>Map</h2>
-      <p class="hint">Select a truck, then click the map to send it there.</p>
-      <canvas id="map" width="400" height="400"></canvas>
-      <ul id="trucks"></ul>
-      <h2>Lidar</h2>
-      <canvas id="lidar"></canvas>
+  <main class="layout">
+    <section class="feeds-wrap" aria-label="Camera feeds">
+      <div class="section-head">
+        <h2 class="eyebrow">Cameras</h2>
+        <span id="feeds-meta" class="eyebrow-meta mono"></span>
+      </div>
+      <div class="feeds-stage">
+        <div id="feeds"></div>
+        <div id="feeds-empty" class="empty-state" hidden>
+          <span class="empty-icon" aria-hidden="true"></span>
+          <p class="empty-title"></p>
+          <p class="empty-body"></p>
+        </div>
+      </div>
+    </section>
+    <aside class="side">
+      <section class="panel" aria-labelledby="map-title">
+        <div class="panel-head">
+          <h2 id="map-title" class="eyebrow">Map</h2>
+          <span class="eyebrow-meta" id="map-hint">Select a truck, then click the map or pick a site</span>
+        </div>
+        <div class="map-frame">
+          <canvas id="map" width="800" height="800" role="img" aria-label="Top-down site map. Click to send the selected truck to a point."></canvas>
+        </div>
+        <ul class="legend" aria-hidden="true">
+          <li><i class="lg-rock"></i>Rocks</li>
+          <li><i class="lg-ped"></i>Pedestrians</li>
+          <li><i class="lg-path"></i>Paths</li>
+          <li><i class="lg-road"></i>Roads</li>
+          <li><i class="lg-site"></i>Sites</li>
+          <li><i class="lg-route"></i>Route</li>
+        </ul>
+      </section>
+      <section class="panel" aria-labelledby="trucks-title">
+        <div class="panel-head">
+          <h2 id="trucks-title" class="eyebrow">Fleet</h2>
+          <span class="eyebrow-meta mono" id="fleet-meta"></span>
+        </div>
+        <ul id="trucks" class="truck-list"></ul>
+      </section>
+      <section class="panel" aria-labelledby="lidar-title">
+        <div class="panel-head">
+          <h2 id="lidar-title" class="eyebrow">Lidar</h2>
+          <span class="eyebrow-meta mono" id="lidar-meta">no truck selected</span>
+        </div>
+        <div class="lidar-frame">
+          <canvas id="lidar" role="img" aria-label="3D lidar point cloud for the selected truck. Drag to orbit."></canvas>
+        </div>
+      </section>
     </aside>
   </main>
   <script type="importmap">

@@ -1,7 +1,9 @@
 import argparse
 import asyncio
+import json
 import math
 import time
+from pathlib import Path
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -40,6 +42,11 @@ PEDESTRIAN_PATHS = [
     [(-50, 20), (-10, 60)],
     [(40, -20), (40, 40)],
 ]
+CROSSING_ROADS = 4
+CROSSING_EXTRA = 12.0
+EQUIPMENT_RADIUS = 5.0
+EQUIPMENT_HEIGHT = 5.0
+ROAD_COLOUR = (175, 160, 135)
 ROCK, TRUCK, PERSON = 0, 1, 2
 KIND_COLOURS = np.array([[120, 120, 125], [230, 180, 40], [255, 120, 20]], float)
 WALL_COLOUR = np.array([170, 140, 110], float)
@@ -101,9 +108,73 @@ class Pedestrian:
         self.target += self.direction
 
 
-def path_distance(x: float, z: float) -> float:
+def load_world(world_dir: str | Path) -> dict:
+    world = json.loads((Path(world_dir) / "world.json").read_text())
+    nodes = {s["id"]: s["pos"] for s in world["sites"]} | {j["id"]: j["pos"][0::2] for j in world["junctions"]}
+    return {
+        "bounds": [float(v) for v in world["bounds"]],
+        "roads": [
+            {
+                "id": r["id"],
+                "from": r["from"],
+                "to": r["to"],
+                "width_m": float(r["width_m"]),
+                "one_way": bool(r.get("one_way", False)),
+                "points": [{"x": p[0], "z": p[2]} for p in r["points"]],
+            }
+            for r in world["roads"]
+            if r["from"] in nodes and r["to"] in nodes
+        ],
+        "sites": [{"id": s["id"], "type": s["type"], "name": s["name"], "x": s["pos"][0], "z": s["pos"][1]} for s in world["sites"]],
+        "junctions": [{"id": j["id"], "x": j["pos"][0], "z": j["pos"][2]} for j in world["junctions"]],
+        "trucks": [(t["id"], *t["spawn"], float(t["heading_deg"])) for t in sorted(world["trucks"], key=lambda t: t.get("slot", 0))],
+        "equipment": [(e["pos3"][0], e["pos3"][2]) for e in world.get("equipment", [])],
+        "terrain": load_terrain(Path(world_dir) / "navgrid.json"),
+    }
+
+
+def load_terrain(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    nav = json.loads(path.read_text())
+    heights = np.array(nav["heights"], float).reshape(nav["height"], nav["width"])
+    return {"heights": heights, "cell": float(nav["cell_m"]), "origin": [float(v) for v in nav["origin"]]}
+
+
+def ground_at(terrain: dict, x, z) -> np.ndarray:
+    h = terrain["heights"]
+    c = np.clip(np.floor((np.asarray(x) - terrain["origin"][0]) / terrain["cell"]).astype(int), 0, h.shape[1] - 1)
+    r = np.clip(np.floor((np.asarray(z) - terrain["origin"][1]) / terrain["cell"]).astype(int), 0, h.shape[0] - 1)
+    return h[r, c]
+
+
+def polyline_midpoint(pts: list[tuple[float, float]]) -> tuple[int, float, float]:
+    lengths = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
+    remaining = sum(lengths) / 2
+    for i, length in enumerate(lengths):
+        if remaining <= length or i == len(lengths) - 1:
+            f = remaining / length if length else 0.0
+            (ax, az), (bx, bz) = pts[i], pts[i + 1]
+            return i, ax + (bx - ax) * f, az + (bz - az) * f
+        remaining -= length
+
+
+def crossing_paths(roads: list[dict]) -> list[list[tuple[float, float]]]:
+    paths = []
+    for road in sorted(roads, key=lambda r: r["id"])[:CROSSING_ROADS]:
+        pts = [(p["x"], p["z"]) for p in road["points"]]
+        i, mx, mz = polyline_midpoint(pts)
+        (ax, az), (bx, bz) = pts[i], pts[i + 1]
+        seg = math.hypot(bx - ax, bz - az)
+        rx, rz = (bz - az) / seg, -(bx - ax) / seg
+        half = (road["width_m"] + CROSSING_EXTRA) / 2
+        paths.append([(mx - rx * half, mz - rz * half), (mx + rx * half, mz + rz * half)])
+    return paths
+
+
+def path_distance(x: float, z: float, paths: list[list[tuple[float, float]]] = PEDESTRIAN_PATHS) -> float:
     best = math.inf
-    for path in PEDESTRIAN_PATHS:
+    for path in paths:
         for i in range(len(path)):
             (ax, az), (bx, bz) = path[i], path[(i + 1) % len(path)]
             abx, abz = bx - ax, bz - az
@@ -113,17 +184,28 @@ def path_distance(x: float, z: float) -> float:
 
 
 class FakeQuarry:
-    def __init__(self, n_trucks: int, half_size: float = 100.0, seed: int = 0) -> None:
+    def __init__(self, n_trucks: int, half_size: float = 100.0, seed: int = 0, world: dict | None = None) -> None:
         rng = np.random.default_rng(seed)
-        self.half = half_size
-        self.bounds = [-half_size, -half_size, half_size, half_size]
-        n_rocks = 40
-        radius = rng.uniform(1.5, 5.0, n_rocks)
-        xz = rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2))
-        rocks = np.column_stack([xz, radius, radius * 1.5, np.full(n_rocks, ROCK)])
-        keep = [math.hypot(x, z + 70) > 20 and path_distance(x, z) > r + 4 for x, z, r in rocks[:, :3]]
-        self.rocks = rocks[keep]
-        self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
+        self.world = world
+        if world:
+            self.half = max(abs(v) for v in world["bounds"])
+            self.bounds = world["bounds"]
+            self.paths = crossing_paths(world["roads"])
+            self.rocks = np.array(
+                [[x, z, EQUIPMENT_RADIUS, EQUIPMENT_HEIGHT, ROCK] for x, z in world["equipment"]], float
+            ).reshape(-1, 5)
+            self.trucks = [Truck(*spawn) for spawn in world["trucks"][:n_trucks]]
+        else:
+            self.half = half_size
+            self.bounds = [-half_size, -half_size, half_size, half_size]
+            self.paths = PEDESTRIAN_PATHS
+            n_rocks = 40
+            radius = rng.uniform(1.5, 5.0, n_rocks)
+            xz = rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2))
+            rocks = np.column_stack([xz, radius, radius * 1.5, np.full(n_rocks, ROCK)])
+            keep = [math.hypot(x, z + 70) > 20 and path_distance(x, z) > r + 4 for x, z, r in rocks[:, :3]]
+            self.rocks = rocks[keep]
+            self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
         self.pedestrians = [
             Pedestrian(
                 f"pedestrian-{i * PEDESTRIANS_PER_PATH + k:02d}",
@@ -131,7 +213,7 @@ class FakeQuarry:
                 k / PEDESTRIANS_PER_PATH,
                 float(rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED)),
             )
-            for i, path in enumerate(PEDESTRIAN_PATHS)
+            for i, path in enumerate(self.paths)
             for k in range(PEDESTRIANS_PER_PATH)
         ]
 
@@ -174,7 +256,14 @@ class FakeQuarry:
         with np.errstate(divide="ignore"):
             rng = np.minimum(rng, np.where(sin_e < 0, -LIDAR_HEIGHT / sin_e, np.inf))
         pts = np.stack([rng * cos_e * np.sin(az), rng * sin_e, rng * cos_e * np.cos(az)], axis=-1)
-        return pts[rng <= LIDAR_RANGE].astype(np.float32)
+        pts = pts[rng <= LIDAR_RANGE]
+        terrain = self.world.get("terrain") if self.world else None
+        if terrain is not None:
+            yaw = math.radians(t.yaw)
+            wx = t.x + pts[:, 2] * math.sin(yaw) + pts[:, 0] * math.cos(yaw)
+            wz = t.z + pts[:, 2] * math.cos(yaw) - pts[:, 0] * math.sin(yaw)
+            pts[:, 1] += ground_at(terrain, wx, wz) - ground_at(terrain, t.x, t.z)
+        return pts.astype(np.float32)
 
     def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
         offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
@@ -220,6 +309,9 @@ class FakeQuarry:
 
         img = Image.new("RGB", (OVERVIEW_PX, OVERVIEW_PX), tuple(int(c) for c in GROUND_COLOUR))
         d = ImageDraw.Draw(img)
+        for road in self.world["roads"] if self.world else []:
+            width = max(1, round(road["width_m"] * s))
+            d.line([px(p["x"], p["z"]) for p in road["points"]], fill=ROAD_COLOUR, width=width, joint="curve")
         for x, z, r, _, _ in self.rocks:
             cx, cy = px(x, z)
             d.ellipse([cx - r * s, cy - r * s, cx + r * s, cy + r * s], fill=(110, 110, 115))
@@ -241,14 +333,16 @@ class FakeQuarry:
         return np.asarray(img)
 
     def hello(self) -> dict:
+        network = {k: self.world[k] for k in ("roads", "sites", "junctions")} if self.world else {}
         return {
+            **network,
             "type": "hello",
             "trucks": [t.id for t in self.trucks],
             "cameras": ["overview", *(t.id for t in self.trucks)],
             "bounds": self.bounds,
             "truck_model": "fakesim",
             "obstacles": [{"x": x, "z": z, "r": r} for x, z, r, _, _ in self.rocks.tolist()],
-            "paths": [{"points": [{"x": x, "z": z} for x, z in path]} for path in PEDESTRIAN_PATHS],
+            "paths": [{"points": [{"x": x, "z": z} for x, z in path]} for path in self.paths],
         }
 
     def actors(self) -> dict:
@@ -258,8 +352,8 @@ class FakeQuarry:
         }
 
 
-async def run(host: str, port: int, n_trucks: int) -> None:
-    quarry = FakeQuarry(n_trucks)
+async def run(host: str, port: int, n_trucks: int, world_dir: str | None = None) -> None:
+    quarry = FakeQuarry(n_trucks, world=load_world(world_dir) if world_dir else None)
     while True:
         try:
             reader, writer = await asyncio.open_connection(host, port)
@@ -315,8 +409,9 @@ def main() -> None:
     p.add_argument("--host", default="127.0.0.1")
     p.add_argument("--port", type=int, default=9000)
     p.add_argument("--trucks", type=int, default=3)
+    p.add_argument("--world", default="", help="world directory with world.json; empty = flat test world")
     args = p.parse_args()
-    asyncio.run(run(args.host, args.port, args.trucks))
+    asyncio.run(run(args.host, args.port, args.trucks, args.world or None))
 
 
 if __name__ == "__main__":

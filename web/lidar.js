@@ -5,10 +5,9 @@ const MAX_POINTS = 20000;
 const COLOUR_RANGE = 100;
 
 export function createLidarView(canvas) {
-  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
   renderer.setPixelRatio(devicePixelRatio);
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x111316);
   const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 500);
   camera.position.set(0, 30, 25);
   const controls = new OrbitControls(camera, canvas);
@@ -23,7 +22,7 @@ export function createLidarView(canvas) {
   geometry.setDrawRange(0, 0);
   scene.add(new THREE.Points(geometry, new THREE.PointsMaterial({ size: 0.35, vertexColors: true })));
 
-  const marker = new THREE.Mesh(new THREE.ConeGeometry(1, 3, 12), new THREE.MeshBasicMaterial({ color: 0xf0b428 }));
+  const marker = new THREE.Mesh(new THREE.ConeGeometry(1, 3, 12), new THREE.MeshBasicMaterial({ color: 0x4fc3f7 }));
   marker.rotation.x = -Math.PI / 2;
   scene.add(marker);
 

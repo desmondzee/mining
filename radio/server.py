@@ -12,13 +12,18 @@ Run:  uv run --with fastapi --with uvicorn --with httpx --with python-multipart 
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import heapq
+import hmac
 import json
 import logging
 import math
 import os
 import re
+import secrets
+import socket
+import subprocess
 import time
 import uuid
 from collections import deque
@@ -27,7 +32,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -56,9 +61,27 @@ BEND_DEG = 12.0
 MAX_SPACING_M = 20.0
 LOAD_DWELL_S = float(os.environ.get("RADIO_LOAD_DWELL", "5"))
 DUMP_DWELL_S = float(os.environ.get("RADIO_DUMP_DWELL", "4"))
+EXC_WAIT = os.environ.get("RADIO_EXC_WAIT", "0").lower() in ("1", "true", "yes")  # trucks wait for a holding excavator
 OVERRIDE_GRACE_S = 1.5
+BRAIN_CLEAR_M = 6.0
 ORBIT_M = 12.0  # the straight-line policy can circle a goal inside its turning circle (R ~ 8.7 m)
 ORBIT_S = 5.0  # ... so if we hover within ORBIT_M this long, call it reached
+
+BRAIN_ROUTING_ENV = os.environ.get("RADIO_BRAIN_ROUTING", "auto").lower()
+
+RADIO_PIN = os.environ.get("RADIO_PIN", "").strip()
+SESSION_COOKIE = "radio_session"
+SESSION_TTL_S = float(os.environ.get("RADIO_SESSION_HOURS", "12")) * 3600
+MAX_AUDIO_BYTES = int(os.environ.get("RADIO_MAX_AUDIO_KB", "600")) * 1024
+MAX_COMMAND_CHARS = 300
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
 
 NUM_NAMES = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
 
@@ -66,25 +89,43 @@ NUM_NAMES = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eig
 # --------------------------------------------------------------------------- secrets
 
 
-def secret(name: str) -> str | None:
-    """env var > radio/secrets/<name> > envgen/secrets/<name>. Never logged."""
-    v = os.environ.get(name)
-    if v and v.strip():
-        return v.strip()
-    for d in (RADIO_DIR / "secrets", REPO / "envgen" / "secrets"):
-        p = d / name.lower()
+def dotenv(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            k, sep, v = line.strip().removeprefix("export ").partition("=")
+            if sep and not k.startswith("#"):
+                out[k.strip()] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return out
+
+
+def secret(*names: str) -> str | None:
+    for n in names:
+        v = os.environ.get(n)
+        if v and v.strip():
+            return v.strip()
+        f = os.environ.get(f"{n}_FILE")
         try:
-            if p.is_file():
-                v = p.read_text().strip()
-                if v:
-                    return v
+            if f and (v := Path(f).read_text().strip()):
+                return v
         except OSError:
-            pass
-    return None
+            log.warning("%s_FILE is set but not readable", n)
+    for n in names:
+        for d in (RADIO_DIR / "secrets", REPO / "envgen" / "secrets"):
+            p = d / n.lower()
+            try:
+                if p.is_file() and (v := p.read_text().strip()):
+                    return v
+            except OSError:
+                pass
+    env = dotenv(REPO / ".env")
+    return next((env[n] for n in names if env.get(n)), None)
 
 
 OPENAI_KEY = secret("OPENAI_API_KEY")
-EL_KEY = secret("ELEVENLABS_API_KEY")
+EL_KEY = secret("ELEVENLABS_API_KEY", "ELEVEN_LABS_API_KEY")
 
 
 # --------------------------------------------------------------------------- world + road graph
@@ -96,6 +137,14 @@ def callsign(truck_id: str) -> str:
         return truck_id
     n = int(m.group(1)) + 1  # truck-0 is "Truck One"
     return f"Truck {NUM_NAMES[n] if n < len(NUM_NAMES) else n}"
+
+
+def exc_callsign(exc_id: str) -> str:
+    m = re.search(r"(\d+)$", exc_id)
+    if not m:
+        return exc_id
+    n = int(m.group(1)) + 1  # exc-0 is "Excavator One"
+    return f"Excavator {NUM_NAMES[n] if n < len(NUM_NAMES) else n}"
 
 
 @dataclass
@@ -160,7 +209,19 @@ class World:
             self.sites[s["id"]] = Site(s["id"], t, name, x, z, spoken, sorted(aliases, key=len, reverse=True),
                                        point, slots)
         self.trucks = {t["id"]: t for t in self.raw.get("trucks", [])}
+        # excavators (radio-only state): one per ore face, from world.equipment
+        self.excavators: dict[str, dict] = {}
+        for e in self.raw.get("equipment", []):
+            if e.get("type", "excavator") != "excavator" or "id" not in e:
+                continue
+            p3 = e.get("pos3") or [0.0, 0.0, 0.0]
+            self.excavators[e["id"]] = {"id": e["id"], "face": e.get("face"), "x": p3[0], "z": p3[2],
+                                        "heading_deg": e.get("heading_deg", 0.0), "name": e.get("name", e["id"]),
+                                        "pos3": [round(v, 2) for v in p3]}
         self._build_graph()
+
+    def exc_for_face(self, site_id: str | None) -> str | None:
+        return next((eid for eid, e in self.excavators.items() if e["face"] == site_id), None)
 
     def by_type(self, t: str) -> Site | None:
         return next((s for s in self.sites.values() if s.type == t), None)
@@ -320,9 +381,35 @@ class RealBrain:
         r = await self.client.post(f"/api/trucks/{tid}/goal", json={"x": x, "z": z})
         r.raise_for_status()
 
+    async def set_site(self, tid: str, site: str) -> None:
+        r = await self.client.post(f"/api/trucks/{tid}/goal", json={"site": site})
+        r.raise_for_status()
+
     async def clear_goal(self, tid: str) -> None:
         r = await self.client.delete(f"/api/trucks/{tid}/goal")
         r.raise_for_status()
+
+
+def route_points(route) -> list[tuple[float, float]]:
+    out = []
+    for p in route or []:
+        if isinstance(p, dict):
+            out.append((float(p["x"]), float(p["z"])))
+        elif isinstance(p, (list, tuple)) and len(p) >= 2:
+            out.append((float(p[0]), float(p[-1])))
+    return out
+
+
+def brain_routes(state: dict) -> bool:
+    trucks = state.get("trucks") or []
+    return bool(state.get("roads")) and any("route" in t or "goal_site" in t for t in trucks)
+
+
+def brain_site_ids(state: dict) -> set[str]:
+    s = state.get("sites") or []
+    if isinstance(s, dict):
+        return set(s)
+    return {str(x.get("id")) if isinstance(x, dict) else str(x) for x in s}
 
 
 class MockBrain:
@@ -402,6 +489,50 @@ STATUS_RE = re.compile(r"\b(status|report|sitrep|where are|where is|what are you
 HAUL_RE = re.compile(r"\b(haul|hauling|haulage|cycle|cycling|loads?|ferry|shuttle|production|start mining)\b")
 RETURN_RE = re.compile(r"\b(return|returning|go home|head home|back to base|come home|park up|rtb)\b")
 LOADS_RE = re.compile(rf"\b({NUM_RE}|seven|eight|nine|ten)\s+(?:loads?|runs?|trips?|cycles?)\b")
+EXCW = r"(?:excavators?|diggers?|shovels?)"
+EXC_WORD_RE = re.compile(rf"\b{EXCW}\b")
+EXC_NUM_RE = re.compile(rf"\b{EXCW}\s*(?:number\s*)?#?-?\s*({NUM_RE}(?:\s*(?:,|and|&|\+)\s*(?:{EXCW}\s*)?{NUM_RE})*)\b")
+EXC_LIT_RE = re.compile(r"\bexc-(\d+)\b")
+EXC_ALL_RE = re.compile(rf"\b(?:all|every|each|both)\s+(?:the\s+|of\s+the\s+)?{EXCW}")
+EXC_HOLD_RE = re.compile(r"\b(hold|holding|stop|stopped|pause|paused|halt|freeze|stand ?by|wait|cease|quit|shut down|stand down)\b")
+EXC_DIG_RE = re.compile(r"\b(dig|digs|digging|start|starts|begin|resume|work|working|commence)\b")
+EXC_GOTO_RE = re.compile(r"\b(go|goes|send|head|drive|move|proceed|unload|haul|hauling|bring|over to|load at|report to|meet)\b")
+EXC_HAUL_RE = re.compile(r"\b(haul|hauling|haulage|cycle|cycling|shuttle|ferry)\b|\bfrom\s+(?:the\s+)?(?:\w+\s+)?(?:excavators?|diggers?|shovels?|exc-)")
+VOCAB = ["truck", "trucks", "excavator", "excavators", "digger", "diggers", "shovel", "lower", "middle", "upper", "face",
+         "bench", "crusher", "dump", "waste", "ready", "line", "fuel", "bay", "haul", "stop", "status", "report",
+         "return", "dig", "digging", "hold", "start", "pause", "everyone", "unload", "load", "loads", "go", "send",
+         "parking", "one", "two", "three", "all", "from", "the", "to", "at"]
+EXC_MISHEAR = [
+    (re.compile(r"\bexcavate\s*(?:her|or|a|ur|er)\b"), "excavator"),
+    (re.compile(r"\b(?:x|ex|eggs?)\s*-?\s*cavat(?:or|er|ors|ers)\b"), "excavator"),
+    (re.compile(r"\bexcavat(?:er|ers|or s)\b"), "excavator"),
+]
+
+
+def exc_norm(t: str) -> str:
+    for rx, sub in EXC_MISHEAR:
+        t = rx.sub(sub, t)
+    return t
+
+
+def fuzzy_fix(t: str) -> str:
+    """Snap near-miss words ("truk", "lowr", "crasher", "excavaytor") to the radio vocabulary (difflib)."""
+    known = set(VOCAB) | set(NUMWORD)
+    toks, out, i = t.split(), [], 0
+    while i < len(toks):
+        w = toks[i]
+        if i + 1 < len(toks) and w not in known and toks[i + 1] not in known:  # "excava tor"
+            m = difflib.get_close_matches(w + toks[i + 1], VOCAB, 1, 0.84)
+            if m:
+                out.append(m[0])
+                i += 2
+                continue
+        if w not in known and len(w) >= 4 and not w.isdigit():
+            m = difflib.get_close_matches(w, VOCAB, 1, 0.78)
+            w = m[0] if m else w
+        out.append(w)
+        i += 1
+    return exc_norm(" ".join(out))
 
 
 def norm(text: str) -> str:
@@ -421,6 +552,8 @@ class Parser:
     def __init__(self, world: World, truck_ids):
         self.world = world
         self.truck_ids = truck_ids  # callable -> list[str]
+        self.exc_ids = sorted(world.excavators)
+        self.exc_state_fn = lambda: {}  # set by Radio; used in the LLM prompt
         self.alias_list = sorted(((a, s.id) for s in world.sites.values() for a in s.aliases), key=lambda x: -len(x[0]))
 
     # ---- helpers shared by LLM + regex
@@ -444,6 +577,52 @@ class Parser:
             if m and (v := num_value(m.group(1))) is not None and (tid := self.truck_from_number(v)):
                 out.append(tid)
         return list(dict.fromkeys(out))
+
+    def exc_from_number(self, n: int) -> str | None:
+        eid = f"exc-{0 if n == 0 else n - 1}"
+        return eid if eid in self.world.excavators else None
+
+    def norm_excavators(self, items) -> list[str]:
+        out: list[str] = []
+        if isinstance(items, str):
+            items = [items]
+        for it in items or []:
+            s = exc_norm(norm(str(it)))
+            if s in ("all", "*", "every", "everyone") or EXC_ALL_RE.search(s) or s in ("excavators", "all excavators"):
+                return list(self.exc_ids)
+            if s in self.world.excavators:
+                out.append(s)
+                continue
+            m = re.search(rf"({NUM_RE})\s*$", s)
+            if m and (v := num_value(m.group(1))) is not None and (eid := self.exc_from_number(v)):
+                out.append(eid)
+                continue
+            sid = self.site_id(s)
+            if sid and (eid := self.world.exc_for_face(sid)):
+                out.append(eid)
+        return list(dict.fromkeys(out))
+
+    def _segment_excavators(self, seg: str) -> list[str] | None:
+        """None = segment doesn't talk to excavators; [] = excavator mentioned but unresolved."""
+        if not (EXC_WORD_RE.search(seg) or EXC_LIT_RE.search(seg)):
+            return None
+        if EXC_ALL_RE.search(seg) or re.search(r"\b(?:all|every)\b.*\b(?:excavators|diggers|shovels)\b", seg):
+            return list(self.exc_ids)
+        found: list[str] = []
+        for m in EXC_LIT_RE.finditer(seg):
+            if f"exc-{m.group(1)}" in self.world.excavators:
+                found.append(f"exc-{m.group(1)}")
+        for m in EXC_NUM_RE.finditer(seg):
+            for w in re.split(rf"\s*(?:,|and|&|\+)\s*(?:{EXCW}\s*)?", m.group(1)):
+                v = num_value(w)
+                if v is not None and (eid := self.exc_from_number(v)):
+                    found.append(eid)
+        if not found:
+            body = EXC_NUM_RE.sub(" ", seg)
+            for sid in self.find_sites(body):
+                if self.world.sites[sid].type == "ore" and (eid := self.world.exc_for_face(sid)):
+                    found.append(eid)
+        return list(dict.fromkeys(found))
 
     def site_id(self, name) -> str | None:
         if not name:
@@ -471,19 +650,69 @@ class Parser:
 
     # ---- regex fallback
     def parse_regex(self, text: str) -> list[dict]:
-        t = norm(text)
-        segments = re.split(r"[.;!?]|\b(?:and|then|also)\s+(?=(?:trucks?\b|units?\b|all\b|everyone|everybody))", t)
+        t = exc_norm(norm(text))
+        calls = self._parse_text(t)
+        if not calls:  # unscripted speech: snap near-miss words to the radio vocabulary and retry
+            fixed = fuzzy_fix(t)
+            if fixed != t:
+                calls = self._parse_text(fixed)
+        return calls
+
+    def _parse_text(self, t: str) -> list[dict]:
+        exc_ahead = rf"(?:{EXCW}\b|exc-\d|the\s+(?:\w+\s+){{1,2}}{EXCW}\b)"
+        segments = re.split(rf"[.;!?]|\b(?:and|then|also)\s+(?=(?:trucks?\b|units?\b|all\b|every\b|everyone|everybody|{exc_ahead}))"
+                            rf"|,\s*(?=(?:{exc_ahead}|(?:all|every)\s+{EXCW}))", t)
         calls: list[dict] = []
         carry: list[str] = []
+        pending_exc: list[str] = []
         for seg in segments:
             seg = (seg or "").strip(" ,")
             if not seg:
+                continue
+            excs = self._segment_excavators(seg)
+            if excs is not None and (self._segment_trucks(seg)[0] or (
+                    not EXC_HOLD_RE.search(seg) and not STATUS_RE.search(seg) and not EXC_DIG_RE.search(seg)
+                    and EXC_GOTO_RE.search(seg))):
+                # excavator as a truck destination: "truck one go to excavator two", "send truck two to digger three"
+                call = self._truck_to_excavator(seg, excs, carry)
+                calls.append(call)
+                carry = call["args"].get("trucks") or carry
+                continue
+            if excs is not None:
+                excs = list(dict.fromkeys(pending_exc + excs))
+                if EXC_HOLD_RE.search(seg):
+                    calls.append({"name": "hold", "args": {"excavators": excs}})
+                elif STATUS_RE.search(seg):
+                    calls.append({"name": "exc_status", "args": {"excavators": excs}})
+                elif EXC_DIG_RE.search(seg):
+                    calls.append({"name": "dig", "args": {"excavators": excs}})
+                else:
+                    pending_exc = excs  # "excavator one and excavator two start digging"
+                    continue
+                pending_exc = []
                 continue
             call = self._parse_segment(seg, carry)
             if call:
                 calls.append(call)
                 carry = call["args"].get("trucks", carry)
         return calls
+
+    def _truck_to_excavator(self, seg: str, excs: list[str], carry: list[str]) -> dict:
+        trucks, is_all = self._segment_trucks(seg)
+        if is_all and not trucks and re.search(r"\b(all trucks|everyone|everybody|all units|fleet)\b", seg):
+            trucks = list(self.truck_ids())
+        trucks = trucks or carry
+        eid = excs[0] if excs else "nearest"
+        face = self.world.excavators[eid]["face"] if eid != "nearest" else None
+        if STOP_RE.search(seg) and not EXC_GOTO_RE.search(seg):
+            return {"name": "stop", "args": {"trucks": trucks or list(self.truck_ids())}}
+        body = EXC_NUM_RE.sub(" ", TRUCK_RE.sub(" ", LITERAL_ID_RE.sub(" ", seg)))
+        if EXC_HAUL_RE.search(seg) or LOADS_RE.search(body):
+            dests = [s for s in self.find_sites(body) if self.world.sites[s].type in ("crusher", "dump")]
+            loads = num_value(m.group(1)) if (m := LOADS_RE.search(body)) else None
+            return {"name": "haul", "args": {"trucks": trucks, "from_site": face, "to_site": dests[0] if dests else None,
+                                             "loads": loads, "excavator": eid}}
+        return {"name": "go_to", "args": {"trucks": trucks, "site": face, "excavator": eid}}
 
     def _segment_trucks(self, seg: str) -> tuple[list[str], bool]:
         ids = self.truck_ids()
@@ -538,6 +767,10 @@ class Parser:
         ids = self.truck_ids()
         trucks = {"type": "array", "items": {"type": "string", "enum": ids + ["all"]},
                   "description": "truck ids, or [\"all\"]. Empty array = let dispatch pick an idle truck."}
+        excs = {"type": "array", "items": {"type": "string", "enum": self.exc_ids + ["all"]},
+                "description": "excavator ids, or [\"all\"]."}
+        exc_one = {"type": "string", "enum": self.exc_ids + ["nearest"],
+                   "description": "excavator to go to / load at; 'nearest' = nearest digging excavator. Use instead of site."}
         site_enum = list(self.world.sites)
         ore_enum = [s.id for s in self.world.sites.values() if s.type == "ore"]
         dest_enum = [s.id for s in self.world.sites.values() if s.type in ("crusher", "dump")]
@@ -547,21 +780,27 @@ class Parser:
                     "parameters": {"type": "object", "properties": props, "required": req}}}
 
         return [
-            fn("go_to", "Send trucks to a site and stop there.", {"trucks": trucks, "site": {"type": "string", "enum": site_enum}}, ["trucks", "site"]),
-            fn("haul", "Haul cycle: load at an ore face, dump at crusher or waste dump, repeat.",
-               {"trucks": trucks, "from_site": {"type": "string", "enum": ore_enum},
+            fn("go_to", "Send trucks to a site, or to an excavator (its face load point), and stop there.",
+               {"trucks": trucks, "site": {"type": "string", "enum": site_enum}, "excavator": exc_one}, ["trucks"]),
+            fn("haul", "Haul cycle: load at an ore face (or an excavator's face), dump at crusher or waste dump, repeat.",
+               {"trucks": trucks, "excavator": exc_one, "from_site": {"type": "string", "enum": ore_enum},
                 "to_site": {"type": "string", "enum": dest_enum},
                 "loads": {"type": "integer", "description": "number of loads; omit for continuous"}},
-               ["trucks", "from_site", "to_site"]),
+               ["trucks"]),
             fn("return_to_parking", "Send trucks back to the ready line (parking).", {"trucks": trucks}, ["trucks"]),
             fn("stop", "Stop trucks immediately and cancel their tasks.", {"trucks": trucks}, ["trucks"]),
             fn("status", "Trucks report their status over the radio.", {"trucks": trucks}, ["trucks"]),
+            fn("dig", "Excavators start digging (loading trucks) at their ore face.", {"excavators": excs}, ["excavators"]),
+            fn("hold", "Excavators stop digging and hold.", {"excavators": excs}, ["excavators"]),
         ]
 
     def system_prompt(self) -> str:
         ids = self.truck_ids()
         tl = "\n".join(f"- {tid}: callsign \"{callsign(tid)}\"" for tid in ids)
         sl = "\n".join(f"- {s.id} ({s.type}): \"{s.name}\"; also called {', '.join(a for a in s.aliases[:8])}" for s in self.world.sites.values())
+        est = self.exc_state_fn() or {}
+        el = "\n".join(f"- {eid}: callsign \"{exc_callsign(eid)}\", digs at {e['face']} ({self.world.sites[e['face']].name if e['face'] in self.world.sites else e['face']}), currently {est.get(eid, 'holding')}"
+                       for eid, e in sorted(self.world.excavators.items()))
         return (
             "You are the dispatch parser for an autonomous open-pit mine radio. The operator speaks short radio "
             "commands; the text comes from speech-to-text and may contain mishearings (e.g. 'to'/'too' for 'two', "
@@ -570,9 +809,18 @@ class Parser:
             f"Trucks (callsign numbers start at One):\n{tl}\n'truck zero' also means truck-0. "
             "'all trucks', 'everyone', 'all units', 'fleet' -> [\"all\"].\n\n"
             f"Sites:\n{sl}\n\n"
+            f"Excavators (also called diggers or shovels; STT may write 'excavate her', 'x cavator', 'digger won'):\n{el}\n"
+            "'the excavator at the lower face' / 'the lower face excavator' -> the excavator whose face is that site. "
+            "'all excavators', 'every digger' -> [\"all\"]. 'start digging' / 'dig' / 'resume' -> dig. 'hold', 'stop digging', "
+            "'pause' (said to excavators) -> hold. 'everyone stop' / 'all stop' -> stop([\"all\"]) AND hold([\"all\"]).\n"
+            "Excavators are also truck destinations: 'truck one go to excavator two', 'truck one load at excavator one', "
+            "'truck one unload excavator', 'send truck two to digger three' -> go_to(trucks, excavator=...); no number -> "
+            "excavator='nearest'. 'truck one haul from excavator two' -> haul(excavator=exc-1).\n"
+            "The speaker talks freely (a visitor holding the phone). Map loose or odd phrasing to the closest tool; only call "
+            "no tool if nothing plausible matches.\n\n"
             "Rules: 'haul X to Y' / 'cycle' / 'run loads' -> haul (default to_site = crusher). 'return', 'ready line', "
             "'park' -> return_to_parking. 'stop', 'hold', 'halt', 'all stop' -> stop. 'status', 'report', 'where are you' "
-            "-> status (no trucks named = all). If nothing is a truck command, call no tool."
+            "-> status (no trucks named = all). If nothing is a truck or excavator command, call no tool."
         )
 
 
@@ -590,6 +838,9 @@ class TruckCtl:
     goal: tuple[float, float] | None = None
     goal_set_at: float = 0.0
     near_since: float | None = None  # orbit detection: time we first came within ORBIT_M of the current waypoint
+    dest: tuple[float, float] | None = None
+    site_goal: str | None = None
+    waiting_exc: bool = False
 
     def task_text(self, world: World) -> str:
         if not self.job:
@@ -615,11 +866,25 @@ class Radio:
         self.events: deque = deque(maxlen=60)
         self.sockets: set[WebSocket] = set()
         self.parser = Parser(self.world, lambda: self.truck_ids())
+        self.parser.exc_state_fn = lambda: self.exc_state
         self.voices: dict[str, str] = {}
+        self.exc_state: dict[str, str] = {eid: "holding" for eid in self.world.excavators}  # nothing digs until told
         self.http = httpx.AsyncClient(timeout=20.0)
         self.last_error: str | None = None
         self.tasks: list[asyncio.Task] = []
         self.lock = asyncio.Lock()
+        self.brain_routing = False
+
+    def update_routing(self) -> None:
+        if BRAIN_ROUTING_ENV in ("1", "true", "yes"):
+            self.brain_routing = isinstance(self.brain, RealBrain)
+        elif BRAIN_ROUTING_ENV in ("0", "false", "no"):
+            self.brain_routing = False
+        else:
+            routed = isinstance(self.brain, RealBrain) and brain_routes(self.state)
+            if routed != self.brain_routing:
+                log.info("routing: %s", "brain plans routes ({site} goals)" if routed else "radio chains {x,z} waypoints")
+            self.brain_routing = routed
 
     def truck_ids(self) -> list[str]:
         ids = [t["id"] for t in self.state.get("trucks", [])]
@@ -655,6 +920,7 @@ class Radio:
             self.brain = mb
             self.state = await mb.state()
             self.brain_ok = True
+        self.update_routing()
         self.tasks.append(asyncio.create_task(self.loop()))
         if MOCK_ENV == "auto" and self.brain.mode == "mock":
             self.tasks.append(asyncio.create_task(self.watch_for_brain(real)))
@@ -697,6 +963,8 @@ class Radio:
                 return
             self.world, self.world_mtime = w, m
             self.parser = Parser(w, lambda: self.truck_ids())
+            self.parser.exc_state_fn = lambda: self.exc_state
+            self.exc_state = {eid: self.exc_state.get(eid, "holding") for eid in w.excavators}
             log.info("world.json changed -> reloaded (%d sites, %d road nodes)", len(w.sites), len(w.nodes))
 
     async def loop(self) -> None:
@@ -710,6 +978,7 @@ class Radio:
             try:
                 self.state = await self.brain.state()
                 self.brain_ok, fails = True, 0
+                self.update_routing()
             except Exception as e:
                 fails += 1
                 if fails == 3:
@@ -735,8 +1004,56 @@ class Radio:
             self.last_error = f"set_goal {ctl.id}: {e}"
             log.warning(self.last_error)
 
+    async def post_leg(self, ctl: TruckCtl, site_id: str, goal: tuple[float, float]) -> None:
+        ctl.goal, ctl.dest, ctl.site_goal, ctl.goal_set_at = None, goal, None, time.monotonic()
+        known = brain_site_ids(self.state)
+        try:
+            if not known or site_id in known:
+                try:
+                    await self.brain.set_site(ctl.id, site_id)
+                    ctl.site_goal = site_id
+                    return
+                except httpx.HTTPStatusError as e:
+                    if not 400 <= e.response.status_code < 500:
+                        raise
+                    log.info("brain refused site goal %s for %s (%s); sending x,z", site_id, ctl.id, e.response.status_code)
+            await self.brain.set_goal(ctl.id, round(goal[0], 2), round(goal[1], 2))
+        except Exception as e:
+            self.last_error = f"set_goal {ctl.id}: {e}"
+            log.warning(self.last_error)
+
+    async def yield_override(self, ctl: TruckCtl) -> None:
+        ctl.route, ctl.job, ctl.phase, ctl.target, ctl.goal, ctl.dest, ctl.site_goal = [], None, "idle", None, None, None, None
+        cs = callsign(ctl.id)
+        await self.radio_event(cs, ctl.id, f"{cs}, manual override, releasing radio task.")
+
+    async def tick_routed(self, ctl: TruckCtl, t: dict) -> None:
+        pos = (t["x"], t["z"])
+        if route := route_points(t.get("route")):
+            ctl.dest = route[-1]
+        settled = time.monotonic() - ctl.goal_set_at > OVERRIDE_GRACE_S
+        gs = t.get("goal_site")
+        if settled and ctl.site_goal and gs is not None and gs != ctl.site_goal:
+            await self.yield_override(ctl)
+            return
+        d = math.dist(pos, ctl.dest)
+        cleared = t.get("goal") is None and gs is None
+        if d < ARRIVE_M or (settled and (t.get("status") == "arrived" or (cleared and d < 15.0))):
+            ctl.dest = None
+            await self.on_arrive(ctl, t)
+        elif settled and cleared:
+            await self.yield_override(ctl)
+
+    def remaining_m(self, ctl: TruckCtl, t: dict) -> float | None:
+        pos = (t["x"], t["z"])
+        if ctl.dest:
+            pts = route_points(t.get("route")) or [ctl.dest]
+            return path_len(pos, [Waypoint(x, z) for x, z in pts])
+        return path_len(pos, ctl.route) if ctl.route else None
+
     async def clear(self, ctl: TruckCtl) -> None:
         ctl.route, ctl.job, ctl.phase, ctl.target, ctl.dwell_until, ctl.goal = [], None, "idle", None, 0.0, None
+        ctl.dest = ctl.site_goal = None
         ctl.goal_set_at = time.monotonic()
         try:
             await self.brain.clear_goal(ctl.id)
@@ -746,14 +1063,17 @@ class Radio:
 
     async def tick_truck(self, t: dict) -> None:
         ctl = self.c(t["id"])
+        if ctl.dest:
+            await self.tick_routed(ctl, t)
+            return
         pos = (t["x"], t["z"])
         now = time.monotonic()
         # someone else (web UI click, team script) changed the goal -> yield
         if ctl.job and ctl.goal and now - ctl.goal_set_at > OVERRIDE_GRACE_S:
             g = t.get("goal")
-            if g is None or math.dist(g, ctl.goal) > 0.05:
-                ctl.route, ctl.job, ctl.phase, ctl.target, ctl.goal = [], None, "idle", None, None
-                await self.radio_event(callsign(t["id"]), t["id"], f"{callsign(t['id'])}, manual override, releasing radio task.")
+            brain_arrived = g is None and math.dist(pos, ctl.goal) < BRAIN_CLEAR_M
+            if not brain_arrived and (g is None or math.dist(g, ctl.goal) > 0.05):
+                await self.yield_override(ctl)
                 return
         if ctl.route:
             wp = ctl.route[0]
@@ -762,9 +1082,10 @@ class Radio:
                 ctl.near_since = ctl.near_since or now
             else:
                 ctl.near_since = None
+            reached = t.get("goal") is None and d < BRAIN_CLEAR_M
             orbiting = ctl.near_since is not None and now - ctl.near_since > ORBIT_S / max(MOCK_SPEED if self.brain.mode == "mock" else 1.0, 1.0)
             if wp.final:
-                if d < ARRIVE_M or (t.get("status") == "arrived" and d < 6) or orbiting:
+                if d < ARRIVE_M or (t.get("status") == "arrived" and d < 6) or reached or orbiting:
                     if orbiting and d >= ARRIVE_M:
                         log.info("%s circling final waypoint at %.1f m -> holding here", ctl.id, d)
                         await self.post_goal(ctl, pos[0], pos[1])  # brain arrives instantly -> truck stops
@@ -776,11 +1097,21 @@ class Radio:
                 nx = ctl.route[1]
                 vx, vz = nx.x - wp.x, nx.z - wp.z
                 passed = d < 15 and ((pos[0] - wp.x) * vx + (pos[1] - wp.z) * vz) > 0
-            if d < (BEND_ADVANCE_M if wp.bend else ADVANCE_M) or passed or orbiting:
+            if d < (BEND_ADVANCE_M if wp.bend else ADVANCE_M) or passed or reached or orbiting:
                 ctl.route.pop(0)
                 ctl.near_since = None
                 nxt = ctl.route[0]
                 await self.post_goal(ctl, nxt.x, nxt.z)
+        elif ctl.dwell_until and EXC_WAIT and ctl.phase == "loading" and ctl.job:
+            eid = self.world.exc_for_face(ctl.job.get("from"))
+            if eid and self.exc_state.get(eid) != "digging":
+                ctl.waiting_exc, ctl.dwell_until = True, now + LOAD_DWELL_S
+            elif ctl.waiting_exc:
+                ctl.waiting_exc, ctl.dwell_until = False, now + LOAD_DWELL_S
+                await self.radio_event(exc_callsign(eid), eid, f"{exc_callsign(eid)} loading {callsign(ctl.id)}.", kind="excavator")
+            elif now >= ctl.dwell_until:
+                ctl.dwell_until = 0.0
+                await self.on_dwell_done(ctl, t)
         elif ctl.dwell_until and now >= ctl.dwell_until:
             ctl.dwell_until = 0.0
             await self.on_dwell_done(ctl, t)
@@ -791,8 +1122,13 @@ class Radio:
         goal = point or site.point
         start = (t["x"], t["z"]) if t else goal
         wps = simplify(start, self.world.road_path(start, goal)) or [Waypoint(goal[0], goal[1], True, True)]
-        ctl.route, ctl.target = wps, site_id
-        await self.post_goal(ctl, wps[0].x, wps[0].z)
+        ctl.target = site_id
+        if self.brain_routing:
+            ctl.route = []
+            await self.post_leg(ctl, site_id, goal)
+        else:
+            ctl.route, ctl.dest, ctl.site_goal = wps, None, None
+            await self.post_goal(ctl, wps[0].x, wps[0].z)
         return path_len(start, wps)
 
     def parking_point(self, tid: str) -> tuple[float, float]:
@@ -810,7 +1146,15 @@ class Radio:
         if kind == "haul":
             if ctl.phase == "to_load":
                 ctl.phase, ctl.dwell_until = "loading", time.monotonic() + LOAD_DWELL_S
-                await self.radio_event(cs, ctl.id, f"{cs}, at {self.world.sites[j['from']].name}, loading.", spoken=False)
+                eid = self.world.exc_for_face(j["from"])
+                face = self.world.sites[j["from"]].name
+                if eid and self.exc_state.get(eid) == "digging":
+                    await self.radio_event(exc_callsign(eid), eid, f"{exc_callsign(eid)} loading {cs}.", kind="excavator")
+                elif eid:
+                    ctl.waiting_exc = EXC_WAIT
+                    await self.radio_event(cs, ctl.id, f"{cs}, at {face}, waiting on {exc_callsign(eid)}.")
+                else:
+                    await self.radio_event(cs, ctl.id, f"{cs}, at {face}, loading.", spoken=False)
             elif ctl.phase == "to_dump":
                 ctl.phase, ctl.dwell_until = "dumping", time.monotonic() + DUMP_DWELL_S
                 await self.radio_event(cs, ctl.id, f"{cs}, tipping at {self.world.sites[j['to']].spoken}.", spoken=False)
@@ -846,10 +1190,13 @@ class Radio:
 
     # ---- commands
     async def parse(self, text: str) -> tuple[list[dict], str]:
+        """OpenAI tool calling when a key exists (handles free speech); regex + fuzzy fallback otherwise,
+        or when the LLM errors / returns nothing."""
         if OPENAI_KEY:
             try:
                 calls = await self.parse_llm(text)
-                return calls, "llm"
+                if calls:
+                    return calls, "llm"
             except Exception as e:
                 self.last_error = f"llm: {type(e).__name__}: {e}"
                 log.warning("LLM parse failed, regex fallback: %s", self.last_error)
@@ -880,8 +1227,23 @@ class Radio:
     async def execute(self, calls: list[dict]) -> tuple[list[dict], list[tuple[str, str | None, str]]]:
         actions, replies = [], []
         async with self.lock:
+            exc_replied: set[str] = set()
             for call in calls:
                 name, a = call["name"], call.get("args") or {}
+                if name in ("dig", "hold", "exc_status"):
+                    excs = self.parser.norm_excavators(a.get("excavators"))
+                    actions.append({"tool": name, "excavators": excs})
+                    if not excs:
+                        replies.append(("Control", None, "Control, say again which excavator."))
+                        actions[-1]["error"] = "unknown excavator"
+                    for eid in excs:
+                        if name == "hold" and eid in exc_replied and self.exc_state.get(eid) == "holding":
+                            continue  # already confirmed by an all-stop in this message
+                        if name != "exc_status":
+                            self.exc_state[eid] = "digging" if name == "dig" else "holding"
+                            exc_replied.add(eid)
+                        replies.append((exc_callsign(eid), eid, self.exc_status_text(eid, copy=name == "dig")))
+                    continue
                 trucks = self.parser.norm_trucks(a.get("trucks"))
                 if not trucks and name in ("stop", "status"):
                     trucks = self.truck_ids()
@@ -905,7 +1267,8 @@ class Radio:
                         replies.append((cs, tid, f"Copy, {cs} returning to the ready line."))
                         act["route_m"] = round(d)
                     elif name == "go_to":
-                        sid = self.parser.site_id(a.get("site"))
+                        eid = self.resolve_exc(a.get("excavator"), tid)
+                        sid = self.world.excavators[eid]["face"] if eid else self.parser.site_id(a.get("site"))
                         if not sid:
                             replies.append((cs, tid, f"{cs}, say again destination."))
                             act["error"] = "unknown site"
@@ -919,10 +1282,15 @@ class Radio:
                         else:
                             ctl.job, ctl.phase = {"kind": "goto", "site": sid}, "to_site"
                             d = await self.drive_to(ctl, sid)
-                            replies.append((cs, tid, f"Copy, {cs} heading to {site.spoken}."))
+                            if eid:
+                                replies.append((cs, tid, f"Copy, {cs} heading to {exc_callsign(eid)} at {site.name}."))
+                                act["excavator"] = eid
+                            else:
+                                replies.append((cs, tid, f"Copy, {cs} heading to {site.spoken}."))
                         act["route_m"] = round(d)
                     elif name == "haul":
-                        src = self.parser.site_id(a.get("from_site"))
+                        eid = self.resolve_exc(a.get("excavator"), tid)
+                        src = self.world.excavators[eid]["face"] if eid else self.parser.site_id(a.get("from_site"))
                         dst = self.parser.site_id(a.get("to_site")) or (self.world.by_type("crusher").id)
                         if not src or self.world.sites[src].type != "ore":
                             last = (ctl.job or {}).get("from")
@@ -943,10 +1311,51 @@ class Radio:
                         act["route_m"] = round(d)
                     else:
                         act["error"] = "unknown tool"
+                if set(trucks) >= set(self.truck_ids()):
+                    if name == "stop":  # safety: all stop also holds every excavator
+                        for eid in sorted(self.exc_state):
+                            if self.exc_state[eid] != "holding" and eid not in exc_replied:
+                                self.exc_state[eid] = "holding"
+                                exc_replied.add(eid)
+                                replies.append((exc_callsign(eid), eid, f"{exc_callsign(eid)} holding."))
+                        act["excavators_held"] = True
+                    elif name == "status":
+                        replies += [(exc_callsign(e), e, self.exc_status_text(e)) for e in sorted(self.exc_state)]
         return actions, replies
+
+    def resolve_exc(self, ref, tid: str) -> str | None:
+        """Excavator id from a tool arg; 'nearest' = nearest digging excavator (else nearest) to the truck."""
+        if not ref or not self.world.excavators:
+            return None
+        if str(ref).lower() not in ("nearest", "any", "the excavator", "excavator", "closest"):
+            got = self.parser.norm_excavators([ref])
+            if got:
+                return got[0]
+        t = self.truck(tid)
+        pos = (t["x"], t["z"]) if t else (0.0, 0.0)
+        pool = [e for e in self.world.excavators if self.exc_state.get(e) == "digging"] or list(self.world.excavators)
+        return min(pool, key=lambda e: math.dist(pos, (self.world.excavators[e]["x"], self.world.excavators[e]["z"])))
+
+    def exc_status_text(self, eid: str, copy: bool = False) -> str:
+        cs, e = exc_callsign(eid), self.world.excavators.get(eid, {})
+        site = self.world.sites.get(e.get("face") or "")
+        if self.exc_state.get(eid) == "digging":
+            return f"{'Copy, ' if copy else ''}{cs} digging at {site.name if site else 'the face'}."
+        return f"{cs} holding."
+
+    def exc_view(self) -> list[dict]:
+        out = []
+        for eid, e in sorted(self.world.excavators.items()):
+            site = self.world.sites.get(e.get("face") or "")
+            out.append({"id": eid, "callsign": exc_callsign(eid), "face": e.get("face"),
+                        "face_name": site.name if site else None, "state": self.exc_state.get(eid, "holding"),
+                        "x": round(e["x"], 2), "z": round(e["z"], 2), "heading_deg": e.get("heading_deg", 0.0),
+                        "pos3": e.get("pos3")})
+        return out
 
     async def clear_job(self, ctl: TruckCtl) -> None:
         ctl.route, ctl.job, ctl.phase, ctl.target, ctl.dwell_until = [], None, "idle", None, 0.0
+        ctl.dest = ctl.site_goal = None
 
     def status_text(self, tid: str) -> str:
         cs, t, ctl = callsign(tid), self.truck(tid), self.c(tid)
@@ -954,9 +1363,9 @@ class Radio:
             return f"{cs}, no position."
         pos = (t["x"], t["z"])
         if ctl.job:
-            rem = path_len(pos, ctl.route) if ctl.route else 0
+            rem = self.remaining_m(ctl, t)
             txt = ctl.task_text(self.world)
-            if ctl.route:
+            if rem is not None:
                 return f"{cs}, {txt}, {rem:.0f} meters out."
             return f"{cs}, {txt}."
         near = min(self.world.sites.values(), key=lambda s: math.dist(pos, s.point))
@@ -968,6 +1377,8 @@ class Radio:
         async with self.lock:
             for tid in self.truck_ids():
                 await self.clear(self.c(tid))
+            for eid in self.exc_state:
+                self.exc_state[eid] = "holding"
 
     # ---- radio events + TTS
     async def radio_event(self, frm: str, truck_id: str | None, text: str, kind: str = "truck", spoken: bool = True,
@@ -982,7 +1393,7 @@ class Radio:
 
     async def pick_voices(self) -> None:
         override = [v.strip() for v in os.environ.get("ELEVENLABS_VOICE_IDS", "").split(",") if v.strip()]
-        keys = ["dispatch"] + self.truck_ids()
+        keys = ["dispatch"] + self.truck_ids() + ["excavator"]
         if override:
             self.voices = {k: override[i % len(override)] for i, k in enumerate(keys)}
             return
@@ -1006,8 +1417,13 @@ class Radio:
         truck_voices = [avail[n] for n in male if n in avail and avail[n] != disp]
         truck_voices += [v for v in avail.values() if v != disp and v not in truck_voices]
         self.voices = {"dispatch": disp}
-        for i, tid in enumerate(sorted(set(self.truck_ids()) | {f"truck-{k}" for k in range(3)})):
+        tids = sorted(set(self.truck_ids()) | {f"truck-{k}" for k in range(3)})
+        for i, tid in enumerate(tids):
             self.voices[tid] = truck_voices[i % len(truck_voices)] if truck_voices else disp
+        used = set(self.voices.values())
+        prefer = ["Bill", "Roger", "Brian", "Daniel", "Eric", "Chris", "Liam", "Will", "Charlie", "Arnold", "Josh"]
+        self.voices["excavator"] = next((avail[n] for n in prefer if n in avail and avail[n] not in used),
+                                        next((v for v in avail.values() if v not in used), disp))
         names = {v: n for n, v in avail.items()}
         log.info("voices: %s", {k: names.get(v, v[:6]) for k, v in self.voices.items()})
 
@@ -1016,6 +1432,8 @@ class Radio:
             return None
         if not self.voices:
             await self.pick_voices()
+        if speaker.startswith("exc-"):
+            speaker = "excavator"
         voice = self.voices.get(speaker) or self.voices.get("dispatch")
         if not voice:
             return None
@@ -1023,6 +1441,9 @@ class Radio:
         path = CACHE_DIR / f"{key}.mp3"
         if path.exists():
             return f"/api/radio/audio/{key}.mp3"
+        if not LIMITS["tts"].allow("*"):
+            log.warning("tts rate limit reached; reply goes out without audio")
+            return None
         try:
             r = await self.http.post(
                 f"{EL_BASE}/v1/text-to-speech/{voice}",
@@ -1068,20 +1489,20 @@ class Radio:
     # ---- websocket
     def truck_view(self, t: dict) -> dict:
         ctl = self.c(t["id"])
-        pos = (t["x"], t["z"])
         return {
             "id": t["id"], "callsign": callsign(t["id"]), "x": round(t["x"], 2), "z": round(t["z"], 2),
             "yaw": round(t.get("yaw", 0), 1), "speed": round(t.get("speed", 0), 2), "status": t.get("status"),
             "goal": t.get("goal"), "phase": ctl.phase, "task": ctl.task_text(self.world),
             "target": self.world.sites[ctl.target].name if ctl.target else None,
-            "remaining_m": round(path_len(pos, ctl.route)) if ctl.route else None,
-            "route": [[round(w.x, 1), round(w.z, 1)] for w in ctl.route],
+            "remaining_m": None if (rem := self.remaining_m(ctl, t)) is None else round(rem),
+            "route": [[round(x, 1), round(z, 1)] for x, z in
+                      (route_points(t.get("route")) if ctl.dest else [(w.x, w.z) for w in ctl.route])],
         }
 
     def state_msg(self) -> dict:
         return {"type": "state", "t": time.time(), "mode": self.brain.mode if self.brain else None,
                 "brain_ok": self.brain_ok, "sim_connected": self.state.get("sim_connected"),
-                "trucks": [self.truck_view(t) for t in self.state.get("trucks", [])]}
+                "trucks": [self.truck_view(t) for t in self.state.get("trucks", [])], "excavators": self.exc_view()}
 
     async def broadcast(self, msg: dict) -> None:
         dead = []
@@ -1097,15 +1518,100 @@ class Radio:
         return {
             "ok": True, "mode": self.brain.mode if self.brain else None, "mock": bool(self.brain and self.brain.mode == "mock"),
             "brain_url": BRAIN_URL, "brain_ok": self.brain_ok, "sim_connected": self.state.get("sim_connected"),
-            "world": self.world.raw.get("id"), "trucks": self.truck_ids(),
+            "world": self.world.raw.get("id"), "trucks": self.truck_ids(), "excavators": sorted(self.world.excavators),
             "stt": bool(EL_KEY or OPENAI_KEY), "stt_provider": "elevenlabs" if EL_KEY else ("openai" if OPENAI_KEY else None),
             "tts": bool(EL_KEY), "tts_model": EL_TTS_MODEL if EL_KEY else None,
             "llm": bool(OPENAI_KEY), "llm_model": OPENAI_MODEL if OPENAI_KEY else None,
             "voices_ready": bool(self.voices), "last_error": self.last_error,
+            "routing": "brain" if self.brain_routing else "radio", "auth_required": bool(RADIO_PIN),
         }
+
+    def public_health(self) -> dict:
+        h = self.health()
+        return {k: h[k] for k in ("ok", "mode", "brain_ok", "sim_connected", "stt", "tts", "llm", "routing", "auth_required")}
 
 
 # --------------------------------------------------------------------------- app
+
+
+class Limiter:
+    def __init__(self, per_min: int):
+        self.per_min = per_min
+        self.hits: dict[str, deque] = {}
+
+    def room(self, key: str, now: float) -> bool:
+        if self.per_min <= 0:
+            return True
+        q = self.hits.get(key)
+        while q and now - q[0] >= 60.0:
+            q.popleft()
+        if q is not None and not q:
+            del self.hits[key]
+            q = None
+        return q is None or len(q) < self.per_min
+
+    def hit(self, key: str, now: float) -> None:
+        if self.per_min > 0:
+            self.hits.setdefault(key, deque()).append(now)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        if not self.room(key, now):
+            return False
+        self.hit(key, now)
+        return True
+
+
+class RateGate:
+    def __init__(self, per_client: int, per_all: int):
+        self.client, self.all = Limiter(per_client), Limiter(per_all)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        if not (self.client.room(key, now) and self.all.room("*", now)):
+            return False
+        self.client.hit(key, now)
+        self.all.hit("*", now)
+        return True
+
+
+LIMITS = {
+    "stt": RateGate(env_int("RADIO_STT_PER_MIN", 10), env_int("RADIO_STT_GLOBAL_PER_MIN", 30)),
+    "command": RateGate(env_int("RADIO_COMMAND_PER_MIN", 20), env_int("RADIO_COMMAND_GLOBAL_PER_MIN", 60)),
+    "login": RateGate(env_int("RADIO_LOGIN_PER_MIN", 5), env_int("RADIO_LOGIN_GLOBAL_PER_MIN", 20)),
+    "tts": Limiter(env_int("RADIO_TTS_GLOBAL_PER_MIN", 60)),
+}
+SESSIONS: dict[str, float] = {}
+
+
+def client_ip(request: Request | WebSocket) -> str:
+    fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return fwd or (request.client.host if request.client else "?")
+
+
+def session_of(cookies) -> str | None:
+    tok = cookies.get(SESSION_COOKIE) or ""
+    exp = SESSIONS.get(tok)
+    return tok if exp and exp > time.time() else None
+
+
+def requester(request: Request) -> str:
+    if not RADIO_PIN:
+        return "ip:" + client_ip(request)
+    tok = session_of(request.cookies)
+    if not tok:
+        raise HTTPException(401, "access code required")
+    return "s:" + tok
+
+
+def is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+
+
+def limit(kind: str, who: str) -> None:
+    if not LIMITS[kind].allow(who):
+        raise HTTPException(429, f"{kind} rate limit, try again in a minute")
+
 
 radio = Radio()
 
@@ -1117,11 +1623,33 @@ async def lifespan(app: FastAPI):
     await radio.stop()
 
 
-app = FastAPI(title="Haul truck radio", lifespan=lifespan)
+app = FastAPI(title="Haul truck radio", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
+
+# Aerial 3D view for the laptop/projector: /view -> envgen/preview (live mode follows this radio's truck state)
+from fastapi.responses import RedirectResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+for _url, _dir in (
+    ("/envgen/preview", REPO / "envgen" / "preview"),
+    ("/data", REPO / "data"),
+    ("/assets", REPO / "assets"),
+    ("/unity/Assets/Models/Trucks", REPO / "unity" / "Assets" / "Models" / "Trucks"),
+):
+    if _dir.is_dir():
+        app.mount(_url, StaticFiles(directory=_dir), name=_url.strip("/").replace("/", "_"))
+
+
+@app.get("/view")
+def view():
+    return RedirectResponse("/envgen/preview/index.html?live=1")
 
 
 class Command(BaseModel):
     text: str
+
+
+class Login(BaseModel):
+    pin: str
 
 
 @app.get("/")
@@ -1130,47 +1658,87 @@ def index():
 
 
 @app.get("/api/radio/health")
-def health():
+def health(request: Request):
+    if RADIO_PIN and not session_of(request.cookies):
+        return radio.public_health()
     return radio.health()
 
 
+@app.post("/api/radio/login")
+def login(body: Login, request: Request, response: Response):
+    if not RADIO_PIN:
+        return {"ok": True, "auth_required": False}
+    limit("login", client_ip(request))
+    if not hmac.compare_digest(body.pin.strip().encode(), RADIO_PIN.encode()):
+        raise HTTPException(401, "wrong access code")
+    now = time.time()
+    for tok in [t for t, exp in SESSIONS.items() if exp <= now]:
+        del SESSIONS[tok]
+    tok = secrets.token_urlsafe(32)
+    SESSIONS[tok] = now + SESSION_TTL_S
+    response.set_cookie(SESSION_COOKIE, tok, max_age=int(SESSION_TTL_S), httponly=True, secure=is_https(request),
+                        samesite="strict", path="/")
+    return {"ok": True}
+
+
 @app.get("/api/radio/state")
-def state():
+def state(who: str = Depends(requester)):
     return dict(radio.state_msg(), log=list(radio.events)[-15:])
 
 
+@app.get("/api/radio/excavators")
+def excavators():
+    """Lightweight excavator state for pollers (Unity): [{id, face, state, heading_deg, pos3}]."""
+    return [{k: e[k] for k in ("id", "face", "state", "heading_deg", "pos3")} for e in radio.exc_view()]
+
+
 @app.get("/api/radio/world")
-def world():
+def world(who: str = Depends(requester)):
     w = radio.world
-    return {"id": w.raw.get("id"), "bounds": w.bounds, "roads": w.road_lines,
+    wid = w.raw.get("id")
+    has_map = (REPO / "data" / "worlds" / str(wid) / "minimap.png").exists()
+    return {"id": wid, "bounds": w.bounds, "roads": w.road_lines,
+            "origin": w.raw.get("origin"), "size_m": w.raw.get("size_m"),
+            "basemap": f"/data/worlds/{wid}/minimap.png" if has_map else None,
             "sites": [{"id": s.id, "type": s.type, "name": s.name, "x": s.point[0], "z": s.point[1]} for s in w.sites.values()]}
 
 
+AUDIO_TYPES = {"audio/webm": "webm", "video/webm": "webm", "audio/mp4": "m4a", "video/mp4": "m4a", "audio/x-m4a": "m4a",
+               "audio/aac": "aac", "audio/ogg": "ogg", "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3"}
+
+
 @app.post("/api/radio/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    data = await audio.read()
+async def transcribe(audio: UploadFile = File(...), who: str = Depends(requester)):
+    ctype = (audio.content_type or "").split(";")[0].strip().lower()
+    if ctype not in AUDIO_TYPES:
+        raise HTTPException(415, "unsupported audio type")
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, f"recording too long (max {MAX_AUDIO_BYTES // 1024} KB)")
     if len(data) < 800:
         return {"text": "", "note": "recording too short"}
-    ctype = (audio.content_type or "audio/webm").split(";")[0]
-    ext = {"audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac", "audio/ogg": "ogg", "audio/wav": "wav",
-           "audio/mpeg": "mp3"}.get(ctype, "webm")
+    limit("stt", who)
     t0 = time.monotonic()
-    text = await radio.transcribe(data, f"ptt.{ext}", ctype)
+    text = await radio.transcribe(data, f"ptt.{AUDIO_TYPES[ctype]}", ctype)
     return {"text": text, "ms": round((time.monotonic() - t0) * 1000)}
 
 
 @app.post("/api/radio/command")
-async def command(cmd: Command):
+async def command(cmd: Command, who: str = Depends(requester)):
     text = cmd.text.strip()
     if not text:
         raise HTTPException(400, "empty command")
+    if len(text) > MAX_COMMAND_CHARS:
+        raise HTTPException(413, f"command too long (max {MAX_COMMAND_CHARS} characters)")
+    limit("command", who)
     t0 = time.monotonic()
     await radio.radio_event("Dispatch", None, text, kind="operator", audio=False)
     calls, parser = await radio.parse(text)
     actions, replies = await radio.execute(calls)
     if not replies:
         replies = [("Control", None, "Control, say again, over.")]
-    evs = await asyncio.gather(*[radio.radio_event(frm, tid, txt, kind="control" if tid is None else "truck")
+    evs = await asyncio.gather(*[radio.radio_event(frm, tid, txt, kind="control" if tid is None else
+                                                   "excavator" if tid.startswith("exc-") else "truck")
                                  for frm, tid, txt in replies])
     return {
         "heard": text, "parser": parser, "actions": actions,
@@ -1181,37 +1749,47 @@ async def command(cmd: Command):
 
 
 @app.post("/api/radio/release")
-async def release():
+async def release(who: str = Depends(requester)):
     await radio.release()
-    await radio.radio_event("Control", None, "All radio tasks released. Trucks holding.", kind="control")
+    await radio.radio_event("Control", None, "All radio tasks released. Trucks and excavators holding.", kind="control")
     return {"ok": True}
 
 
 @app.get("/api/radio/audio/{name}")
-def audio(name: str):
+def audio(name: str, who: str = Depends(requester)):
     if not re.fullmatch(r"[0-9a-f]{20}\.mp3", name):
         raise HTTPException(404)
     p = CACHE_DIR / name
-    if not p.exists():
+    if not p.is_file():
         raise HTTPException(404)
-    return FileResponse(p, media_type="audio/mpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(p, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+WS_MAX_MSG = 512
 
 
 @app.websocket("/ws/radio")
 async def ws_radio(ws: WebSocket):
     await ws.accept()
+    if RADIO_PIN and not session_of(ws.cookies):
+        await ws.close(code=4401)
+        return
     radio.sockets.add(ws)
     try:
         await ws.send_json({"type": "hello", "health": radio.health(), "log": list(radio.events)})
         await ws.send_json(radio.state_msg())
         while True:
             msg = await ws.receive_text()
+            if len(msg) > WS_MAX_MSG:
+                await ws.close(code=1009)
+                break
             try:
                 m = json.loads(msg)
             except ValueError:
                 continue
-            if m.get("type") == "ping":
-                await ws.send_json({"type": "pong", "t": m.get("t")})
+            if isinstance(m, dict) and m.get("type") == "ping":
+                t = m.get("t")
+                await ws.send_json({"type": "pong", "t": t if isinstance(t, (int, float)) else None})
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
@@ -1223,10 +1801,42 @@ async def http_exc(_, exc: HTTPException):
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
 
+@app.exception_handler(Exception)
+async def any_exc(_, exc: Exception):
+    log.exception("unhandled: %s", exc)
+    return JSONResponse({"error": "internal error"}, status_code=500)
+
+
+def lan_ip() -> str:
+    if ip := os.environ.get("RADIO_LAN_IP"):
+        return ip
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def self_signed_cert() -> tuple[str, str]:
+    d = RADIO_DIR / "secrets" / "tls"
+    cert, key, stamp = d / "cert.pem", d / "key.pem", d / "san.txt"
+    ip = lan_ip()
+    if not (cert.is_file() and key.is_file() and stamp.is_file() and stamp.read_text() == ip):
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+                        "-subj", "/CN=haul-radio", "-addext", f"subjectAltName=DNS:localhost,IP:127.0.0.1,IP:{ip}",
+                        "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+        key.chmod(0o600)
+        stamp.write_text(ip)
+    return str(cert), str(key)
+
+
 if __name__ == "__main__":
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         import websockets  # noqa: F401
     except ImportError:
@@ -1235,4 +1845,15 @@ if __name__ == "__main__":
         except ImportError:
             log.warning("no websocket library: /ws/radio disabled, phone falls back to HTTP polling. "
                         "Use --with 'uvicorn[standard]' (see radio/run.sh) for websockets.")
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 8090)), log_level="info")
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", 8090))
+    tls: dict = {}
+    cert, key = os.environ.get("SSL_CERTFILE"), os.environ.get("SSL_KEYFILE")
+    if not cert and os.environ.get("RADIO_TLS", "").lower() in ("1", "true", "yes"):
+        cert, key = self_signed_cert()
+    if cert:
+        tls = {"ssl_certfile": cert, "ssl_keyfile": key}
+        log.info("HTTPS on https://%s:%d (self-signed: accept the browser warning once)",
+                 lan_ip() if host == "0.0.0.0" else host, port)
+    if RADIO_PIN:
+        log.info("access code required (RADIO_PIN)")
+    uvicorn.run(app, host=host, port=port, log_level="info", ws_max_size=64 * 1024, server_header=False, **tls)

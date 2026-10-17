@@ -49,3 +49,4 @@ def test_sector_ranges_ignore_invalid_depth():
     depth[18, 40] = 7.0
     left, centre, right = sector_ranges(depth)
     assert left == np.inf and centre == pytest.approx(7.0) and right == np.inf
+

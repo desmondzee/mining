@@ -1,35 +1,57 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import struct
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import planning
 from .bridge import SimBridge
 from .hub import LatestHub
+from .video import VideoHub
 from .world import World
 
 log = logging.getLogger(__name__)
 
 STATE_HZ = 10
+LIDAR_VIEWER_HZ = 10
 DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
 
 class Goal(BaseModel):
-    x: float
-    z: float
+    x: float | None = None
+    z: float | None = None
+    site: str | None = None
+
+
+def load_world_meta(world_dir: Path) -> dict:
+    try:
+        return json.loads((world_dir / "world.json").read_text())
+    except (OSError, ValueError):
+        return {}
 
 
 def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR) -> FastAPI:
+    world_dir = Path(os.environ.get("WORLD_DIR", planning.DEFAULT_WORLD_DIR))
+    meta = load_world_meta(world_dir)
+    preview = world_dir / meta["assets"]["preview"] if meta.get("assets", {}).get("preview") else None
+    preview = preview if preview and preview.is_file() else None
     world = World()
+    nav = planning.nav_map()
+    if nav is not None:
+        world.bounds = nav.bounds
     video = LatestHub()
     lidar = LatestHub()
-    bridge = SimBridge(world, video, lidar)
+    h264 = VideoHub()
+    bridge = SimBridge(world, video, lidar, h264)
+    lidar_period = 1 / float(os.environ.get("LIDAR_VIEWER_HZ", LIDAR_VIEWER_HZ))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -40,10 +62,12 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         yield
         if server:
             server.close()
+        h264.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.world = world
     app.state.video = video
+    app.state.h264 = h264
     app.state.lidar = lidar
     app.state.bridge = bridge
 
@@ -51,17 +75,61 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     def get_state():
         return world.snapshot()
 
-    def set_goal(truck_id: str, goal: tuple[float, float] | None) -> dict:
+    @app.get("/api/world")
+    def get_world():
+        return {**world.network(), "preview": preview is not None, "preview_bounds": meta.get("bounds")}
+
+    @app.get("/api/world/preview")
+    def get_preview():
+        if preview is None:
+            raise HTTPException(404, "no world preview")
+        return FileResponse(preview)
+
+    def find_truck(truck_id: str):
         if truck_id not in world.trucks:
             raise HTTPException(404, f"unknown truck {truck_id}")
-        truck = world.trucks[truck_id]
-        truck.goal = goal
-        truck.status = "driving" if goal else "idle"
+        return world.trucks[truck_id]
+
+    def nodes() -> dict[str, tuple[float, float]]:
+        return world.nodes() or (dict(nav.sites) if nav is not None else {})
+
+    def set_goal(truck_id: str, goal: tuple[float, float] | None, site: str | None = None) -> dict:
+        truck = find_truck(truck_id)
+        truck.set_goal(goal, site)
+        if goal and nav is not None:
+            route = planning.plan_route(nav, (truck.x, truck.z), goal)
+            if route is None:
+                log.warning("no route for %s to %s; driving straight", truck_id, goal)
+            else:
+                truck.path = route.round(2).tolist()
         return truck.to_dict()
+
+    def set_site(truck_id: str, site: str) -> dict:
+        known = nodes()
+        if site not in known:
+            raise HTTPException(404, f"unknown site {site}")
+        return set_goal(truck_id, known[site], site)
 
     @app.post("/api/trucks/{truck_id}/goal")
     def post_goal(truck_id: str, goal: Goal):
+        if goal.site is not None:
+            return set_site(truck_id, goal.site)
+        if goal.x is None or goal.z is None:
+            raise HTTPException(422, "goal needs site or x and z")
+        if world.roads:
+            known = world.nodes()
+            return set_site(truck_id, min(known, key=lambda n: math.dist(known[n], (goal.x, goal.z))))
         return set_goal(truck_id, (goal.x, goal.z))
+
+    @app.get("/api/sites")
+    def get_sites():
+        if nav is None:
+            return []
+        return [{"id": k, "type": nav.site_types[k], "pos": list(p)} for k, p in nav.sites.items()]
+
+    @app.post("/api/trucks/{truck_id}/site/{site_id}")
+    def post_site(truck_id: str, site_id: str):
+        return set_site(truck_id, site_id)
 
     @app.delete("/api/trucks/{truck_id}/goal")
     def delete_goal(truck_id: str):
@@ -76,9 +144,21 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
 
     @app.websocket("/ws/video")
-    async def ws_video(ws: WebSocket):
+    async def ws_video(ws: WebSocket, codec: str = "h264"):
         await ws.accept()
+        if codec == "h264":
+            viewer = h264.subscribe()
+            try:
+                while True:
+                    for msg in await viewer.next_batch():
+                        await ws.send_bytes(msg)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            finally:
+                h264.unsubscribe(viewer)
+            return
         seen: dict[str, int] = {}
+        video.subscribers += 1
         try:
             while True:
                 for camera, jpeg in await video.wait_newer(seen):
@@ -86,16 +166,22 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
                     await ws.send_bytes(struct.pack("B", len(name)) + name + jpeg)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        finally:
+            video.subscribers -= 1
 
     @app.websocket("/ws/lidar")
     async def ws_lidar(ws: WebSocket, truck: str):
         await ws.accept()
         seen: dict[str, int] = {}
+        loop = asyncio.get_running_loop()
+        next_send = 0.0
         try:
             while True:
+                await asyncio.sleep(max(0.0, next_send - loop.time()))
                 for truck_id, msg in await lidar.wait_newer(seen):
                     if truck_id == truck:
                         await ws.send_bytes(msg)
+                        next_send = loop.time() + lidar_period
         except (WebSocketDisconnect, RuntimeError):
             pass
 
@@ -104,7 +190,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         await ws.accept()
         try:
             while True:
-                await ws.send_json(world.snapshot())
+                await ws.send_json(world.snapshot(network=False))
                 await asyncio.sleep(1 / STATE_HZ)
         except (WebSocketDisconnect, RuntimeError):
             pass

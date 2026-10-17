@@ -25,7 +25,17 @@
 |---|---|---|
 | Unity → brain, same host | localhost | 4 × ~10 KB JPEG × 15 fps + 3 × ~27 KB lidar × 10 Hz ≈ 1.4 MB/s |
 | Mac → watson (SSH via Brev) | 0.35–0.45 MB/s | too low for Unity on Mac with brain on watson; run brain locally |
-| watson → viewer (SSH via Brev) | 1.4–1.9 MB/s | ~0.6 MB/s video + ~0.27 MB/s lidar (selected truck) |
+| watson → viewer (SSH via Brev) | 1.4–1.9 MB/s | H.264: ≤0.3 MB/s video + ~0.04 MB/s lidar per viewer |
+
+| Per viewer, 4 cameras 640×360 15 fps + lidar 10 Hz (5 viewers, local) | Before (JPEG, raw lidar) | After (H.264, zlib lidar) |
+|---|---|---|
+| Photographic frames (quarry pano crops, ~22 KB JPEG) | 1346 KB/s video | 294 KB/s video |
+| Unity quarry trucks (35–41 KB JPEG, measured on watson) | ~2300 KB/s video | ≤275 KB/s video (bitrate cap) |
+| Fakesim flat world | 459 KB/s video | 60 KB/s video |
+| Lidar, selected truck (fakesim scan) | 34.5 KB/scan, 345 KB/s | 3.8 KB/scan, 38 KB/s |
+| H.264 keyframe size | | 15–19 KB |
+| Brain CPU (Mac M-series, 4 encodes + 4 JPEG decodes + policy) | 39% of a core (JPEG fallback, encoders still running) | 31% of a core |
+| x264 encode time per 640×360 frame (M-series) | | 1.8 ms |
 
 ## Network
 
@@ -232,6 +242,41 @@
 | Pedestrian height (m) | 1.8 | `brain/brain/fakesim.py:PEDESTRIAN_HEIGHT` |
 | Pedestrian colour | RGB (255, 120, 20) | |
 | Actors rate (Hz) | 10 | `brain/brain/fakesim.py:ACTORS_HZ` |
+| Modes | flat test world (default), world mode `--world <dir>` | |
+
+## Fake sim world
+
+| Item | Value | Source |
+|---|---|---|
+| Option | `fakesim --world ../data/worlds/quarry`; empty = flat world | |
+| Input | `<dir>/world.json` | |
+| Bounds | `world.json` `bounds`, walls at bounds | |
+| Ground | flat, y = 0 for cameras and collisions | |
+| Lidar terrain | point y offset by `navgrid.json` ground at the hit minus ground under the truck (planner ground filter) | |
+| Roads | `roads[]` with `points` reduced to x, z | |
+| Sites | `sites[]` `{id, type, name}`, x, z from `pos` | |
+| Junctions | `junctions[]`, x, z from `pos` | |
+| Trucks | `trucks[]` by `slot`, `spawn`, yaw = `heading_deg` | |
+| Obstacles | `equipment[]` as cylinders, no rocks | |
+| Equipment radius (m) | 5 | `brain/brain/fakesim.py:EQUIPMENT_RADIUS` |
+| Equipment height (m) | 5 | `brain/brain/fakesim.py:EQUIPMENT_HEIGHT` |
+| Overview | roads drawn at `width_m` | |
+| Docker | `docker compose --profile fake up` runs `/app/data/worlds/quarry`; `FAKESIM_WORLD=` for the flat world | |
+| Data | `./data` mounted read-only at `/app/data` (brain and fakesim) | |
+
+| Pedestrian crossings | Value | Source |
+|---|---|---|
+| Roads used | roads sorted by `id`, first N | |
+| Crossing count | 4 | `brain/brain/fakesim.py:CROSSING_ROADS` |
+| Position | road polyline arc-length midpoint | |
+| Direction | perpendicular to the segment containing the midpoint | |
+| Waypoint order | left → right of the road's from → to direction | |
+| Extra length beyond road width (m) | 12 | `brain/brain/fakesim.py:CROSSING_EXTRA` |
+| Length | `width_m` + extra, centred on the road | |
+| Walkers per crossing | 3 | `brain/brain/fakesim.py:PEDESTRIANS_PER_PATH` |
+| Start fractions | 0, 1/3, 2/3 | |
+| Mode | ping-pong | |
+| Sent as | hello `paths` | |
 
 ## Truck dynamics
 
@@ -258,7 +303,39 @@
 | Slow distance (m) | 15 | `brain/brain/policy.py:SLOW_DIST` |
 | Full-steer heading error (deg) | 45 | `brain/brain/policy.py:STEER_GAIN_DEG` |
 | Depth band | rows 35 %–65 %, split into left / centre / right thirds | |
-| Statuses | `idle`, `driving`, `avoiding`, `arrived` | |
+| Statuses | `idle`, `driving`, `avoiding`, `holding`, `arrived` | |
+
+## Planner
+
+| Item | Value | Source |
+|---|---|---|
+| World | `data/worlds/default/` (`world.json`, `navgrid.json`), override with `WORLD_DIR` | |
+| Route | A* on the nav grid (impassable cells grown by one cell), Chaikin smoothing, 2 m spacing | |
+| Route edge cost | step cost + edge cost × (1 − clearance / safe clearance), clearance = cell centre to nearest blocked cell | |
+| Edge cost | 2.0 | `brain/brain/planning/navmap.py:EDGE_COST` |
+| Safe clearance (m) | 6.0 | `brain/brain/planning/navmap.py:SAFE_CLEARANCE` |
+| Used when | the truck has a route; otherwise the straight-to-goal policy above | |
+| Candidates | 11 steer × 4 target speeds (8, 5, 2.5, 0 m/s), kinematic bicycle rollout | |
+| Candidate horizon (s) | 3.0 | `brain/brain/planning/driver.py:HORIZON` |
+| Rollout step (s) | 0.1 | `brain/brain/planning/driver.py:DT` |
+| Planner max speed (m/s) | 8.0 | `brain/brain/planning/driver.py:MAX_V` |
+| Planner arrive radius (m) | 5.0 | `brain/brain/planning/driver.py:ARRIVE_RADIUS` |
+| Output | throttle = target speed / 8, steer = candidate steer | |
+| Chooser | hand-tuned score (baseline), or learned scorer from `PLANNER_CKPT` (needs torch) | |
+| Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
+| Lidar mount override | `LIDAR_HEIGHT` env var | |
+| Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
+| Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
+| Obstacles | lidar points above the nav-grid ground on free cells; points on walls are left to the grid | |
+| Truck half width (m) | 2.12 | `brain/brain/planning/driver.py:TRUCK_HALF_W` |
+| Edge margin (m) | 0.5 | `brain/brain/planning/driver.py:EDGE_MARGIN` |
+| Unsafe candidate | the centre or either side (half width + edge margin) hits a blocked cell, or comes within 1.5 m of an obstacle while closing in | |
+| Holding | chosen target speed is 0, or no candidate is safe | |
+| Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
+| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
+| Route in state | `trucks[].route` = `path` | |
+| Goal resolution | `{site}` → hello `sites` ∪ `junctions` position (fallback `world.json` sites), then A* route | |
+| On arrival | `goal`, `goal_site`, `path`, `ghost_paths` cleared, status `arrived` then `idle` | |
 
 ## Sim protocol (TCP)
 
@@ -270,7 +347,7 @@
 
 | Message | Direction | Header | Payload |
 |---|---|---|---|
-| `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]` | none |
+| `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]`; optional `roads[{id,from,to,width_m,one_way,points[{x,z}]}]` (points from → to), `sites[{id,type,name,x,z}]`, `junctions[{id,x,z}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
@@ -280,18 +357,63 @@
 
 | Item | Value | Source |
 |---|---|---|
-| Video | `GET /ws/video` binary: `u8 name_len \| name \| JPEG` | |
-| Video delivery | latest frame per camera, slow clients skip frames | |
+| Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| H.264 Annex B AU` | |
+| Video encoder | libx264 via PyAV (bundled in the aarch64/x86_64/macOS wheels, no NVENC), one encoder thread per camera shared by all viewers, `tune=zerolatency`, no B-frames, SPS/PPS in band on every keyframe, VBV cap = bitrate over 1 s | |
+| Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |
+| x264 preset | `veryfast` | |
+| Video frame rate (fps) | 15 | `brain/brain/video.py:FPS` |
+| Keyframe interval (frames) | 15 | `brain/brain/video.py:GOP_FRAMES` |
+| Truck camera bitrate (kbps) | 600 | `brain/brain/video.py:TRUCK_KBPS` |
+| Overview bitrate (kbps) | 400 | `brain/brain/video.py:OVERVIEW_KBPS` |
+| Video join | new viewer gets the current GOP (latest keyframe + following AUs), then live AUs | |
+| Viewer queue (AUs per camera) | 30 | `brain/brain/video.py:VIEWER_QUEUE` |
+| Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
+| Encoder overload | latest frame wins, frames arriving while encoding are dropped | |
+| Browser decode | WebCodecs `VideoDecoder`, Annex B (no `description`), `web/video.js` | |
+| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| JPEG`, latest frame per camera; used when `VideoDecoder` lacks `avc1.42e01e` | |
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |
-| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 int16 cm points` | |
+| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| zlib(planar delta int16 cm)` | |
+| Lidar payload | int16 cm, planes x[N], y[N], z[N], each delta coded from 0 (wrapping int16), zlib (`protocol.py compress_points`); browser inflates with `DecompressionStream("deflate")`, `web/lidar_stream.js` | |
+| Lidar zlib level | 6 | `brain/brain/protocol.py:LIDAR_ZLIB_LEVEL` |
+| Lidar compression | encoded once per scan in the bridge, shared by all viewers | |
+| Lidar viewer rate (Hz), env `LIDAR_VIEWER_HZ` | 10 | `brain/brain/app.py:LIDAR_VIEWER_HZ` |
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
-| Map | rocks, pedestrian paths, pedestrians, trucks, goals | |
-| Read state | `GET /api/state` | |
-| Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
-| Clear goal | `DELETE /api/trucks/{id}/goal` | |
+| Map | preview background, roads (scaled by `width_m`), sites (labelled, coloured by type), junctions, obstacles, pedestrian paths, pedestrians, truck routes, goals, trucks | |
+| Map extent | hello `bounds` | |
+| Map canvas (px) | 800 × 800, CSS-scaled | |
+| Map click | `POST` `{x,z}` for the selected truck (brain snaps to a node when roads exist) | |
+| Send to | per-truck site select, `POST` `{site}` | |
+| Truck list | status, speed, `goal_site` | |
+| Read state | `GET /api/state`: `bounds`, `roads`, `sites`, `junctions`, `world_seq`, `cameras`, `truck_model`, `obstacles`, `paths`, `pedestrians`, `trucks[{id,x,z,yaw,speed,goal,goal_site,route,path_idx,ghost_paths,status,throttle,steer}]` | |
+| State stream | `/ws/state` = `/api/state` without `roads`, `sites`, `junctions`; refetch `/api/world` when `world_seq` changes | |
+| World | `GET /api/world` → `{bounds, roads, sites, junctions, preview, preview_bounds}` | |
+| World preview | `GET /api/world/preview` → `WORLD_DIR/world.json` `assets.preview` (PNG, top-down, north up, aligned to `bounds`), 404 if unset | |
+| Preview shown | when `preview_bounds` = hello `bounds` and roads exist | |
+| `WORLD_DIR` | brain env (planner nav grid and preview), default `data/worlds/default`, Docker compose `/app/data/worlds/quarry` | |
+| Set goal | `POST /api/trucks/{id}/goal` `{"site"}` or `{"x","z"}`, plans a route | |
+| Sites | `GET /api/sites` → `[{"id","type","pos"}]` (from `world.json`) | |
+| Go to site | `POST /api/trucks/{id}/site/{site_id}` (same as `{"site"}`) | |
+| Goal fields | `goal` [x, z], `goal_site` node id or null, `route` [[x, z], …] (planner path) | |
+| Clear goal | `DELETE /api/trucks/{id}/goal` (clears `goal`, `goal_site`, `route`) | |
+
+## Radio
+
+| Item | Value | Source |
+|---|---|---|
+| Port | 8090, bound to 127.0.0.1 unless `HOST` is set | |
+| Brain poll rate (Hz) | 5 | `radio/server.py:POLL_HZ` |
+| Goals | brain routes (`roads` + per-truck `route`): one `{"site"}` per leg; otherwise chained `{"x","z"}` waypoints | |
+| Brain-cleared goal counts as reached within (m) | 6 | `radio/server.py:BRAIN_CLEAR_M` |
+| Max command length (chars) | 300 | `radio/server.py:MAX_COMMAND_CHARS` |
+| Max WebSocket message (bytes) | 512 | `radio/server.py:WS_MAX_MSG` |
+| Max audio upload (KB) | 600 (`RADIO_MAX_AUDIO_KB`) | |
+| STT per session / global (per min) | 10 / 30 | |
+| Commands per session / global (per min) | 20 / 60 | |
+| TTS syntheses global (per min) | 60 | |
+| Login attempts per IP / global (per min) | 5 / 20 | |
 
 ## Isaac sim
 

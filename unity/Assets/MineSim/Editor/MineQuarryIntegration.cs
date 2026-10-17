@@ -54,6 +54,8 @@ namespace MineSim.EditorTools
             public PedestrianMode pedestrians = PedestrianMode.RoadCrossings;
             public bool frameOverviewCamera = true;
             public bool addGoals = true;
+            public bool radioExcavators = true;
+            public string radioUrl = "http://127.0.0.1:8090";
         }
 
         const string PrefKey = "MineSim.QuarryIntegration.Options";
@@ -91,18 +93,20 @@ namespace MineSim.EditorTools
             if (p != null) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Object>(p));
         }
 
-        /// <summary>Copies &lt;repo&gt;/assets/models/excavator/excavator.glb into Assets/MineSim/Generated/Models/ (needs glTFast to import).</summary>
+        /// <summary>Copies &lt;repo&gt;/assets/models/excavator/excavator_rigged.glb (segmented: house/boom/stick/bucket nodes, animated by
+        /// MineExcavatorRig), else excavator.glb, into Assets/MineSim/Generated/Models/ (needs glTFast to import).</summary>
         public static string CopyExcavatorModel(bool verbose)
         {
 #if MINESIM_GLTFAST
-            string src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator.glb");
+            string src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator_rigged.glb");
+            if (!File.Exists(src)) src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator.glb");
             if (!File.Exists(src))
             {
                 if (verbose) Debug.LogWarning("[MineSim] excavator model not found at " + src);
                 return null;
             }
             EnsureFolder(GeneratedModels);
-            string dst = GeneratedModels + "/excavator.glb";
+            string dst = GeneratedModels + "/" + Path.GetFileName(src);
             var si = new FileInfo(src);
             var di = new FileInfo(Path.GetFullPath(dst));
             if (!di.Exists || di.Length != si.Length)
@@ -261,6 +265,28 @@ namespace MineSim.EditorTools
                 }
                 Object.DestroyImmediate(goalsTmp.gameObject);
 
+                // 8b. radio link (read-only: polls the radio for excavator digging/holding; never touches trucks/brain/goals)
+                if (o.radioExcavators && o.placeExcavators)
+                {
+                    if (integ == null)
+                    {
+                        integ = new GameObject(IntegrationRootName);
+                        Undo.RegisterCreatedObjectUndo(integ, "Integration root");
+                    }
+                    var link = integ.GetComponent<MineRadioLink>();
+                    if (link == null) link = Undo.AddComponent<MineRadioLink>(integ);
+                    Undo.RecordObject(link, "Radio link");
+                    link.radioUrl = string.IsNullOrEmpty(o.radioUrl) ? "http://127.0.0.1:8090" : o.radioUrl.Trim();
+                    link.enabled = true;
+                    EditorUtility.SetDirty(link);
+                    Line(log, true, $"MineRadioLink on {IntegrationRootName}: polls {link.radioUrl}/api/radio/excavators (override: -radio-url / RADIO_URL); read-only, excavator animation only");
+                }
+                else if (integ != null)
+                {
+                    var link = integ.GetComponent<MineRadioLink>();
+                    if (link != null) Undo.DestroyObjectImmediate(link);
+                }
+
                 // 9. compatibility checks
                 CheckSensors(world, log);
 
@@ -379,6 +405,14 @@ namespace MineSim.EditorTools
                 float len = e.lengthM > 0.5f ? e.lengthM : o.excavatorLength;
                 var go = BuildExcavator(model, e.id, len);
                 go.transform.SetParent(root.transform, false);
+                if (o.radioExcavators)
+                {
+                    // animated by the radio (swing/dig): not static, so the transform may rotate at runtime
+                    go.isStatic = false;
+                    var rig = go.AddComponent<MineExcavatorRig>();
+                    rig.excavatorId = e.id;
+                    rig.digging = false;
+                }
                 float heading;
                 if (e.hasHeading) heading = e.headingDeg;
                 else
@@ -394,7 +428,8 @@ namespace MineSim.EditorTools
             }
             Line(log, true, $"{entries.Count} excavator(s) placed{(fallback ? " (fallback: behind each ore site, no 'equipment' in world.json)" : " from 'equipment'")}, " +
                             $"model {(model != null ? AssetDatabase.GetAssetPath(model) : "PLACEHOLDER (no excavator model found; run 'Copy Excavator Model Into Project' with glTFast installed)")}, " +
-                            $"length {o.excavatorLength} m, static BoxCollider (seen by lidar/depth)");
+                            $"length {o.excavatorLength} m, BoxCollider (seen by lidar/depth)" +
+                            (o.radioExcavators ? ", MineExcavatorRig (swings while the radio says 'digging')" : ""));
             return root.transform;
         }
 
@@ -420,9 +455,16 @@ namespace MineSim.EditorTools
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .Where(p => !string.IsNullOrEmpty(p) && Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("excavator")
                             && !Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("source"))
-                .OrderBy(p => p.StartsWith("Assets/Models/") ? 0 : p.StartsWith(GeneratedModels) ? 2 : 1)
+                .OrderBy(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("rigged") ? 0 : 1) // articulated model first
+                .ThenBy(p => p.StartsWith("Assets/Models/") ? 0 : p.StartsWith(GeneratedModels) ? 2 : 1)
                 .ThenBy(p => p, StringComparer.Ordinal)
                 .ToList();
+            if (!paths.Any(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("rigged")))
+            {
+                // no rigged model in the project yet (e.g. only the old excavator.glb copy): try to copy the rigged one
+                string copied = CopyExcavatorModel(false);
+                if (copied != null && copied.ToLowerInvariant().Contains("rigged") && !paths.Contains(copied)) paths.Insert(0, copied);
+            }
             if (paths.Count == 0)
             {
                 string copied = CopyExcavatorModel(false);
@@ -873,6 +915,9 @@ namespace MineSim.EditorTools
             o.excavatorYawOffset = EditorGUILayout.FloatField("Model yaw offset (deg)", o.excavatorYawOffset);
             o.excavatorBackoff = EditorGUILayout.FloatField("Fallback backoff (m)", o.excavatorBackoff);
             o.excavatorsAsBrainObstacles = EditorGUILayout.Toggle("Excavators = brain obstacles", o.excavatorsAsBrainObstacles);
+            o.radioExcavators = EditorGUILayout.Toggle("Radio-controlled excavators", o.radioExcavators);
+            using (new EditorGUI.DisabledScope(!o.radioExcavators))
+                o.radioUrl = EditorGUILayout.TextField("Radio URL", o.radioUrl);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Scene", EditorStyles.boldLabel);

@@ -8,7 +8,8 @@ from PIL import Image
 
 from . import policy
 from .hub import LatestHub
-from .protocol import ProtocolError, decode_frame, decode_lidar, encode, pack_points, read_message
+from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, read_message
+from .video import VideoHub
 from .world import Scan, World
 
 log = logging.getLogger(__name__)
@@ -26,13 +27,14 @@ def encode_jpeg(rgb: np.ndarray) -> bytes:
 def lidar_message(truck_id: str, scan: Scan) -> bytes:
     name = truck_id.encode()
     pose = POSE.pack(scan.pose["x"], scan.pose["z"], scan.pose["yaw"])
-    return struct.pack("B", len(name)) + name + pose + pack_points(scan.points)
+    return struct.pack("B", len(name)) + name + pose + compress_points(scan.points)
 
 
 class SimBridge:
-    def __init__(self, world: World, video: LatestHub, lidar: LatestHub) -> None:
+    def __init__(self, world: World, video: LatestHub, lidar: LatestHub, h264: VideoHub | None = None) -> None:
         self.world = world
         self.video = video
+        self.h264 = h264
         self.lidar = lidar
         self._writer: asyncio.StreamWriter | None = None
         self._scan_seq = 0
@@ -78,6 +80,9 @@ class SimBridge:
         self.world.obstacles = list(header.get("obstacles", []))
         self.world.paths = [list(p.get("points", [])) for p in header.get("paths", [])]
         self.world.truck_model = str(header.get("truck_model", ""))
+        self.world.set_network(
+            list(header.get("roads", [])), list(header.get("sites", [])), list(header.get("junctions", []))
+        )
         for truck_id in header.get("trucks", []):
             self.world.truck(truck_id)
         log.info("sim hello: trucks=%s cameras=%s", header.get("trucks"), self.world.cameras)
@@ -91,9 +96,12 @@ class SimBridge:
 
     async def _on_frame(self, header: dict, payload: bytes, writer: asyncio.StreamWriter) -> None:
         rgb, depth, jpeg = decode_frame(header, payload)
-        if jpeg is None:
+        if self.h264:
+            self.h264.submit(header["camera"], rgb)
+        if jpeg is None and self.video.subscribers:
             jpeg = await asyncio.to_thread(encode_jpeg, rgb)
-        await self.video.publish(header["camera"], jpeg)
+        if jpeg is not None:
+            await self.video.publish(header["camera"], jpeg)
 
         truck_id = header.get("truck")
         if not truck_id:
@@ -109,7 +117,8 @@ class SimBridge:
         action = policy.act(truck, rgb, depth, scan.points if scan else None)
         truck.throttle, truck.steer, truck.status = action.throttle, action.steer, action.status
         if action.status == "arrived":
-            truck.goal = None
+            truck.set_goal(None)
+            truck.status = "arrived"
         writer.write(
             encode({"type": "action", "truck": truck_id, "throttle": action.throttle, "steer": action.steer})
         )
