@@ -36,3 +36,6 @@ unity/Assets/MineSim/Generated/
 unity/Assets/MineSim/Generated.meta
 .claude/
 !.env.example
+
+isaac/assets/props/polyhaven/*
+!isaac/assets/props/polyhaven/manifest.json

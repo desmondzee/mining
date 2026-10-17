@@ -223,6 +223,39 @@
 | Overview JPEG size (KB) | 29 |
 | Player size (MB) | 982 |
 
+## Quarry props
+
+| Item | Value | Source |
+|---|---|---|
+| Placement file | `data/worlds/quarry/props.json`, regenerate with `uv run --with numpy --with scipy --with trimesh --with rtree --with usd-core --with pillow python isaac/props/generate.py` | `isaac/props/generate.py` |
+| Assets | `isaac/assets/props/`: `procedural/` and `generated/` committed, `polyhaven/` from `isaac/props/fetch_assets.py` (gitignored, falls back to procedural rocks) | `isaac/assets/props/CREDITS.md` |
+| Loader | `isaac/props/load.py: add_props(stage, props_json, assets_dir, root="/World/Props", lod="lod0", instanceable=True, berms=True)`, pxr only | |
+| Raycast mesh | `load.prop_triangles(props_json, assets_dir)` → (V, F) in world.json frame (collision LOD + berms) | |
+| Hello obstacles | every prop with `obstacle` non-null → `{x, z, r}` | |
+| Prop entry | `{id, kind, asset, fallback, fallback_scale, pos:[x,y,z], rot_deg:[rx,ry,rz], scale:[sx,sy,sz], obstacle:{x,z,r}\|null, collision}` | |
+| Kinds | boulder, debris, rock_pile, fuel_tank, drum, generator, barrier, light_vehicle, cone, sign | |
+| Frame | world.json (Y up, x east, z north, m); R = Ry(ry)·Rx(rx)·Rz(rz), ry = heading | |
+| Asset frame | USD Z up, m, origin at base centre, forward +Y; rocks normalised to 1 m max horizontal extent | |
+| Isaac transform | S·R·diag(scale)·S, translation S·pos, S swaps y and z (`isaac/sim/usdbuild.py` `TO_ISAAC`) | `isaac/props/load.py:isaac_matrix` |
+| Berm entry | `{id, road, side, asset, prim, length_m, height_m, base_m, line:[[x,z],..]}`; one USD with all berms already in Isaac Z-up | |
+| Asset layout | `/<name>/render` (variant set `lod`: lod0, lod1), `/<name>/collision` (purpose guide, `PhysicsCollisionAPI`, convex hull / decomposition); berms triangle-mesh collision | |
+| Seed | 20261017 | `generate.py:SEED` |
+| Counts | 150 boulders (70 bench toe, 35 berm outside, 30 spoil, 15 isolated 1.5–3 m), 8 rock piles + 45 boulders, 400 debris | `generate.py` config |
+| Boulder size / debris size (m) | 0.6–1.5 / 0.12–0.45 | |
+| Burial | 15–40 % of height, tilted 60 % toward the local slope | |
+| Obstacle | boulders r ≥ 0.5 m, rock piles, fuel tank, barriers, light vehicle | |
+| Road corridor exclusion | max(width_m, 10)/2 + 2 m + prop radius | |
+| Pad exclusion (m) | 12 + radius around sites, load/dump points, parking slots | |
+| Crossing exclusion (m) | 2.5 + radius from the 4 crossing segments (fakesim rule) | |
+| Equipment exclusion (m) | 10 | |
+| Placement area | ≤ 60 m from a road centreline, ground y < -30, slope ≤ 32° (debris 40°) | |
+| Berms | trapezoid 1.5 m × 4 m base × 1 m crest, inner toe 0.5 m outside the corridor, only where the ground drops ≥ 3 m within 20 m outward, on a road-level shoulder with a fill slope; gaps 25 m at junctions, 26 m at pads, 5 m at crossings | `generate.py` BERM_* |
+| Connectivity | navgrid with obstacles and berms stamped blocked: `envgen.common.navgrid_check`, site pairs 21/21, nav point pairs 105/105 | `props.json` `navgrid_check` |
+| Tests | `uv run --with numpy --with scipy --with trimesh --with rtree --with usd-core --with pillow --with pytest pytest isaac/props/tests -q` | |
+| Poly Haven fetch (watson) | mesh stage: `uv run --no-project --with trimesh --with numpy --with fast-simplification --with rtree --with scipy --with pillow --with requests python isaac/props/fetch_assets.py --stage mesh`; USD stage in the Isaac image (`/isaac-sim/python.sh` with `PYTHONPATH`/`LD_LIBRARY_PATH` = `omni.usd.libs` ext) `--stage usd` | |
+| Decimation | fast-simplification, LOD0 ≤ 20k tris (props 3k–14k), LOD1 ≤ 3k, UVs re-projected from the source mesh, textures ≤ 2K | |
+| Renders | `isaac/props/render.py` in `nvcr.io/nvidia/isaac-sim:6.2.0` (container `mining-isaac-props`) | |
+
 ## Fake sim
 
 | Item | Value | Source |

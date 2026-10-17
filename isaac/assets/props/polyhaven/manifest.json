@@ -1,0 +1,226 @@
+{
+ "namaqualand_boulder_04": {
+  "asset": "namaqualand_boulder_04",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   2.522,
+   2.496,
+   1.9
+  ],
+  "scale_to_unit": 0.396487,
+  "source_tris": 59066,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/namaqualand_boulder_04",
+  "authors": [
+   "Jenelle van Heerden"
+  ],
+  "file": "polyhaven/namaqualand_boulder_04.usdc",
+  "tris_lod0": 19998,
+  "tris_lod1": 2998
+ },
+ "namaqualand_boulder_02": {
+  "asset": "namaqualand_boulder_02",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   2.532,
+   1.234,
+   0.883
+  ],
+  "scale_to_unit": 0.394923,
+  "source_tris": 97964,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/namaqualand_boulder_02",
+  "authors": [
+   "Greg Zaal",
+   "Rico Cilliers"
+  ],
+  "file": "polyhaven/namaqualand_boulder_02.usdc",
+  "tris_lod0": 19998,
+  "tris_lod1": 2998
+ },
+ "namaqualand_boulder_03": {
+  "asset": "namaqualand_boulder_03",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   2.407,
+   3.065,
+   1.473
+  ],
+  "scale_to_unit": 0.326221,
+  "source_tris": 64826,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/namaqualand_boulder_03",
+  "authors": [
+   "Jenelle van Heerden",
+   "Dario Barresi"
+  ],
+  "file": "polyhaven/namaqualand_boulder_03.usdc",
+  "tris_lod0": 20000,
+  "tris_lod1": 3000
+ },
+ "namaqualand_boulder_05": {
+  "asset": "namaqualand_boulder_05",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   1.364,
+   0.748,
+   0.538
+  ],
+  "scale_to_unit": 0.733121,
+  "source_tris": 89618,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/namaqualand_boulder_05",
+  "authors": [
+   "Jenelle van Heerden",
+   "Dario Barresi"
+  ],
+  "file": "polyhaven/namaqualand_boulder_05.usdc",
+  "tris_lod0": 19998,
+  "tris_lod1": 2998
+ },
+ "namaqualand_boulder_06": {
+  "asset": "namaqualand_boulder_06",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   0.675,
+   1.212,
+   0.652
+  ],
+  "scale_to_unit": 0.825167,
+  "source_tris": 109114,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/namaqualand_boulder_06",
+  "authors": [
+   "Greg Zaal",
+   "Jenelle van Heerden"
+  ],
+  "file": "polyhaven/namaqualand_boulder_06.usdc",
+  "tris_lod0": 19998,
+  "tris_lod1": 2998
+ },
+ "rock_07": {
+  "asset": "rock_07",
+  "kind": "boulder",
+  "parts": 1,
+  "native_m": [
+   0.169,
+   0.32,
+   0.144
+  ],
+  "scale_to_unit": 3.122298,
+  "source_tris": 14844,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/rock_07",
+  "authors": [
+   "Jenelle van Heerden"
+  ],
+  "file": "polyhaven/rock_07.usdc",
+  "tris_lod0": 14844,
+  "tris_lod1": 3000
+ },
+ "concrete_road_barrier": {
+  "asset": "concrete_road_barrier",
+  "kind": "prop",
+  "parts": 1,
+  "native_m": [
+   1.545,
+   0.639,
+   0.831
+  ],
+  "scale_to_unit": 1.0,
+  "source_tris": 60928,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/concrete_road_barrier",
+  "authors": [
+   "Amal Kumar"
+  ],
+  "file": "polyhaven/concrete_road_barrier.usdc",
+  "tris_lod0": 11998,
+  "tris_lod1": 2998
+ },
+ "barrel_03": {
+  "asset": "barrel_03",
+  "kind": "prop",
+  "parts": 1,
+  "native_m": [
+   0.634,
+   0.639,
+   0.93
+  ],
+  "scale_to_unit": 1.0,
+  "source_tris": 1473,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/barrel_03",
+  "authors": [
+   "Serhii Khromov"
+  ],
+  "file": "polyhaven/barrel_03.usdc",
+  "tris_lod0": 1473,
+  "tris_lod1": 1473
+ },
+ "Barrel_01": {
+  "asset": "Barrel_01",
+  "kind": "prop",
+  "parts": 1,
+  "native_m": [
+   0.563,
+   0.563,
+   0.88
+  ],
+  "scale_to_unit": 1.0,
+  "source_tris": 2682,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/Barrel_01",
+  "authors": [
+   "Jorge Camacho"
+  ],
+  "file": "polyhaven/Barrel_01.usdc",
+  "tris_lod0": 2682,
+  "tris_lod1": 2682
+ },
+ "portable_generator": {
+  "asset": "portable_generator",
+  "kind": "prop",
+  "parts": 5,
+  "native_m": [
+   0.818,
+   0.564,
+   0.577
+  ],
+  "scale_to_unit": 1.0,
+  "source_tris": 26419,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/portable_generator",
+  "authors": [
+   "James Ray Cock"
+  ],
+  "file": "polyhaven/portable_generator.usdc",
+  "tris_lod0": 12093,
+  "tris_lod1": 3152
+ },
+ "covered_car": {
+  "asset": "covered_car",
+  "kind": "prop",
+  "parts": 5,
+  "native_m": [
+   1.789,
+   4.38,
+   1.411
+  ],
+  "scale_to_unit": 1.0,
+  "source_tris": 12592,
+  "licence": "CC0",
+  "url": "https://polyhaven.com/a/covered_car",
+  "authors": [
+   "MP"
+  ],
+  "file": "polyhaven/covered_car.usdc",
+  "tris_lod0": 12592,
+  "tris_lod1": 2993
+ }
+}
