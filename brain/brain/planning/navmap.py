@@ -7,6 +7,8 @@ from pathlib import Path
 import numpy as np
 
 NODE_SNAP_M = 15.0
+SAFE_CLEARANCE = 6.0
+EDGE_COST = 2.0
 
 
 @dataclass
@@ -32,6 +34,7 @@ class NavMap:
     ground: np.ndarray
     blocked: np.ndarray
     inflated: np.ndarray
+    clearance: np.ndarray
     sites: dict[str, tuple[float, float]]
     site_types: dict[str, str]
     nodes: dict[str, tuple[float, float]] = field(default_factory=dict)
@@ -136,6 +139,8 @@ class NavMap:
         if extra_blocked is not None:
             passable &= ~extra_blocked
         passable[sr, sc] = passable[gr, gc] = True
+        # Extra cost near blocked cells keeps routes in the middle of narrow roads.
+        cost = self.cost + EDGE_COST * np.clip(1.0 - self.clearance / SAFE_CLEARANCE, 0.0, 1.0)
         g = {(sr, sc): 0.0}
         parent: dict[tuple[int, int], tuple[int, int] | None] = {(sr, sc): None}
         heap = [(0.0, 0.0, (sr, sc))]
@@ -155,7 +160,7 @@ class NavMap:
                     rr, cc = r + dr, c + dc
                     if not (0 <= rr < h and 0 <= cc < w) or not passable[rr, cc] or (rr, cc) in done:
                         continue
-                    ng = gcur + (1.4142 if dr and dc else 1.0) * 0.5 * (self.cost[r, c] + self.cost[rr, cc])
+                    ng = gcur + (1.4142 if dr and dc else 1.0) * 0.5 * (cost[r, c] + cost[rr, cc])
                     if ng < g.get((rr, cc), math.inf):
                         g[(rr, cc)] = ng
                         parent[(rr, cc)] = cur
@@ -171,11 +176,44 @@ class NavMap:
         return np.array(cells[::-1])
 
 
+def edge_clearance(blocked: np.ndarray, cell: float, cap: float) -> np.ndarray:
+    """Metres from each cell centre to the nearest blocked cell edge or map edge, capped at cap."""
+    h, w = blocked.shape
+    k = int(math.ceil(cap / cell)) + 1
+    padded = np.pad(blocked, k, constant_values=True)
+    out = np.full((h, w), cap)
+    for dr in range(-k, k + 1):
+        for dc in range(-k, k + 1):
+            d = math.hypot(dr, dc) * cell - cell / 2
+            if d < cap:
+                out = np.where(padded[k + dr : k + dr + h, k + dc : k + dc + w], np.minimum(out, d), out)
+    return out
+
+
+def carve_roads(cost: np.ndarray, roads: list[dict], cell: float, ox: float, oz: float) -> None:
+    h, w = cost.shape
+    zs, xs = np.mgrid[0:h, 0:w]
+    centres = np.stack([ox + (xs.ravel() + 0.5) * cell, oz + (zs.ravel() + 0.5) * cell], axis=1)
+    for road in roads:
+        pts = np.array([[p[0], p[2]] for p in road.get("points", [])], dtype=float)
+        if len(pts) < 2 or not road.get("width_m"):
+            continue
+        line = resample(pts, cell / 2)
+        lo, hi = line.min(axis=0) - road["width_m"], line.max(axis=0) + road["width_m"]
+        near = np.flatnonzero(((centres >= lo) & (centres <= hi)).all(axis=1))
+        d = np.min(np.linalg.norm(centres[near, None, :] - line[None], axis=-1), axis=1)
+        on_road = near[d <= road["width_m"] / 2]
+        flat = cost.reshape(-1)
+        flat[on_road] = np.where(flat[on_road] < 0, 1.0, flat[on_road])
+
+
 def load(world_dir: Path) -> NavMap:
     nav = json.loads((world_dir / "navgrid.json").read_text())
     meta = json.loads((world_dir / "world.json").read_text())
     w, h = nav["width"], nav["height"]
+    cell, ox, oz = float(nav["cell_m"]), float(nav["origin"][0]), float(nav["origin"][1])
     cost = np.array(nav["cost"], dtype=float).reshape(h, w)
+    carve_roads(cost, meta.get("roads", []), cell, ox, oz)
     blocked = cost < 0
     inflated = blocked.copy()
     padded = np.pad(blocked, 1, constant_values=True)
@@ -200,6 +238,7 @@ def load(world_dir: Path) -> NavMap:
         ground=np.array(nav["heights"], dtype=float).reshape(h, w),
         blocked=blocked,
         inflated=inflated,
+        clearance=edge_clearance(blocked, float(nav["cell_m"]), SAFE_CLEARANCE),
         sites=sites,
         site_types={s["id"]: s["type"] for s in meta["sites"]},
         nodes=nodes,
