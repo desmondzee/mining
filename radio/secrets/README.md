@@ -11,7 +11,9 @@ read -rs OAI && printf '%s' "$OAI" > radio/secrets/openai_api_key && unset OAI
 chmod 600 radio/secrets/*_key
 ```
 
-Precedence: environment variable > `radio/secrets/<name>` > `envgen/secrets/<name>`.
+Precedence: env var (`ELEVENLABS_API_KEY` or `ELEVEN_LABS_API_KEY`) > `<VAR>_FILE` env pointing at a file (Docker secrets) > `radio/secrets/<name>` > `envgen/secrets/<name>` > repo-root `.env`.
+
+`RADIO_TLS=1` also writes a self-signed certificate to `radio/secrets/tls/`.
 
 | file | used for | without it |
 |---|---|---|

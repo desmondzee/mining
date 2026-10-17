@@ -1,15 +1,9 @@
-"""Offline checks for the regex fallback parser and road routing.
-
-Run: uv run --with fastapi --with uvicorn --with httpx --with python-multipart radio/test_parse.py
-
-The end-to-end excavator test runs against a mock radio on RADIO_TEST_URL (default http://127.0.0.1:8091):
-  PORT=8091 RADIO_MOCK=1 bash radio/run.sh     # skipped (not failed) if nothing is listening there
-"""
-
 import math
 import os
 import sys
 from pathlib import Path
+
+import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -26,14 +20,18 @@ fuel = world.by_type("fuel").id
 CASES = [
     ("truck one go to the lower face", [("go_to", ["truck-0"], {"site": ore["lower"]})]),
     ("Truck One, go to the Lower Face.", [("go_to", ["truck-0"], {"site": ore["lower"]})]),
+    ("Truck one, go to the lower face", [("go_to", ["truck-0"], {"site": ore["lower"]})]),
     ("all trucks return to the ready line", [("return_to_parking", ids, {})]),
+    ("All trucks, return to the ready line.", [("return_to_parking", ids, {})]),
     ("All trucks, return to the red line.", [("return_to_parking", ids, {})]),
     ("truck two haul from the middle face to the crusher", [("haul", ["truck-1"], {"from_site": ore["middle"], "to_site": crusher})]),
     ("Truck to, haul from the middle phase to the crusher.", [("haul", ["truck-1"], {"from_site": ore["middle"], "to_site": crusher})]),
     ("truck three haul three loads from the upper face to the crusher", [("haul", ["truck-2"], {"from_site": ore["upper"], "to_site": crusher, "loads": 3})]),
     ("everyone stop", [("stop", ids, {})]),
+    ("Everyone stop.", [("stop", ids, {})]),
     ("All stop! All stop!", [("stop", ids, {})]),
     ("status report", [("status", ids, {})]),
+    ("Status report.", [("status", ids, {})]),
     ("truck two status", [("status", ["truck-1"], {})]),
     ("truck zero go to the crusher", [("go_to", ["truck-0"], {"site": crusher})]),
     ("truck 3 go to the fuel bay", [("go_to", ["truck-2"], {"site": fuel})]),
@@ -41,6 +39,7 @@ CASES = [
     ("truck one go to the upper face and truck two return to the ready line",
      [("go_to", ["truck-0"], {"site": ore["upper"]}), ("return_to_parking", ["truck-1"], {})]),
     ("truck one stop", [("stop", ["truck-0"], {})]),
+    ("truck two go to the unloading point", [("go_to", ["truck-1"], {"site": crusher})]),
     ("good morning", []),
     # excavators as truck destinations
     ("truck one go to excavator two", [("go_to", ["truck-0"], {"site": ore["middle"], "excavator": "exc-1"})]),
@@ -87,98 +86,96 @@ EXC_CASES = [
      [("dig", ["exc-0"]), ("haul", ["truck-1"], {"from_site": ore["middle"], "to_site": crusher})]),
 ]
 
-fails = 0
-for text, want in CASES:
+
+@pytest.mark.parametrize("text,want", CASES)
+def test_regex_parser(text, want):
     got = p.parse_regex(text)
     simple = [(c["name"], c["args"].get("trucks"), {k: v for k, v in c["args"].items() if k != "trucks" and v is not None}) for c in got]
-    ok = simple == [(n, t, a) for n, t, a in want]
-    fails += not ok
-    print(("PASS " if ok else "FAIL ") + f"{text!r}\n      -> {simple}" + ("" if ok else f"\n  want {want}"))
+    assert simple == [(n, t, a) for n, t, a in want]
 
-for text, want in EXC_CASES:
-    got = p.parse_regex(text)
+
+def seg_d(q, a, b):
+    vx, vz = b[0] - a[0], b[1] - a[1]
+    L2 = vx * vx + vz * vz or 1e-9
+    t = max(0.0, min(1.0, ((q[0] - a[0]) * vx + (q[1] - a[1]) * vz) / L2))
+    return math.dist(q, (a[0] + t * vx, a[1] + t * vz))
+
+
+@pytest.mark.parametrize("sid", sorted(s.id for s in world.sites.values() if s.type != "parking"))
+def test_route_from_parking_follows_roads(sid):
+    park = tuple(world.trucks["truck-0"]["spawn"])
+    s = world.sites[sid]
+    raw = world.road_path(park, s.point)
+    wps = simplify(park, raw)
+    gaps = max(math.dist((a.x, a.z), (b.x, b.z)) for a, b in zip(wps, wps[1:])) if len(wps) > 1 else 0
+    dev = max(min(seg_d((w.x, w.z), a, b) for a, b in zip(raw, raw[1:])) for w in wps) if len(raw) > 1 else 0
+    assert math.dist((wps[-1].x, wps[-1].z), s.point) < 1.0 and wps[-1].final
+    assert gaps <= 25.0
+    assert dev <= 2.0
+    assert path_len(park, wps) > 0
+
+
+def test_world_has_no_stale_road_ids():
+    assert {r["id"] for r in world.road_lines} == {r["id"] for r in world.raw["roads"]}
+    b = world.bounds
+    for s in world.sites.values():
+        assert b[0] <= s.point[0] <= b[2] and b[1] <= s.point[1] <= b[3]
+
+
+@pytest.mark.parametrize("text,want", EXC_CASES)
+def test_regex_parser_excavators(text, want):
     simple = []
-    for c in got:
+    for c in p.parse_regex(text):
         if "excavators" in c["args"]:
             simple.append((c["name"], c["args"]["excavators"]))
         else:
             simple.append((c["name"], c["args"].get("trucks"), {k: v for k, v in c["args"].items() if k != "trucks" and v is not None}))
-    ok = simple == want
-    fails += not ok
-    print(("PASS " if ok else "FAIL ") + f"{text!r}\n      -> {simple}" + ("" if ok else f"\n  want {want}"))
+    assert simple == want
 
-# routing sanity: parking -> each site follows roads and ends at the stop point
-park = world.trucks["truck-0"]["spawn"]
-for sid in [ore["lower"], ore["middle"], ore["upper"], crusher, dump, fuel]:
-    s = world.sites[sid]
-    raw = world.road_path(tuple(park), s.point)
-    wps = simplify(tuple(park), raw)
-    gaps = max(math.dist((a.x, a.z), (b.x, b.z)) for a, b in zip(wps, wps[1:])) if len(wps) > 1 else 0
-    end_ok = math.dist((wps[-1].x, wps[-1].z), s.point) < 1.0 and wps[-1].final
-    bends = sum(w.bend for w in wps)
-    def seg_d(q, a, b):
-        vx, vz = b[0] - a[0], b[1] - a[1]
-        L2 = vx * vx + vz * vz or 1e-9
-        t = max(0.0, min(1.0, ((q[0] - a[0]) * vx + (q[1] - a[1]) * vz) / L2))
-        return math.dist(q, (a[0] + t * vx, a[1] + t * vz))
-    dev = max(min(seg_d((w.x, w.z), a, b) for a, b in zip(raw, raw[1:])) for w in wps) if len(raw) > 1 else 0
-    ok = end_ok and gaps <= 25.0 and dev <= 2.0
-    fails += not ok
-    print(f"{'PASS' if ok else 'FAIL'} route parking -> {s.name:16s} {path_len(tuple(park), wps):6.0f} m, "
-          f"{len(raw):3d} road pts -> {len(wps):3d} waypoints ({bends} bend), max gap {gaps:.1f} m, max off-road {dev:.1f} m")
 
-# ---- end-to-end against a mock radio instance (PORT=8091 RADIO_MOCK=1 bash radio/run.sh)
-e2e = 0
-URL = os.environ.get("RADIO_TEST_URL", "http://127.0.0.1:8091")
-try:
-    import httpx
-    c = httpx.Client(base_url=URL, timeout=20.0)
-    h = c.get("/api/radio/health").json()
-except Exception as ex:  # noqa: BLE001
-    print(f"SKIP e2e: no radio at {URL} ({type(ex).__name__})")
-    h = None
-if h is not None:
-    if not h.get("mock"):
-        print(f"SKIP e2e: {URL} is not in mock mode (won't drive live trucks)")
-    else:
-        def exc_states():
-            return {e["id"]: e["state"] for e in c.get("/api/radio/state").json()["excavators"]}
+@pytest.fixture(scope="module")
+def mock_radio():
+    httpx = pytest.importorskip("httpx")
+    url = os.environ.get("RADIO_TEST_URL", "http://127.0.0.1:8091")
+    try:
+        c = httpx.Client(base_url=url, timeout=20.0)
+        health = c.get("/api/radio/health").json()
+    except Exception:
+        pytest.skip(f"no mock radio at {url}")
+    if not health.get("mock"):
+        pytest.skip(f"{url} is not in mock mode")
+    c.post("/api/radio/release")
+    yield c
+    c.post("/api/radio/release")
 
-        def cmd(text):
-            return c.post("/api/radio/command", json={"text": text}).json()
 
-        def check(name, cond, info=""):
-            global fails, e2e
-            e2e += 1
-            fails += not cond
-            print(f"{'PASS' if cond else 'FAIL'} e2e {name} {info}")
+def test_excavator_commands_end_to_end(mock_radio):
+    c = mock_radio
 
-        c.post("/api/radio/release")
-        st = c.get("/api/radio/state").json()
-        check("state has excavators", len(st.get("excavators", [])) == 3 and
-              all({"id", "callsign", "face", "face_name", "state", "x", "z", "heading_deg"} <= set(e) for e in st["excavators"]))
-        check("initial all holding", set(exc_states().values()) == {"holding"}, exc_states())
-        r = cmd("excavator one start digging")
-        check("dig -> digging", exc_states()["exc-0"] == "digging", [x["text"] for x in r["replies"]])
-        check("dig reply", any(x["text"] == "Copy, Excavator One digging at Lower Face." for x in r["replies"]))
-        r = cmd("excavator one hold")
-        check("hold -> holding", exc_states()["exc-0"] == "holding", [x["text"] for x in r["replies"]])
-        cmd("all excavators start digging")
-        check("all dig", set(exc_states().values()) == {"digging"}, exc_states())
-        r = cmd("all stop")
-        check("all stop -> all holding", set(exc_states().values()) == {"holding"}, [x["text"] for x in r["replies"]])
-        cmd("excavator at the middle face start digging")
-        check("by face", exc_states() == {"exc-0": "holding", "exc-1": "digging", "exc-2": "holding"}, exc_states())
-        r = cmd("truck one go to excavator two")
-        check("truck -> excavator", any(x["text"] == "Copy, Truck One heading to Excavator Two at Middle Face." for x in r["replies"]),
-              [x["text"] for x in r["replies"]])
-        r = cmd("truck two go to the excavator")  # nearest digging = Excavator Two
-        check("truck -> nearest digging excavator", any("Excavator Two" in x["text"] for x in r["replies"]), [x["text"] for x in r["replies"]])
-        ex = c.get("/api/radio/excavators").json()
-        check("/api/radio/excavators", len(ex) == 3 and set(ex[0]) == {"id", "face", "state", "heading_deg", "pos3"}, ex[1])
-        c.post("/api/radio/release")
-        check("release -> all holding", set(exc_states().values()) == {"holding"})
+    def states():
+        return {e["id"]: e["state"] for e in c.get("/api/radio/state").json()["excavators"]}
 
-total = len(CASES) + len(EXC_CASES) + 6 + e2e
-print(f"\n{total - fails} passed, {fails} failed")
-sys.exit(1 if fails else 0)
+    def cmd(text):
+        return [r["text"] for r in c.post("/api/radio/command", json={"text": text}).json()["replies"]]
+
+    ex = c.get("/api/radio/state").json()["excavators"]
+    assert len(ex) == 3 and all({"id", "callsign", "face", "face_name", "state", "x", "z", "heading_deg"} <= set(e) for e in ex)
+    assert set(states().values()) == {"holding"}
+    assert "Copy, Excavator One digging at Lower Face." in cmd("excavator one start digging")
+    assert states()["exc-0"] == "digging"
+    cmd("excavator one hold")
+    assert states()["exc-0"] == "holding"
+    cmd("all excavators start digging")
+    assert set(states().values()) == {"digging"}
+    cmd("all stop")
+    assert set(states().values()) == {"holding"}
+    cmd("excavator at the middle face start digging")
+    assert states() == {"exc-0": "holding", "exc-1": "digging", "exc-2": "holding"}
+    assert "Copy, Truck One heading to Excavator Two at Middle Face." in cmd("truck one go to excavator two")
+    assert any("Excavator Two" in t for t in cmd("truck two go to the excavator"))
+    light = c.get("/api/radio/excavators").json()
+    assert len(light) == 3 and set(light[0]) == {"id", "face", "state", "heading_deg", "pos3"}
+
+
+if __name__ == "__main__":
+    sys.exit(pytest.main([__file__, "-q"]))

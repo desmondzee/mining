@@ -211,7 +211,7 @@ function gradeLimitKmh(gradePct, loaded) {
   return t.at(-1)[1];
 }
 
-const truckSrc = (await loader.loadAsync('../../assets/models/komatsu_hd465/komatsu_hd465.glb')).scene;
+const truckSrc = (await loader.loadAsync('../../unity/Assets/Models/Trucks/komatsu_hd465.glb')).scene;
 const box = new THREE.Box3().setFromObject(truckSrc), size = box.getSize(new THREE.Vector3());
 const alongX = size.x > size.z;
 const unit = new THREE.Group();

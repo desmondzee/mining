@@ -3,6 +3,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import planning
 from .world import Truck
 
 ARRIVE_RADIUS = 4.0
@@ -44,6 +45,10 @@ def act(
     if math.hypot(gx - truck.x, gz - truck.z) < ARRIVE_RADIUS:
         return Action(0.0, 0.0, "arrived")
 
+    nav = planning.nav_map()
+    if truck.path and nav is not None:
+        return follow_path(truck, nav, points)
+
     steer = max(-1.0, min(1.0, heading_error(truck, gx, gz) / STEER_GAIN_DEG))
     throttle = 1.0 - 0.6 * abs(steer)
     status = "driving"
@@ -60,3 +65,21 @@ def act(
             status = "avoiding"
 
     return Action(throttle, steer, status)
+
+
+def follow_path(truck: Truck, nav: planning.NavMap, points: np.ndarray | None) -> Action:
+    decision, truck.path_idx = planning.drive(
+        nav,
+        np.asarray(truck.path),
+        truck.path_idx,
+        truck.x,
+        truck.z,
+        truck.yaw,
+        truck.speed,
+        truck.steer,
+        points,
+        planning.scorer(),
+        planning.lidar_height(),
+    )
+    truck.ghost_paths = np.round(decision.candidates[decision.safe], 1).tolist()
+    return Action(decision.throttle, decision.steer, decision.status)

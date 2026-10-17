@@ -12,7 +12,12 @@ Unity player / fakesim ── TCP :9000 ──▶ brain ── HTTP/WS :8080 ─
 | `brain/` | FastAPI server: sim bridge, policy, frame fan-out |
 | `brain/brain/fakesim.py` | Unity stand-in speaking the same protocol |
 | `web/` | Camera grid and goal map |
-| `unity/` | Unity scripts and setup |
+| `unity/` | Unity project |
+| `tools/fetch_rocketbox.py` | downloads Rocketbox people into the Unity project |
+| `unity/Assets/MineSim/` | world importer, road graph, ground follow, cinematic look ([README](unity/Assets/MineSim/README.md)) |
+| `data/worlds/` | generated worlds: `quarry` (drone scan), `default` (procedural) |
+| `envgen/` | offline world generator and browser preview ([README](envgen/README.md)) |
+| `assets/models/` | excavator model and truck recolour script |
 
 ## Run on watson
 
@@ -27,6 +32,13 @@ ssh -N -L 8080:127.0.0.1:8080 watson
 ```
 
 Open http://localhost:8080.
+
+Public domain (Cloudflare Tunnel, origin `http://localhost:8080`, Access policy on allowed emails):
+
+```bash
+cp .env.example .env
+docker compose --profile public up -d tunnel
+```
 
 ## Develop locally
 

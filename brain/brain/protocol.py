@@ -1,12 +1,16 @@
 import asyncio
+import io
 import json
 import struct
+import zlib
 
 import numpy as np
+from PIL import Image
 
 PREFIX = struct.Struct("<II")
 MAX_HEADER = 64 * 1024
 MAX_PAYLOAD = 64 * 1024 * 1024
+LIDAR_ZLIB_LEVEL = 6
 
 
 class ProtocolError(Exception):
@@ -43,25 +47,44 @@ def encode_frame(
     return encode(header, payload)
 
 
+def pack_points(points: np.ndarray) -> bytes:
+    return np.clip(np.round(points * 100), -32768, 32767).astype("<i2").tobytes()
+
+
+def compress_points(points: np.ndarray) -> bytes:
+    cm = np.frombuffer(pack_points(points), "<i2").reshape(-1, 3).T
+    return zlib.compress(np.diff(cm, axis=1, prepend=np.int16(0)).astype("<i2").tobytes(), LIDAR_ZLIB_LEVEL)
+
+
+def decompress_points(data: bytes) -> np.ndarray:
+    planes = np.frombuffer(zlib.decompress(data), "<i2").reshape(3, -1)
+    return np.cumsum(planes, axis=1, dtype=np.int16).T.astype(np.float32) / 100
+
+
 def encode_lidar(truck: str, points: np.ndarray, pose: dict) -> bytes:
-    header = {"type": "lidar", "truck": truck, "points": len(points), "pose": pose}
-    return encode(header, points.astype("<f4", copy=False).tobytes())
+    header = {"type": "lidar", "truck": truck, "points": len(points), "format": "int16cm", "pose": pose}
+    return encode(header, pack_points(points))
 
 
 def decode_lidar(header: dict, payload: bytes) -> np.ndarray:
     n = header["points"]
+    if header.get("format", "f32") == "int16cm":
+        if len(payload) != n * 6:
+            raise ProtocolError(f"lidar payload is {len(payload)} bytes, expected {n * 6}")
+        return np.frombuffer(payload, "<i2").reshape(n, 3).astype(np.float32) / 100
     if len(payload) != n * 12:
         raise ProtocolError(f"lidar payload is {len(payload)} bytes, expected {n * 12}")
     return np.frombuffer(payload, "<f4").reshape(n, 3)
 
 
-def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray | None]:
+def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray | None, bytes | None]:
     rgb_meta = header["rgb"]
     w, h = rgb_meta["w"], rgb_meta["h"]
+    jpeg = rgb_meta.get("format") == "jpeg"
     channels = rgb_meta.get("channels", 3)
-    if channels not in (3, 4):
+    if not jpeg and channels not in (3, 4):
         raise ProtocolError(f"unsupported channel count {channels}")
-    rgb_len = w * h * channels
+    rgb_len = rgb_meta["bytes"] if jpeg else w * h * channels
     depth_meta = header.get("depth")
     if depth_meta and not (depth_meta.get("w") and depth_meta.get("h")):
         depth_meta = None
@@ -69,11 +92,16 @@ def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray |
     if len(payload) != rgb_len + depth_len:
         raise ProtocolError(f"frame payload is {len(payload)} bytes, expected {rgb_len + depth_len}")
 
-    rgb = np.frombuffer(payload, np.uint8, rgb_len).reshape(h, w, channels)[..., :3]
-    if rgb_meta.get("flip"):
-        rgb = rgb[::-1]
+    if jpeg:
+        encoded = payload[:rgb_len]
+        rgb = np.asarray(Image.open(io.BytesIO(encoded)).convert("RGB"))
+    else:
+        encoded = None
+        rgb = np.frombuffer(payload, np.uint8, rgb_len).reshape(h, w, channels)[..., :3]
+        if rgb_meta.get("flip"):
+            rgb = rgb[::-1]
 
     depth = None
     if depth_meta:
         depth = np.frombuffer(payload, "<f4", offset=rgb_len).reshape(depth_meta["h"], depth_meta["w"])
-    return rgb, depth
+    return rgb, depth, encoded

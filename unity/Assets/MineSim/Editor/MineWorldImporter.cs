@@ -749,6 +749,12 @@ namespace MineSim.EditorTools
                 inst.transform.localRotation = Quaternion.identity;
                 inst.transform.localScale = Vector3.one;
                 foreach (var col in inst.GetComponentsInChildren<Collider>(true)) col.enabled = false;
+                foreach (var r in inst.GetComponentsInChildren<Renderer>(true))
+                {
+                    var mats = r.sharedMaterials;
+                    for (int i = 0; i < mats.Length; i++) if (mats[i] == null) mats[i] = VertexColourMaterial(c);
+                    r.sharedMaterials = mats;
+                }
                 var note = vis.gameObject.AddComponent<MineAssetNote>();
                 note.assetFile = file;
                 note.assetPath = dst;
@@ -918,9 +924,6 @@ namespace MineSim.EditorTools
             var inst = PrefabUtility.InstantiatePrefab(prefab, vis) as GameObject;
             if (inst == null) inst = Object.Instantiate(prefab, vis, false);
             inst.name = "visual_mesh";
-            inst.transform.localPosition = Vector3.zero;
-            inst.transform.localRotation = Quaternion.identity;
-            inst.transform.localScale = Vector3.one;
             foreach (var col in inst.GetComponentsInChildren<Collider>(true)) col.enabled = false;   // the ground collider is the physics
             var note = vis.gameObject.AddComponent<MineAssetNote>();
             note.assetFile = file;
@@ -1078,6 +1081,20 @@ namespace MineSim.EditorTools
             if (m.HasProperty("_BaseColor")) m.SetColor("_BaseColor", col);
             if (m.HasProperty("_Color")) m.SetColor("_Color", col);
             EditorUtility.SetDirty(m);
+            return m;
+        }
+
+        private static Material VertexColourMaterial(Ctx c)
+        {
+            string path = c.gen + "/Materials/VertexColour.mat";
+            var m = AssetDatabase.LoadAssetAtPath<Material>(path);
+            if (m != null) return m;
+            var sh = Shader.Find("Shader Graphs/glTF-pbrMetallicRoughness") ?? LitShader();
+            if (sh == null) return null;
+            m = new Material(sh);
+            if (m.HasProperty("metallicFactor")) m.SetFloat("metallicFactor", 0f);
+            if (m.HasProperty("roughnessFactor")) m.SetFloat("roughnessFactor", 1f);
+            AssetDatabase.CreateAsset(m, path);
             return m;
         }
 
