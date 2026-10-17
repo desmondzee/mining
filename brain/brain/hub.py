@@ -5,6 +5,7 @@ class LatestHub:
     def __init__(self) -> None:
         self._frames: dict[str, tuple[int, bytes]] = {}
         self._seq = 0
+        self.subscribers = 0
         self._cond = asyncio.Condition()
 
     async def publish(self, key: str, data: bytes) -> None:
