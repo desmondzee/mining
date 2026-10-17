@@ -212,6 +212,8 @@ def main():
                                                        spec.ramp_width_m, max_grade=0.10, order=order,
                                                        spur_to=spur)
     cost = np.where(road_mask & (cost > 0), 1.0, cost)
+    # open every road corridor (>= 10 m) and a pad around each site in the navgrid, inside the scan footprint only
+    cost = C.carve_road_corridors(cost, origin, cell, {"sites": sites, "roads": roads}, forbid=hole, heights=H)
     trucks = C.make_trucks(sites, roads, cost, origin, cell, spec.truck)
     grades = C.road_grade_stats(roads)
     sustained = C.road_grade_stats(roads, window=50.0)
@@ -243,8 +245,6 @@ def main():
     Hn = C.centres_to_nodes(H)
     Cn = np.stack([C.centres_to_nodes(col[..., k]) for k in range(3)], -1)
     size = [E, E]
-    nav = C.navgrid_dict(H, cost, origin, cell)
-    C.write_json(out / "navgrid.json", nav, compact=True)
     C.export_terrain_glb(out / "terrain.glb", Hn, Cn, origin, size, n=min(321, n + 1))
     C.write_heightmap_raw(out, Hn, origin, size, res=513)
 
@@ -284,6 +284,11 @@ def main():
     face_errs, face_sum = C.check_face_order(world) if layout == "hillside" else ([], {})
     if face_sum:
         world["design"]["face_order"] = face_sum
+    cost = C.carve_road_corridors(cost, origin, cell, world, forbid=hole, heights=H)   # + pads at load / dump points, slots
+    nav_errs, nav_sum = C.navgrid_check(world, cost, origin, cell, spec.truck.width_m)
+    world["design"]["navgrid_check"] = nav_sum
+    nav = C.navgrid_dict(H, cost, origin, cell)
+    C.write_json(out / "navgrid.json", nav, compact=True)
     C.preserve_assets(out, world)                                    # keep pano / pano_source / surround
     C.write_json(out / "world.json", world)
     C.refresh_surround(out, world)                                   # surround.glb matches the new heightmap
@@ -313,10 +318,13 @@ def main():
         print(f"  face order (Lower, Middle, Upper): {face_sum}")
     print(f"  road graph: {errs or 'OK'}; unreachable: {bad or 'none'}; operating points: {op_errs or 'OK'}; "
           f"face order: {face_errs or 'OK'}")
+    print(f"  navgrid check: corridor widths {nav_sum['min_corridor_width_m']}; site pairs "
+          f"{nav_sum['pairs_connected']}, nav point pairs {nav_sum['nav_point_pairs_connected']}; {nav_errs or 'OK'}")
     assert not errs, errs
     assert not bad, bad
     assert not op_errs, op_errs
     assert not face_errs, face_errs
+    assert not nav_errs, nav_errs
     print(f"wrote {out} in {time.time() - T0:.1f}s: {n}x{n} cells @ {cell:.2f} m, passable {(cost > 0).mean():.0%}")
 
 
