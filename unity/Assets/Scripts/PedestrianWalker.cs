@@ -41,7 +41,7 @@ public class PedestrianWalker : MonoBehaviour
         transform.position = next;
     }
 
-    void PlaceOnPath()
+    public void PlaceOnPath()
     {
         int count = path.childCount;
         int segments = loop ? count : count - 1;

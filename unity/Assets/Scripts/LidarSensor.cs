@@ -47,7 +47,7 @@ public class LidarSensor : MonoBehaviour
         int count = 0;
         for (int i = 0; i < n; i++)
         {
-            if (hits[i].colliderInstanceID == 0) continue;
+            if (hits[i].collider == null) continue;
             var p = transform.InverseTransformPoint(hits[i].point);
             points[count++] = p.x;
             points[count++] = p.y;

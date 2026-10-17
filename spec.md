@@ -7,7 +7,7 @@
 | Host | watson (Brev), NVIDIA GB10, aarch64 |
 | NVIDIA driver | 580.178.04 |
 | Repo on host | `~/Documents/mining` |
-| Simulator | Unity 6.3 LTS, URP |
+| Simulator | Unity 6.3 LTS (6000.3.26f1), URP |
 | Unity player target | Linux ARM64, IL2CPP, `com.unity.sdk.linux-arm64` |
 | Unity editor | macOS (no ARM64 Linux editor) |
 | Brain | Python 3.12, FastAPI, uv |
@@ -16,6 +16,8 @@
 | Packages | URP 17.3.0, glTFast 6.15.0 |
 | Scene | `Assets/Scenes/Quarry.unity`, built by Tools > Mining > Build Quarry Scene |
 | Environment | flat ground plane and box rocks with colliders |
+| Ground colour | RGB (0.55, 0.47, 0.37), URP Lit |
+| Rock colour | RGB (0.36, 0.34, 0.33), URP Lit |
 
 ## Network
 
@@ -90,10 +92,10 @@
 | Folder | `unity/Assets/Models/Trucks/` | |
 | Komatsu HD465-7EO | `komatsu_hd465.glb`, 27k triangles, CC-BY-4.0 | |
 | Komatsu length (m) | 9.35 | |
-| Komatsu yaw offset (deg) | 0 | |
+| Komatsu import rotation (deg) | (-90, 0, 0) | |
 | CAT 785C | `cat_785c.glb`, 396k triangles, licence not documented | |
 | CAT length (m) | 11.02 | |
-| CAT yaw offset (deg) | -90 | |
+| CAT import rotation (deg) | (-90, -90, 0) | |
 | Scaling | uniform, renderer bounds length along z = real length | |
 | Origin | bottom centre of renderer bounds | |
 | Collider | `BoxCollider` = renderer bounds | |
@@ -131,7 +133,8 @@
 | Rig | Humanoid, avatar per model | |
 | Walk clips | `m_walk_neutral_01`, `f_walk_neutral_01` (Rocketbox `motextr_xy`), loop, root motion off | |
 | LOD levels | hipoly, midpoly, lowpoly, ultralowpoly | |
-| LOD screen heights | 0.25, 0.08, 0.03, 0.005 | |
+| LOD screen heights | 0.25, 0.08, 0.03, 0.005; last present level culls at 0.005 | |
+| LOD levels imported | Rocketbox FBX imports one renderer (hipoly) | |
 | Materials | URP Lit, base colour white, `opacity` materials alpha-clipped at 0.5, double-sided | |
 | Fallback | capsule placeholder when `Models/People` is empty | |
 | Paths | 4 | |

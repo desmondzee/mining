@@ -81,7 +81,7 @@ public class SensorCamera : MonoBehaviour
         for (int i = 0; i < n; i++)
         {
             var hit = hits[i];
-            depth[i] = hit.colliderInstanceID != 0 ? hit.distance * Vector3.Dot(commands[i].direction, fwd) : depthRange;
+            depth[i] = hit.collider != null ? hit.distance * Vector3.Dot(commands[i].direction, fwd) : depthRange;
         }
         commands.Dispose();
         hits.Dispose();

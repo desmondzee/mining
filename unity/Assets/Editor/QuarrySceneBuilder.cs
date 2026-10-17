@@ -32,15 +32,20 @@ public static class QuarrySceneBuilder
     static readonly string[] LodNames = { "hipoly", "midpoly", "lowpoly", "ultralowpoly" };
     static readonly float[] LodHeights = { 0.25f, 0.08f, 0.03f, 0.005f };
 
+    const string MaterialDir = "Assets/Generated/Materials";
+
+    static readonly Color GroundColour = new Color(0.55f, 0.47f, 0.37f);
+    static readonly Color RockColour = new Color(0.36f, 0.34f, 0.33f);
+
     struct TruckModel
     {
         public string file;
         public float length;
-        public float yaw;
+        public Vector3 rotation;
     }
 
-    static readonly TruckModel Komatsu = new TruckModel { file = "komatsu_hd465", length = 9.35f, yaw = 0f };
-    static readonly TruckModel Cat = new TruckModel { file = "cat_785c", length = 11.02f, yaw = -90f };
+    static readonly TruckModel Komatsu = new TruckModel { file = "komatsu_hd465", length = 9.35f, rotation = new Vector3(-90, 0, 0) };
+    static readonly TruckModel Cat = new TruckModel { file = "cat_785c", length = 11.02f, rotation = new Vector3(-90, -90, 0) };
 
     static readonly Vector3[][] PedestrianPaths =
     {
@@ -51,14 +56,15 @@ public static class QuarrySceneBuilder
     };
 
     [MenuItem("Tools/Mining/Build Quarry Scene (Komatsu HD465)")]
-    static void BuildKomatsu() => Build(Komatsu);
+    public static void BuildKomatsu() => Build(Komatsu);
 
     [MenuItem("Tools/Mining/Build Quarry Scene (CAT 785C)")]
-    static void BuildCat() => Build(Cat);
+    public static void BuildCat() => Build(Cat);
 
     static void Build(TruckModel model)
     {
         EnsurePipeline();
+        ReimportForPipeline();
         var truckPrefab = BuildTruckPrefab(model);
         var scene = EditorSceneManager.NewScene(NewSceneSetup.EmptyScene, NewSceneMode.Single);
 
@@ -70,6 +76,7 @@ public static class QuarrySceneBuilder
         var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(HalfSize / 5, 1, HalfSize / 5);
+        ground.GetComponent<Renderer>().sharedMaterial = LitMaterial("Ground", GroundColour);
 
         var rocks = AddRocks();
         AddPedestrians();
@@ -113,8 +120,17 @@ public static class QuarrySceneBuilder
         GraphicsSettings.defaultRenderPipeline = pipeline;
         QualitySettings.renderPipeline = pipeline;
         AssetDatabase.SaveAssets();
+    }
+
+    static void ReimportForPipeline()
+    {
         foreach (var file in new[] { Komatsu.file, Cat.file })
-            AssetDatabase.ImportAsset($"{ModelDir}/{file}.glb", ImportAssetOptions.ForceUpdate);
+        {
+            var path = $"{ModelDir}/{file}.glb";
+            var materials = AssetDatabase.LoadAllAssetsAtPath(path).OfType<Material>();
+            if (materials.Any(m => !m.shader.name.StartsWith("Shader Graphs/")))
+                AssetDatabase.ImportAsset(path, ImportAssetOptions.ForceUpdate);
+        }
     }
 
     static GameObject BuildTruckPrefab(TruckModel model)
@@ -125,8 +141,8 @@ public static class QuarrySceneBuilder
         var agent = root.AddComponent<TruckAgent>();
 
         var mesh = (GameObject)PrefabUtility.InstantiatePrefab(glb, root.transform);
-        mesh.transform.localRotation = Quaternion.Euler(0, model.yaw, 0);
-        mesh.transform.localScale = Vector3.one * (model.length / RendererBounds(mesh).size.z);
+        mesh.transform.localRotation = Quaternion.Euler(model.rotation);
+        mesh.transform.localScale *= model.length / RendererBounds(mesh).size.z;
         var b = RendererBounds(mesh);
         mesh.transform.localPosition = -new Vector3(b.center.x, b.min.y, b.center.z);
         b = RendererBounds(mesh);
@@ -155,6 +171,7 @@ public static class QuarrySceneBuilder
     static Transform AddRocks()
     {
         var parent = new GameObject("Rocks").transform;
+        var material = LitMaterial("Rock", RockColour);
         var rng = new System.Random(0);
         for (int i = 0; i < RockCount; i++)
         {
@@ -166,6 +183,7 @@ public static class QuarrySceneBuilder
             rock.transform.SetParent(parent);
             rock.transform.SetPositionAndRotation(p + Vector3.up * size / 2, Quaternion.Euler(0, (float)rng.NextDouble() * 360, 0));
             rock.transform.localScale = Vector3.one * size;
+            rock.GetComponent<Renderer>().sharedMaterial = material;
         }
         return parent;
     }
@@ -202,6 +220,7 @@ public static class QuarrySceneBuilder
                 walker.startFraction = (float)k / PedestriansPerPath;
                 walker.speed = Mathf.Lerp(MinWalkSpeed, MaxWalkSpeed, (float)rng.NextDouble());
 
+                walker.PlaceOnPath();
                 if (avatars.Length > 0) AddAvatar(person, avatars[index % avatars.Length]);
                 else AddPlaceholder(person);
             }
@@ -225,9 +244,11 @@ public static class QuarrySceneBuilder
         animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
 
         var renderers = model.GetComponentsInChildren<Renderer>(true);
-        var lods = new LOD[LodNames.Length];
-        for (int i = 0; i < lods.Length; i++)
-            lods[i] = new LOD(LodHeights[i], renderers.Where(r => LodLevel(r.name) == i).ToArray());
+        var levels = Enumerable.Range(0, LodNames.Length)
+            .Select(i => renderers.Where(r => LodLevel(r.name) == i).ToArray())
+            .Where(level => level.Length > 0)
+            .ToArray();
+        var lods = levels.Select((level, i) => new LOD(i == levels.Length - 1 ? LodHeights[^1] : LodHeights[i], level)).ToArray();
         model.AddComponent<LODGroup>().SetLODs(lods);
     }
 
@@ -272,6 +293,21 @@ public static class QuarrySceneBuilder
                 if (Vector3.Distance(p, a + t * (b - a)) < distance) return true;
             }
         return false;
+    }
+
+    static Material LitMaterial(string name, Color colour)
+    {
+        Directory.CreateDirectory(MaterialDir);
+        var path = $"{MaterialDir}/{name}.mat";
+        var material = AssetDatabase.LoadAssetAtPath<Material>(path);
+        if (material == null)
+        {
+            material = new Material(Shader.Find("Universal Render Pipeline/Lit"));
+            AssetDatabase.CreateAsset(material, path);
+        }
+        material.SetColor("_BaseColor", colour);
+        EditorUtility.SetDirty(material);
+        return material;
     }
 
     static float Rand(System.Random rng) => (float)rng.NextDouble() * 2 - 1;
