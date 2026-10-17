@@ -14,7 +14,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Learned path scorer (PLANNER_CKPT). Optional so the default image stays small.
+# Only to export or load a .pt planner checkpoint; the brain runs the exported .npz with numpy.
 model = ["torch>=2.2"]
 
 [project.scripts]

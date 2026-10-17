@@ -91,7 +91,7 @@ function plannerPaths(truck) {
   const list = [];
   source.forEach((c, i) => {
     const pts = polyline(c);
-    if (!pts) return;
+    if (!pts || (scores && scores[i] === null)) return;
     const score = Number(c && c.score != null ? c.score : scores ? scores[i] : 1);
     list.push({ pts, score: Number.isFinite(score) ? score : 0, index: i });
   });

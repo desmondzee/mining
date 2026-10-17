@@ -39,6 +39,7 @@ def act(
     points: np.ndarray | None = None,
     now: float | None = None,
 ) -> Action:
+    truck.planner = "learned" if planning.scorer() is not None else "rules"
     if truck.goal is None:
         return Action(0.0, 0.0, "idle")
 
