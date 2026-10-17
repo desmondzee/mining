@@ -21,7 +21,7 @@ def sim(request):
 def test_hello(sim):
     h = sim.hello()
     assert h["cameras"] == ["overview", "truck-0", "truck-1", "truck-2", "drone"]
-    assert len(h["obstacles"]) == 4 and len(h["paths"]) == 4
+    assert len(h["obstacles"]) == 4 + len(W.prop_obstacles(sim.world)) and len(h["paths"]) == 4
 
 
 def test_drive_and_sensors(sim):
@@ -65,3 +65,15 @@ def test_extra_excavator_digs_and_loading_aim(sim):
     assert sim.rigs[b.id].dump_yaw == pytest.approx(90.0)
     sim.aim({})
     assert sim.rigs[b.id].dump_yaw == E.TRUCK_SIDE_YAW
+
+
+def test_cab_cameras_follow_house():
+    s = Sim(W.REPO / "data/worlds/quarry", raycast=False, excavator_cameras=True)
+    assert s.hello()["cameras"][-3:] == ["exc-0", "exc-1", "exc-2"]
+    b = s.excavators[0]
+    p0, r0 = s.view_poses(0.1)["exc-0"]
+    assert 2.5 < p0[1] - b.y < 4.5 and np.hypot(p0[0] - b.x, p0[2] - b.z) < 3
+    assert r0[1, 2] < 0
+    s.rigs["exc-0"].pose[0] = -90.0
+    _, r1 = s.view_poses(0.1)["exc-0"]
+    np.testing.assert_allclose(r1[:, 2] @ r0[:, 2], 0.0, atol=0.1)

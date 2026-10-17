@@ -65,6 +65,7 @@ class DryRenderer:
         self.frames = {t.id: np.zeros((CAM_H, CAM_W, 3), np.uint8) for t in sim.trucks}
         self.frames["overview"] = np.zeros((oh, ow, 3), np.uint8)
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
+        self.frames.update({c: np.zeros((CAM_H, CAM_W, 3), np.uint8) for c in sim.cab_cameras})
         self.view_poses = {}
         self.loads = {}
 
@@ -90,7 +91,8 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), extra_excavators=config.get("extra_excavators", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), extra_excavators=config.get("extra_excavators", []),
+              excavator_cameras=config.get("excavator_cameras", False), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
         renderer = DryRenderer(sim, config)
@@ -108,7 +110,7 @@ def run(args: argparse.Namespace) -> None:
     save = Path(args.save_dir) if args.save_dir else None
     if save:
         save.mkdir(parents=True, exist_ok=True)
-    hfov = {v.name: v.hfov for v in sim.views}
+    hfov = sim.view_hfov
 
     def jpeg(rgb):
         if noise > 0:

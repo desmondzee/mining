@@ -123,6 +123,10 @@ class IsaacRenderer:
             cam = pinhole(stage, f"/World/Views/{v.name}", v.hfov, v.width, v.height)
             self.views[v.name] = cam.AddTransformOp()
             cameras.append((v.name, cam.GetPath().pathString, v.width, v.height))
+        for name in sim.cab_cameras:
+            cam = pinhole(stage, f"/World/Cabs/{name.replace('-', '_')}", sim.view_hfov[name], CAM_W, CAM_H)
+            self.views[name] = cam.AddTransformOp()
+            cameras.append((name, cam.GetPath().pathString, CAM_W, CAM_H))
 
         self.people = []
         for w in sim.walkers:

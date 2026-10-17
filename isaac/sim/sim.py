@@ -10,17 +10,20 @@ from .kinematics import GroundFollow, Truck, yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
 from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
 from .views import View, view_pose
-from .excavators import JOINTS, TRUCK_SIDE_YAW, DigRig, RadioPoller
+from .excavators import JOINTS, TRUCK_SIDE_YAW, DigRig, RadioPoller, rot_x
 
 PEDESTRIAN_PROBE = 30.0
 LOAD_REACH = 16.0
 LOAD_SPEED = 0.5
 AIM_RANGE = (40.0, 160.0)
+CAB = np.array([-1.6, 3.2, -0.35])
+CAB_PITCH = 15.0
+CAB_HFOV = 75.0
 
 
 class Sim:
     def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, lidar_level: bool = True,
-                 extra_excavators: list[dict] | None = None) -> None:
+                 extra_excavators: list[dict] | None = None, excavator_cameras: bool = False) -> None:
         self.lidar_level = lidar_level
         self.views = [View.from_dict(v) for v in views or []]
         self.world = W.load_world(world_dir)
@@ -47,6 +50,8 @@ class Sim:
         self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
+        self.cab_cameras = [b.id for b in self.excavators] if excavator_cameras else []
+        self.view_hfov = {v.name: v.hfov for v in self.views} | dict.fromkeys(self.cab_cameras, CAB_HFOV)
         radio = os.environ.get("RADIO_URL")
         self.radio = RadioPoller(radio, self.rigs).start() if radio else None
         self.paths = W.crossing_paths(self.world)
@@ -62,11 +67,19 @@ class Sim:
 
     def hello(self) -> dict:
         h = W.hello(self.world, [t.id for t in self.trucks], self.paths, [b.circle() for b in self.excavators] + W.prop_obstacles(self.world))
-        h["cameras"] += [v.name for v in self.views]
+        h["cameras"] += [v.name for v in self.views] + self.cab_cameras
         return h
 
     def view_poses(self, dt: float) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-        return {v.name: view_pose(v, self, dt) for v in self.views}
+        poses = {v.name: view_pose(v, self, dt) for v in self.views}
+        for b in self.excavators:
+            if b.id in self.cab_cameras:
+                poses[b.id] = self.cab_pose(b)
+        return poses
+
+    def cab_pose(self, box) -> tuple[np.ndarray, np.ndarray]:
+        p, r = self.joint_frames(box)["house"]
+        return p + r @ (CAB - self.rig_origins["house"]), r @ rot_x(np.radians(CAB_PITCH))
 
     def command(self, truck_id: str, throttle: float, steer: float, now: float) -> None:
         for t in self.trucks:
