@@ -69,11 +69,11 @@ def test_rejects_wrong_feature_size():
 
 def test_env_selects_scorer_and_falls_back(npz, monkeypatch, tmp_path):
     planning.scorer.cache_clear()
-    monkeypatch.delenv("PLANNER_CKPT", raising=False)
-    monkeypatch.setenv("PLANNER_CHECKPOINT", str(tmp_path / "missing.npz"))
+    monkeypatch.delenv("PLANNER_CHECKPOINT", raising=False)
+    monkeypatch.setenv("PLANNER_CKPT", str(tmp_path / "missing.npz"))
     assert planning.scorer() is None
     planning.scorer.cache_clear()
-    monkeypatch.setenv("PLANNER_CHECKPOINT", str(npz[0].with_suffix(".pt")))
+    monkeypatch.setenv("PLANNER_CKPT", str(npz[0].with_suffix(".pt")))
     assert isinstance(planning.scorer(), NumpyScorer)
     planning.scorer.cache_clear()
 

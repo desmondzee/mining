@@ -47,7 +47,7 @@ def nav_map() -> NavMap | None:
 
 @cache
 def scorer() -> Scorer | None:
-    ckpt = os.environ.get("PLANNER_CHECKPOINT") or os.environ.get("PLANNER_CKPT")
+    ckpt = os.environ.get("PLANNER_CKPT") or os.environ.get("PLANNER_CHECKPOINT")
     if not ckpt:
         return None
     path = Path(ckpt)
