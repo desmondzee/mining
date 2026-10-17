@@ -8,7 +8,8 @@ import struct
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+import httpx
+from fastapi import FastAPI, Request, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -160,10 +161,19 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
             return set_site(truck_id, min(known, key=lambda n: math.dist(known[n], (goal.x, goal.z))))
         return set_goal(truck_id, (goal.x, goal.z))
 
+    async def release_radio(request: Request) -> None:
+        headers = {k: v for k, v in request.headers.items() if k.lower() in ("cookie", "x-requested-with")}
+        try:
+            async with httpx.AsyncClient(base_url=radio_proxy.radio_url(), timeout=2.0) as c:
+                await c.post("/api/radio/release", headers=headers)
+        except Exception:
+            log.info("radio release unavailable on reset")
+
     @app.post("/api/reset")
-    def post_reset():
+    async def post_reset(request: Request):
         for truck in world.trucks.values():
             truck.halt()
+        await release_radio(request)
         return {"trucks": [t.id for t in world.trucks.values()], "sim": bridge.send_reset()}
 
     @app.get("/api/sites")

@@ -47,10 +47,18 @@ class DigRig:
     def __init__(self, excavator_id: str, digging: bool = False) -> None:
         self.id = excavator_id
         self.digging = digging
-        self.phase = (zlib.crc32(excavator_id.encode()) % 1000) / 1000.0
+        self.initial_phase = (zlib.crc32(excavator_id.encode()) % 1000) / 1000.0
+        self.phase = self.initial_phase
         self.pose = [0.0, 0.0, 0.0, 0.0]
         self.dump_yaw = TRUCK_SIDE_YAW
         self.lift_deg = 0.0
+
+    def reset(self) -> None:
+        self.digging = False
+        self.phase = self.initial_phase
+        self.pose = [0.0, 0.0, 0.0, 0.0]
+        if getattr(self, "material", None) is not None:
+            self.material = 0.0
 
     def step(self, dt: float) -> None:
         goal = [0.0, 0.0, 0.0, 0.0]
@@ -85,6 +93,11 @@ class RadioPoller:
     def start(self) -> "RadioPoller":
         self.thread.start()
         return self
+
+    def reset(self) -> None:
+        self.headings.clear()
+        for rig in self.rigs.values():
+            rig.reset()
 
     def apply(self, entries: list[dict]) -> None:
         for e in entries:

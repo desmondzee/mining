@@ -177,12 +177,43 @@ test("backslash opens the schedule and selecting a truck makes it primary", asyn
   await page.waitForFunction(() => document.documentElement.dataset.view === "map");
   await page.keyboard.press("\\");
   await page.locator("#schedule.open").waitFor();
-  assert.equal(await page.locator('#schedule [role="option"]').count(), 4);
+  assert.equal(await page.locator('#schedule [role="option"]').count(), 5);
   assert.match(await page.locator("#schedule .palette-option").first().textContent(), /truck-0 · to load/);
   await page.keyboard.type("truck-2");
   await page.keyboard.press("Enter");
   await page.waitForFunction(() => document.getElementById("schedule").hidden);
   await page.waitForFunction(() => document.documentElement.dataset.view === "ops" && document.querySelector(".feed.primary")?.dataset.camera === "truck-2");
+});
+
+test("schedule reset row needs two presses and resets the fleet", async () => {
+  requests.length = 0;
+  await page.keyboard.press("\\");
+  await page.locator("#schedule.open").waitFor();
+  await page.keyboard.type("reset");
+  await page.keyboard.press("Enter");
+  assert.equal(requests.some((r) => r.path === "/api/reset"), false);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.getElementById("schedule").hidden);
+  await page.waitForFunction(() => true);
+  await page.waitForTimeout(200);
+  assert.ok(requests.some((r) => r.method === "POST" && r.path === "/api/reset"));
+});
+
+test("map click sends the goal for the primary truck in every selection path", async () => {
+  await page.keyboard.press("o");
+  await page.waitForFunction(() => document.documentElement.dataset.view === "ops");
+  const box = await page.locator("#surface-map canvas").first().boundingBox();
+  for (const [how, id] of [["key", "truck-0"], ["thumb", "truck-2"], ["key", "truck-1"]]) {
+    if (how === "thumb") await page.locator(`.feed.thumb[data-camera="${id}"]`).click();
+    else await page.keyboard.press(String(Number(id.slice(-1)) + 1));
+    await page.waitForFunction((c) => document.querySelector(".feed.primary").dataset.camera === c, id);
+    requests.length = 0;
+    await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    await page.waitForFunction(() => true);
+    await page.waitForTimeout(200);
+    const goal = requests.find((r) => r.method === "POST" && r.path.endsWith("/goal"));
+    assert.equal(goal?.path, `/api/trucks/${id}/goal`);
+  }
 });
 
 test("dragging on the overview zooms to the box and escape resets it", async () => {

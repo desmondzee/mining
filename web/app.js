@@ -648,6 +648,7 @@ function schedule() {
   for (const e of radio.online ? radio.state.excavators || [] : []) {
     out.push({ id: `sched:${e.id}`, group: "excavators", title: `${e.id} · ${e.state || ""}`, keywords: e.face || "", detail: pad(e.face_name || "", 16), run: () => {} });
   }
+  if (state.trucks.length) out.push({ id: "sched:reset", group: "fleet", title: "reset", keywords: "reset fleet respawn", confirm: "reset fleet?", run: resetFleet });
   return out;
 }
 
