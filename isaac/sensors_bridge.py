@@ -46,6 +46,7 @@ from isaac.sim.sensors import (  # noqa: E402,F401
     cam_field,
     lidar_directions,
 )
+from isaac.sim.excavators import DigRig  # noqa: E402
 from isaac.sim.sim import Sim  # noqa: E402
 
 DEFAULT_TRUCK_SIZE = (4.24, 4.4, 9.35)   # Komatsu HD465 (width, height, length) when the GLB is not on disk
@@ -135,6 +136,8 @@ class FakeCore(Sim):
     def __init__(self, world_dir: str | Path | None = None, n_trucks: int = 3, truck_size=DEFAULT_TRUCK_SIZE,
                  terrain_offset: bool = True) -> None:
         self.views = []
+        self.cab_cameras, self.view_hfov, self.lidar_level, self.radio, self.rig_origins = [], {}, True, None, {}
+        self.reset_requested = False
         self.truck_size = tuple(float(v) for v in truck_size)
         self.truck_matrix = np.eye(4)
         if world_dir:
@@ -147,6 +150,8 @@ class FakeCore(Sim):
         self.excavators = [W.Box(e["id"], float(e["pos3"][0]), 0.0, float(e["pos3"][2]), float(e.get("heading_deg", 0.0)),
                                  DEFAULT_EXCAVATOR_SIZE, DEFAULT_EXCAVATOR_SIZE[1] / 2)
                            for e in self.world.equipment if "excavat" in str(e.get("type", "excavator")).lower()]
+        self.rigs = {b.id: DigRig(b.id, digging=False) for b in self.excavators}
+        self.dump_side = dict.fromkeys(self.rigs, 0.0)
         flat = [[(-30, -40), (30, -40)], [(-10, -10), (10, -10), (10, 10), (-10, 10)], [(-50, 20), (-10, 60)], [(40, -20), (40, 40)]]
         network = W.walker_network(self.world) if self.world.roads else (
             [{"id": f"flat_{i}", "from": f"a{i}", "to": f"b{i}", "width_m": 10.0, "points": p} for i, p in enumerate(flat)], {})

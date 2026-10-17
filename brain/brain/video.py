@@ -18,6 +18,8 @@ FPS = 15
 GOP_FRAMES = 15
 TRUCK_KBPS = 600
 OVERVIEW_KBPS = 400
+BASE_PIXELS = 640 * 360
+MAX_KBPS = 4000
 VIEWER_QUEUE = 30
 PRESET = "veryfast"
 NVENC_PRESET = "p4"
@@ -53,6 +55,10 @@ def unpack_au(msg: bytes) -> tuple[str, bool, int, bytes, bytes]:
 
 def bitrate_for(camera: str) -> int:
     return (OVERVIEW_KBPS if camera == "overview" else TRUCK_KBPS) * 1000
+
+
+def scaled_bitrate(bitrate: int, width: int, height: int) -> int:
+    return int(min(bitrate * max(1.0, width * height / BASE_PIXELS), MAX_KBPS * 1000))
 
 
 def open_encoder(width: int, height: int, bitrate: int, codec: str = X264) -> av.CodecContext:
@@ -173,11 +179,11 @@ class CameraEncoder:
     def _open(self, w: int, h: int) -> av.CodecContext:
         if self.codec != X264:
             try:
-                return open_encoder(w, h, self.bitrate, self.codec)
+                return open_encoder(w, h, scaled_bitrate(self.bitrate, w, h), self.codec)
             except Exception as e:
                 log.warning("%s failed for %s (%s); using libx264", self.codec, self.camera, e)
                 self.codec = X264
-        return open_encoder(w, h, self.bitrate)
+        return open_encoder(w, h, scaled_bitrate(self.bitrate, w, h))
 
 
 class Viewer:

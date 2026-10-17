@@ -213,8 +213,9 @@ def truck_box(repo: Path = REPO) -> tuple[np.ndarray, tuple[float, float, float]
     return model_box(repo / TRUCK_GLB, length=TRUCK_LENGTH)
 
 
-def excavators(world: World, height: Height, repo: Path = REPO) -> list[Box]:
+def excavators(world: World, height: Height, repo: Path = REPO, extra: list[dict] = ()) -> list[Box]:
     entries = [e for e in world.equipment if not e.get("type") or "excavat" in e["type"].lower() or "shovel" in e["type"].lower()]
+    entries += list(extra)
     if not entries:
         return []
     _, size = model_box(repo / EXCAVATOR_GLB, horizontal=EXCAVATOR_LENGTH)

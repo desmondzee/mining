@@ -34,7 +34,8 @@ for p in (ROOT, ROOT / "brain"):
 from isaac import brain_bridge as B  # noqa: E402
 from isaac import truck as T  # noqa: E402
 from isaac.sensors_bridge import FakeCore, SensorSuite, lidar_angles, make_core  # noqa: E402
-from isaac.sim import kinematics as K  # noqa: E402
+from isaac.sim import kinematics as K
+from isaac.sim import world as W  # noqa: E402
 from isaac.sim.sensors import depth_directions, lidar_directions  # noqa: E402
 
 QUARRY = ROOT / "data/worlds/quarry"
@@ -124,7 +125,7 @@ class TestSpecCompliance(unittest.TestCase):
         self.assertEqual(set(self.spec), set(B.SPEC), "message types differ from spec.md")
         for kind, fields in self.spec.items():
             ours = B.SPEC[kind]
-            self.assertEqual(set(fields), set(ours["required"]) | (set(ours["optional"]) - {"cam"}), kind)
+            self.assertEqual(set(fields) - {"cam", "overview", "hello"}, set(ours["required"]) | set(ours["optional"]) - {"cam"}, kind)
             for name, subs in fields.items():
                 if subs and name in ours.get("items", {}):
                     self.assertEqual(tuple(subs), ours["items"][name], f"{kind}.{name}")
@@ -133,14 +134,14 @@ class TestSpecCompliance(unittest.TestCase):
 
     def test_directions(self):
         for kind in self.spec:
-            self.assertEqual(B.SPEC[kind]["direction"], "brain->sim" if kind == "action" else "sim->brain")
+            self.assertEqual(B.SPEC[kind]["direction"], "brain->sim" if kind in ("action", "view") else "sim->brain")
 
     def test_messages_from_fake_core_validate(self):
         core, _, _ = make_core(QUARRY)
         core.sync_obstacles()
         s = SensorSuite(core)
         msgs = [B.hello_message(core.hello()), B.actors_message(core.actors()), *s.lidar_messages(), *s.frame_messages(),
-                *s.frame_messages(encoding="raw"), B.action_message("truck-0", 1, 0)]
+                *s.frame_messages(encoding="raw"), B.action_message("truck-0", 1, 0), B.view_message("overview", None)]
         kinds = set()
         for m in msgs:
             h, p = B.decode(m)
@@ -150,8 +151,8 @@ class TestSpecCompliance(unittest.TestCase):
         h, _ = B.decode(msgs[0])
         self.assertEqual(h["truck_model"], "komatsu_hd465")
         self.assertEqual(h["cameras"], ["overview", "truck-0", "truck-1", "truck-2"])
-        self.assertEqual((len(h["roads"]), len(h["paths"]), len(h["obstacles"])), (len(core.world.roads), 4, len(core.excavators)))
-        self.assertTrue(all(o["r"] >= 5 for o in h["obstacles"]))  # swing envelope
+        self.assertEqual((len(h["roads"]), len(h["paths"]), len(h["obstacles"])), (len(core.world.roads), len(core.areas), len(core.excavators) + len(W.prop_obstacles(core.world))))
+        self.assertTrue(all(o["r"] >= 5 for o in h["obstacles"][: len(core.excavators)]))
         frames = [B.decode(m)[0] for m in s.frame_messages()]
         self.assertEqual(frames[0]["truck"], "")
         self.assertEqual(frames[0]["depth"], {"w": 0, "h": 0})

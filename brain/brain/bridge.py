@@ -136,6 +136,8 @@ class SimBridge:
         truck.z = float(pose.get("z", truck.z))
         truck.yaw = float(pose.get("yaw", truck.yaw))
         truck.speed = float(header.get("speed", truck.speed))
+        if "load" in header:
+            truck.load = float(header["load"])
 
         scan = self.world.lidar.get(truck_id)
         action = policy.act(truck, rgb, depth, scan.points if scan else None, sensor=scan.sensor if scan else None)

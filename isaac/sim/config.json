@@ -2,7 +2,16 @@
   "fps": 15,
   "tiled": false,
   "rt_subframes": 1,
-  "look": "default",
+  "look": "day",
+  "overview_res": [1280, 720],
+  "material": {"enabled": true, "lift_deg": 0.0},
+  "extra_excavators": [
+    {"id": "exc-3", "type": "excavator", "pos3": [57.5, -90.2, -34.5], "heading_deg": 195.0},
+    {"id": "exc-4", "type": "excavator", "pos3": [-74.5, -95.1, 53.5], "heading_deg": 0.0},
+    {"id": "exc-5", "type": "excavator", "pos3": [81.5, -71.3, 85.5], "heading_deg": 60.0}
+  ],
+  "excavator_cameras": ["exc-0"],
+  "props": {"skip": ["debris"], "no_raycast": ["debris"]},
   "step": "step_nowait",
   "lidar_frame": "sensor",
   "renderer": "RealTimePathTracing",

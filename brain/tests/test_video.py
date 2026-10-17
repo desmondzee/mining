@@ -10,7 +10,7 @@ from brain.app import create_app
 from brain.fakesim import FakeQuarry
 from brain.protocol import compress_points, decompress_points, pack_points
 from brain import video
-from brain.video import GOP_FRAMES, VIEWER_QUEUE, X264, AccessUnit, VideoHub, choose_encoder, pack_au, unpack_au
+from brain.video import GOP_FRAMES, OVERVIEW_KBPS, VIEWER_QUEUE, X264, AccessUnit, VideoHub, choose_encoder, pack_au, scaled_bitrate, unpack_au
 
 
 def nal_types(au: bytes) -> set[int]:
@@ -121,3 +121,10 @@ def test_choose_encoder_falls_back_to_x264(monkeypatch):
     monkeypatch.setattr(video, "nvenc_available", lambda: True)
     assert choose_encoder("auto") == choose_encoder("nvenc") == video.NVENC
     assert choose_encoder("x264") == X264
+
+
+def test_bitrate_scales_with_resolution():
+    base = OVERVIEW_KBPS * 1000
+    assert scaled_bitrate(base, 640, 360) == base
+    assert scaled_bitrate(base, 1280, 720) == 4 * base
+    assert scaled_bitrate(base, 3840, 2160) == 4_000_000

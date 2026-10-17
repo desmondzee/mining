@@ -16,13 +16,14 @@ from .people import make_people
 from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, OVERVIEW_HFOV
 from .excavators import JOINTS
 from .kinematics import quat_from_matrix
-from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix
+from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix, to_isaac
 from .zoom import OverviewZoom
 
 APERTURE = 20.955
 WARMUP = 30
 PROPS_LOADER = "isaac/props/load.py"
 PROPS_JSON = "props.json"
+PROPS_ASSETS = "isaac/assets/props"
 
 
 def gf(m: np.ndarray) -> Gf.Matrix4d:
@@ -58,35 +59,6 @@ def pinhole(stage, path: str, hfov: float, w: int, h: int) -> UsdGeom.Camera:
     return cam
 
 
-def stage_triangles(stage, root: str) -> tuple[np.ndarray, np.ndarray] | None:
-    cache = UsdGeom.XformCache()
-    pts, tris, base = [], [], 0
-    prim = stage.GetPrimAtPath(root)
-    if not prim:
-        return None
-    for p in Usd.PrimRange(prim):
-        if not p.IsA(UsdGeom.Mesh):
-            continue
-        mesh = UsdGeom.Mesh(p)
-        v = np.asarray(mesh.GetPointsAttr().Get(), np.float64)
-        counts = np.asarray(mesh.GetFaceVertexCountsAttr().Get())
-        idx = np.asarray(mesh.GetFaceVertexIndicesAttr().Get())
-        if not len(v) or not len(counts):
-            continue
-        xf = np.asarray(cache.GetLocalToWorldTransform(p), np.float64)
-        v = v @ xf[:3, :3] + xf[3, :3]
-        starts = np.concatenate([[0], np.cumsum(counts)[:-1]])
-        fan = [(s, s + k, s + k + 1) for s, c in zip(starts, counts) for k in range(1, c - 1)]
-        if not fan:
-            continue
-        pts.append(v[:, [0, 2, 1]])
-        tris.append(idx[np.array(fan)][:, ::-1] + base)
-        base += len(v)
-    if not pts:
-        return None
-    return np.concatenate(pts), np.concatenate(tris)
-
-
 class IsaacRenderer:
     def __init__(self, app, sim, args, config: dict) -> None:
         self.app, self.sim, self.config = app, sim, config
@@ -104,17 +76,6 @@ class IsaacRenderer:
         surround = world.asset("surround")
         if surround and surround.exists():
             self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4), config.get("surround", {}).get("tint")))
-        try:
-            from isaac.look import apply_look
-        except ImportError:
-            apply_look = None
-        if apply_look is None:
-            self.tune_scan(config.get("scan", {}))
-            self.lights(world, config)
-        else:
-            print(f"look: isaac.look.apply_look preset {config.get('look', 'default')}", flush=True)
-            apply_look(stage, config.get("look", "default"))
-
         ex_matrix, _ = W.model_box(W.REPO / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         ex_usd = convert_rig(W.REPO / W.EXCAVATOR_GLB, cache, "excavator", ex_matrix, JOINTS)
         self.excavators = []
@@ -131,7 +92,8 @@ class IsaacRenderer:
                     joints[j] = UsdGeom.Xformable(prim).AddOrientOp()
             self.excavators.append((b, base, joints))
 
-        self.add_props(world, sim)
+        if config.get("props", True):
+            self.add_props(world, sim, config["props"] if isinstance(config.get("props"), dict) else {})
 
         truck_usd = convert(W.REPO / W.TRUCK_GLB, cache, "truck", sim.truck_matrix)
         self.trucks, cameras = [], []
@@ -146,19 +108,27 @@ class IsaacRenderer:
             local[:3, 3] = TO_ISAAC[:3, :3] @ sim.rig.camera
             cam.AddTransformOp().Set(gf(local))
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
-        self.fx = self.make_fx(sim, args.fx)
+        self.look = self.make_look(world, cache, config)
+        self.fx = self.make_fx(world, sim, cache, args.fx, config.get("fx", {}))
+        self.material = self.make_material(world, sim, config.get("material", {}))
+        self.loads = {}
 
-        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, CAM_W, CAM_H)
-        self.zoom = OverviewZoom(overview_matrix(world), OVERVIEW_HFOV, CAM_W / CAM_H)
+        ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, ow, oh)
+        self.zoom = OverviewZoom(overview_matrix(world), OVERVIEW_HFOV, ow / oh)
         self.overview = (over.AddTransformOp(), over.GetFocalLengthAttr())
         self.overview[0].Set(gf(self.zoom.matrix))
-        cameras.insert(0, ("overview", "/World/Overview", CAM_W, CAM_H))
+        cameras.insert(0, ("overview", "/World/Overview", ow, oh))
 
         self.views = {}
         for v in sim.views:
             cam = pinhole(stage, f"/World/Views/{v.name}", v.hfov, v.width, v.height)
             self.views[v.name] = cam.AddTransformOp()
             cameras.append((v.name, cam.GetPath().pathString, v.width, v.height))
+        for name in sim.cab_cameras:
+            cam = pinhole(stage, f"/World/Cabs/{name.replace('-', '_')}", sim.view_hfov[name], CAM_W, CAM_H)
+            self.views[name] = cam.AddTransformOp()
+            cameras.append((name, cam.GetPath().pathString, CAM_W, CAM_H))
 
         self.people = make_people(stage, sim.walkers)
 
@@ -166,13 +136,13 @@ class IsaacRenderer:
         self.subframes = int(config.get("rt_subframes", 1))
         self.step_mode = config.get("step", "step_nowait")
         self.lag = int(self.step_mode == "step_nowait")
-        sensors = cameras[: 1 + len(sim.trucks)]
+        sensors = [c for c in cameras[: 1 + len(sim.trucks)] if (c[2], c[3]) == (CAM_W, CAM_H)]
         if config.get("tiled", False) and len(sensors) > 1:
             rp = rep.create.render_product_tiled(cameras=[p for _, p, _, _ in sensors], tile_resolution=(CAM_W, CAM_H))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
             ann.attach(rp)
             self.tiles = (ann, [n for n, _, _, _ in sensors], math.ceil(math.sqrt(len(sensors))))
-            cameras = cameras[len(sensors) :]
+            cameras = [c for c in cameras if c not in sensors]
         for name, path, w, h in cameras:
             rp = rep.create.render_product(path, (w, h))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -183,6 +153,27 @@ class IsaacRenderer:
         omni.timeline.get_timeline_interface().play()
         for _ in range(WARMUP):
             app.update()
+
+    def make_look(self, world, cache: Path, config: dict):
+        look = config.get("look", "day")
+        apply_look = None
+        if look:
+            try:
+                from isaac.look import apply_look
+            except ImportError:
+                pass
+        if apply_look is None:
+            self.tune_scan(config.get("scan", {}))
+            self.lights(world, config)
+            return None
+        overrides = dict(look) if isinstance(look, dict) else {}
+        preset = overrides.pop("preset", "day") if isinstance(look, dict) else look
+        print(f"look: isaac.look.apply_look preset {preset}", flush=True)
+        result = apply_look(self.stage, preset, world.dir, cache / "look", **overrides)
+        settings = carb.settings.get_settings()
+        for key, value in config.get("rtx", {}).items():
+            settings.set(key, value)
+        return result
 
     def reference(self, path: str, usd: Path) -> None:
         self.stage.DefinePrim(path, "Xform").GetReferences().AddReference(str(usd))
@@ -217,49 +208,92 @@ class IsaacRenderer:
         sun.CreateColorAttr(Gf.Vec3f(*sun_cfg.get("color", [1.0, 1.0, 1.0])))
         UsdGeom.Xformable(sun).AddTransformOp().Set(sun_matrix(float(sun_cfg.get("elevation", 40.0)), float(sun_cfg.get("azimuth", 220.0))))
 
-    def add_props(self, world, sim) -> None:
+    def add_props(self, world, sim, cfg: dict) -> None:
         loader, props = W.REPO / PROPS_LOADER, world.dir / PROPS_JSON
         if not (loader.exists() and props.exists()):
             return
         spec = importlib.util.spec_from_file_location("mining_props_load", loader)
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.add_props(self.stage, json.loads(props.read_text()), W.REPO / "assets")
-        tris = stage_triangles(self.stage, "/World/Props")
-        if tris is not None and sim.caster is not None:
+        data, assets = json.loads(props.read_text()), W.REPO / PROPS_ASSETS
+        skip = set(cfg.get("skip", []))
+        kinds = {p["kind"] for p in data["props"]} - skip
+        added = module.add_props(self.stage, data, assets, kinds=kinds)
+        tris = module.prop_triangles(data, assets, kinds=kinds - set(cfg.get("no_raycast", [])))
+        if len(tris[1]) and sim.caster is not None:
             sim.caster.set_props(*tris)
-        print(f"props: {props} loaded, {0 if tris is None else len(tris[1])} triangles for raycasts", flush=True)
+        print(f"props: {added['props']} props, {added['berm_files']} berm files, missing {added['missing']}, {len(tris[1])} triangles for raycasts", flush=True)
 
-    def make_fx(self, sim, preset: str):
+    def make_fx(self, world, sim, cache: Path, preset: str, overrides: dict):
         if preset == "off":
             return None
         try:
             from isaac.fx import TruckFx
+            from isaac.fx.ground import load_or_bake
         except ImportError:
             return None
-        trucks = [{"id": t.id, "prim": f"/World/Trucks/{t.id.replace('-', '_')}", "size": list(sim.truck_size)} for t in sim.trucks]
-        print(f"fx: isaac.fx TruckFx preset {preset}", flush=True)
-        return TruckFx(self.stage, {"preset": preset, "trucks": trucks})
+        self.ground = load_or_bake(world.dir, cache)
+        print(f"fx: isaac.fx TruckFx preset {preset} {overrides}", flush=True)
+        return TruckFx(self.stage, [t.id for t in sim.trucks], preset, self.ground, **overrides)
+
+    def make_material(self, world, sim, cfg: dict):
+        if not cfg.get("enabled", True) or not sim.excavators:
+            return None
+        try:
+            from isaac.material import rig as R
+            from isaac.material.stage import BucketMaterial, face_colour, sites_from_world
+        except ImportError:
+            return None
+        self.rig_lib = R
+        excavators = [{"id": b.id, "ground": float(b.y), "colour": face_colour(world.dir, b.x, b.z)} for b in sim.excavators]
+        trucks = [{"id": t.id, "prim": f"/World/Trucks/{t.id.replace('-', '_')}"} for t in sim.trucks]
+        for rig in sim.rigs.values():
+            rig.lift_deg = float(cfg.get("lift_deg", 0.0))
+        print(f"material: isaac.material BucketMaterial for {len(excavators)} excavators, lift {cfg.get('lift_deg', 0.0)} deg", flush=True)
+        return BucketMaterial(self.stage, excavators, trucks, cfg.get("model"), sites_from_world(world))
+
+    def bucket_matrix(self, sim, b) -> np.ndarray:
+        R, pose = self.rig_lib, sim.rigs[b.id].pose
+        base = R.base_matrix(b.x, b.y, b.z, sim.excavator_yaw(b), sim.rig_matrix)
+        return base @ R.chain([-math.radians(pose[0]), pose[1], pose[2], pose[3]])["bucket"]
+
+    def update_material(self, sim, dt: float, trucks: dict) -> None:
+        loading = sim.loading()
+        sim.aim({e: (x, y) for e, (x, y) in self.material.aim_points().items()})
+        excavators = []
+        for b in sim.excavators:
+            rig = sim.rigs[b.id]
+            phase, phase_t = self.rig_lib.phase_name(rig.phase) if rig.digging else ("hold", 0.0)
+            excavators.append((b.id, self.bucket_matrix(sim, b), phase, phase_t))
+        self.material.update(dt, excavators, [(t, m, loading.get(t)) for t, m in trucks.items()])
+        self.loads = {t: round(self.material.load(t), 3) for t in trucks}
 
     def update(self, sim, dt: float) -> None:
         if self.zoom.step(dt):
             self.overview[0].Set(gf(self.zoom.matrix))
             self.overview[1].Set(APERTURE / 2 / math.tan(math.radians(self.zoom.hfov / 2)))
-        if self.fx is not None:
-            self.fx.update(dt, sim.fx_state())
-        for op, t in zip(self.trucks, sim.trucks):
-            op.Set(isaac_matrix(sim.rotation(t), sim.position(t)))
-        s = TO_ISAAC[:3, :3]
-        for b, base, joints in self.excavators:
-            base.Set(isaac_matrix(yaw_matrix(sim.excavator_yaw(b)), np.array([b.x, b.y, b.z])))
-            rot = sim.rigs[b.id].joint_rotations()
-            for j, op in joints.items():
-                w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
-                op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
-        self.people.update(dt, sim.walkers)
-        self.view_poses = sim.view_poses(dt)
-        for name, (p, r) in self.view_poses.items():
-            self.views[name].Set(camera_matrix(r, p))
+        if self.look is not None:
+            self.look.update(dt)
+        if self.fx is not None and dt > 0:
+            self.fx.update(dt, [(t.id, to_isaac(sim.position(t)), t.yaw, t.speed, None) for t in sim.trucks], self.ground.height_at)
+        with Sdf.ChangeBlock():
+            mats = {}
+            for op, t in zip(self.trucks, sim.trucks):
+                mats[t.id] = isaac_matrix(sim.rotation(t), sim.position(t))
+                op.Set(mats[t.id])
+            if self.material is not None and dt > 0:
+                self.update_material(sim, dt, mats)
+            s = TO_ISAAC[:3, :3]
+            for b, base, joints in self.excavators:
+                base.Set(isaac_matrix(yaw_matrix(sim.excavator_yaw(b)), np.array([b.x, b.y, b.z])))
+                rot = sim.rigs[b.id].joint_rotations()
+                for j, op in joints.items():
+                    w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
+                    op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
+            self.people.update(dt, sim.walkers)
+            self.view_poses = sim.view_poses(dt)
+            for name, (p, r) in self.view_poses.items():
+                self.views[name].Set(camera_matrix(r, p))
 
     def render(self) -> dict:
         if self.step_mode == "update":
