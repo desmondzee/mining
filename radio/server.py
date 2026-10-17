@@ -14,11 +14,15 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import heapq
+import hmac
 import json
 import logging
 import math
 import os
 import re
+import secrets
+import socket
+import subprocess
 import time
 import uuid
 from collections import deque
@@ -27,7 +31,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, File, HTTPException, UploadFile, WebSocket, WebSocketDisconnect
+from fastapi import Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel
 
@@ -57,8 +61,25 @@ MAX_SPACING_M = 20.0
 LOAD_DWELL_S = float(os.environ.get("RADIO_LOAD_DWELL", "5"))
 DUMP_DWELL_S = float(os.environ.get("RADIO_DUMP_DWELL", "4"))
 OVERRIDE_GRACE_S = 1.5
+BRAIN_CLEAR_M = 6.0
 ORBIT_M = 12.0  # the straight-line policy can circle a goal inside its turning circle (R ~ 8.7 m)
 ORBIT_S = 5.0  # ... so if we hover within ORBIT_M this long, call it reached
+
+BRAIN_ROUTING_ENV = os.environ.get("RADIO_BRAIN_ROUTING", "auto").lower()
+
+RADIO_PIN = os.environ.get("RADIO_PIN", "").strip()
+SESSION_COOKIE = "radio_session"
+SESSION_TTL_S = float(os.environ.get("RADIO_SESSION_HOURS", "12")) * 3600
+MAX_AUDIO_BYTES = int(os.environ.get("RADIO_MAX_AUDIO_KB", "600")) * 1024
+MAX_COMMAND_CHARS = 300
+
+
+def env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, default))
+    except ValueError:
+        return default
+
 
 NUM_NAMES = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine"]
 
@@ -66,25 +87,43 @@ NUM_NAMES = ["Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eig
 # --------------------------------------------------------------------------- secrets
 
 
-def secret(name: str) -> str | None:
-    """env var > radio/secrets/<name> > envgen/secrets/<name>. Never logged."""
-    v = os.environ.get(name)
-    if v and v.strip():
-        return v.strip()
-    for d in (RADIO_DIR / "secrets", REPO / "envgen" / "secrets"):
-        p = d / name.lower()
+def dotenv(path: Path) -> dict[str, str]:
+    out: dict[str, str] = {}
+    try:
+        for line in path.read_text().splitlines():
+            k, sep, v = line.strip().removeprefix("export ").partition("=")
+            if sep and not k.startswith("#"):
+                out[k.strip()] = v.strip().strip("'\"")
+    except OSError:
+        pass
+    return out
+
+
+def secret(*names: str) -> str | None:
+    for n in names:
+        v = os.environ.get(n)
+        if v and v.strip():
+            return v.strip()
+        f = os.environ.get(f"{n}_FILE")
         try:
-            if p.is_file():
-                v = p.read_text().strip()
-                if v:
-                    return v
+            if f and (v := Path(f).read_text().strip()):
+                return v
         except OSError:
-            pass
-    return None
+            log.warning("%s_FILE is set but not readable", n)
+    for n in names:
+        for d in (RADIO_DIR / "secrets", REPO / "envgen" / "secrets"):
+            p = d / n.lower()
+            try:
+                if p.is_file() and (v := p.read_text().strip()):
+                    return v
+            except OSError:
+                pass
+    env = dotenv(REPO / ".env")
+    return next((env[n] for n in names if env.get(n)), None)
 
 
 OPENAI_KEY = secret("OPENAI_API_KEY")
-EL_KEY = secret("ELEVENLABS_API_KEY")
+EL_KEY = secret("ELEVENLABS_API_KEY", "ELEVEN_LABS_API_KEY")
 
 
 # --------------------------------------------------------------------------- world + road graph
@@ -320,9 +359,35 @@ class RealBrain:
         r = await self.client.post(f"/api/trucks/{tid}/goal", json={"x": x, "z": z})
         r.raise_for_status()
 
+    async def set_site(self, tid: str, site: str) -> None:
+        r = await self.client.post(f"/api/trucks/{tid}/goal", json={"site": site})
+        r.raise_for_status()
+
     async def clear_goal(self, tid: str) -> None:
         r = await self.client.delete(f"/api/trucks/{tid}/goal")
         r.raise_for_status()
+
+
+def route_points(route) -> list[tuple[float, float]]:
+    out = []
+    for p in route or []:
+        if isinstance(p, dict):
+            out.append((float(p["x"]), float(p["z"])))
+        elif isinstance(p, (list, tuple)) and len(p) >= 2:
+            out.append((float(p[0]), float(p[-1])))
+    return out
+
+
+def brain_routes(state: dict) -> bool:
+    trucks = state.get("trucks") or []
+    return bool(state.get("roads")) and any("route" in t or "goal_site" in t for t in trucks)
+
+
+def brain_site_ids(state: dict) -> set[str]:
+    s = state.get("sites") or []
+    if isinstance(s, dict):
+        return set(s)
+    return {str(x.get("id")) if isinstance(x, dict) else str(x) for x in s}
 
 
 class MockBrain:
@@ -590,6 +655,8 @@ class TruckCtl:
     goal: tuple[float, float] | None = None
     goal_set_at: float = 0.0
     near_since: float | None = None  # orbit detection: time we first came within ORBIT_M of the current waypoint
+    dest: tuple[float, float] | None = None
+    site_goal: str | None = None
 
     def task_text(self, world: World) -> str:
         if not self.job:
@@ -620,6 +687,18 @@ class Radio:
         self.last_error: str | None = None
         self.tasks: list[asyncio.Task] = []
         self.lock = asyncio.Lock()
+        self.brain_routing = False
+
+    def update_routing(self) -> None:
+        if BRAIN_ROUTING_ENV in ("1", "true", "yes"):
+            self.brain_routing = isinstance(self.brain, RealBrain)
+        elif BRAIN_ROUTING_ENV in ("0", "false", "no"):
+            self.brain_routing = False
+        else:
+            routed = isinstance(self.brain, RealBrain) and brain_routes(self.state)
+            if routed != self.brain_routing:
+                log.info("routing: %s", "brain plans routes ({site} goals)" if routed else "radio chains {x,z} waypoints")
+            self.brain_routing = routed
 
     def truck_ids(self) -> list[str]:
         ids = [t["id"] for t in self.state.get("trucks", [])]
@@ -655,6 +734,7 @@ class Radio:
             self.brain = mb
             self.state = await mb.state()
             self.brain_ok = True
+        self.update_routing()
         self.tasks.append(asyncio.create_task(self.loop()))
         if MOCK_ENV == "auto" and self.brain.mode == "mock":
             self.tasks.append(asyncio.create_task(self.watch_for_brain(real)))
@@ -710,6 +790,7 @@ class Radio:
             try:
                 self.state = await self.brain.state()
                 self.brain_ok, fails = True, 0
+                self.update_routing()
             except Exception as e:
                 fails += 1
                 if fails == 3:
@@ -735,8 +816,56 @@ class Radio:
             self.last_error = f"set_goal {ctl.id}: {e}"
             log.warning(self.last_error)
 
+    async def post_leg(self, ctl: TruckCtl, site_id: str, goal: tuple[float, float]) -> None:
+        ctl.goal, ctl.dest, ctl.site_goal, ctl.goal_set_at = None, goal, None, time.monotonic()
+        known = brain_site_ids(self.state)
+        try:
+            if not known or site_id in known:
+                try:
+                    await self.brain.set_site(ctl.id, site_id)
+                    ctl.site_goal = site_id
+                    return
+                except httpx.HTTPStatusError as e:
+                    if not 400 <= e.response.status_code < 500:
+                        raise
+                    log.info("brain refused site goal %s for %s (%s); sending x,z", site_id, ctl.id, e.response.status_code)
+            await self.brain.set_goal(ctl.id, round(goal[0], 2), round(goal[1], 2))
+        except Exception as e:
+            self.last_error = f"set_goal {ctl.id}: {e}"
+            log.warning(self.last_error)
+
+    async def yield_override(self, ctl: TruckCtl) -> None:
+        ctl.route, ctl.job, ctl.phase, ctl.target, ctl.goal, ctl.dest, ctl.site_goal = [], None, "idle", None, None, None, None
+        cs = callsign(ctl.id)
+        await self.radio_event(cs, ctl.id, f"{cs}, manual override, releasing radio task.")
+
+    async def tick_routed(self, ctl: TruckCtl, t: dict) -> None:
+        pos = (t["x"], t["z"])
+        if route := route_points(t.get("route")):
+            ctl.dest = route[-1]
+        settled = time.monotonic() - ctl.goal_set_at > OVERRIDE_GRACE_S
+        gs = t.get("goal_site")
+        if settled and ctl.site_goal and gs is not None and gs != ctl.site_goal:
+            await self.yield_override(ctl)
+            return
+        d = math.dist(pos, ctl.dest)
+        cleared = t.get("goal") is None and gs is None
+        if d < ARRIVE_M or (settled and (t.get("status") == "arrived" or (cleared and d < 15.0))):
+            ctl.dest = None
+            await self.on_arrive(ctl, t)
+        elif settled and cleared:
+            await self.yield_override(ctl)
+
+    def remaining_m(self, ctl: TruckCtl, t: dict) -> float | None:
+        pos = (t["x"], t["z"])
+        if ctl.dest:
+            pts = route_points(t.get("route")) or [ctl.dest]
+            return path_len(pos, [Waypoint(x, z) for x, z in pts])
+        return path_len(pos, ctl.route) if ctl.route else None
+
     async def clear(self, ctl: TruckCtl) -> None:
         ctl.route, ctl.job, ctl.phase, ctl.target, ctl.dwell_until, ctl.goal = [], None, "idle", None, 0.0, None
+        ctl.dest = ctl.site_goal = None
         ctl.goal_set_at = time.monotonic()
         try:
             await self.brain.clear_goal(ctl.id)
@@ -746,14 +875,17 @@ class Radio:
 
     async def tick_truck(self, t: dict) -> None:
         ctl = self.c(t["id"])
+        if ctl.dest:
+            await self.tick_routed(ctl, t)
+            return
         pos = (t["x"], t["z"])
         now = time.monotonic()
         # someone else (web UI click, team script) changed the goal -> yield
         if ctl.job and ctl.goal and now - ctl.goal_set_at > OVERRIDE_GRACE_S:
             g = t.get("goal")
-            if g is None or math.dist(g, ctl.goal) > 0.05:
-                ctl.route, ctl.job, ctl.phase, ctl.target, ctl.goal = [], None, "idle", None, None
-                await self.radio_event(callsign(t["id"]), t["id"], f"{callsign(t['id'])}, manual override, releasing radio task.")
+            brain_arrived = g is None and math.dist(pos, ctl.goal) < BRAIN_CLEAR_M
+            if not brain_arrived and (g is None or math.dist(g, ctl.goal) > 0.05):
+                await self.yield_override(ctl)
                 return
         if ctl.route:
             wp = ctl.route[0]
@@ -762,9 +894,10 @@ class Radio:
                 ctl.near_since = ctl.near_since or now
             else:
                 ctl.near_since = None
+            reached = t.get("goal") is None and d < BRAIN_CLEAR_M
             orbiting = ctl.near_since is not None and now - ctl.near_since > ORBIT_S / max(MOCK_SPEED if self.brain.mode == "mock" else 1.0, 1.0)
             if wp.final:
-                if d < ARRIVE_M or (t.get("status") == "arrived" and d < 6) or orbiting:
+                if d < ARRIVE_M or (t.get("status") == "arrived" and d < 6) or reached or orbiting:
                     if orbiting and d >= ARRIVE_M:
                         log.info("%s circling final waypoint at %.1f m -> holding here", ctl.id, d)
                         await self.post_goal(ctl, pos[0], pos[1])  # brain arrives instantly -> truck stops
@@ -776,7 +909,7 @@ class Radio:
                 nx = ctl.route[1]
                 vx, vz = nx.x - wp.x, nx.z - wp.z
                 passed = d < 15 and ((pos[0] - wp.x) * vx + (pos[1] - wp.z) * vz) > 0
-            if d < (BEND_ADVANCE_M if wp.bend else ADVANCE_M) or passed or orbiting:
+            if d < (BEND_ADVANCE_M if wp.bend else ADVANCE_M) or passed or reached or orbiting:
                 ctl.route.pop(0)
                 ctl.near_since = None
                 nxt = ctl.route[0]
@@ -791,8 +924,13 @@ class Radio:
         goal = point or site.point
         start = (t["x"], t["z"]) if t else goal
         wps = simplify(start, self.world.road_path(start, goal)) or [Waypoint(goal[0], goal[1], True, True)]
-        ctl.route, ctl.target = wps, site_id
-        await self.post_goal(ctl, wps[0].x, wps[0].z)
+        ctl.target = site_id
+        if self.brain_routing:
+            ctl.route = []
+            await self.post_leg(ctl, site_id, goal)
+        else:
+            ctl.route, ctl.dest, ctl.site_goal = wps, None, None
+            await self.post_goal(ctl, wps[0].x, wps[0].z)
         return path_len(start, wps)
 
     def parking_point(self, tid: str) -> tuple[float, float]:
@@ -947,6 +1085,7 @@ class Radio:
 
     async def clear_job(self, ctl: TruckCtl) -> None:
         ctl.route, ctl.job, ctl.phase, ctl.target, ctl.dwell_until = [], None, "idle", None, 0.0
+        ctl.dest = ctl.site_goal = None
 
     def status_text(self, tid: str) -> str:
         cs, t, ctl = callsign(tid), self.truck(tid), self.c(tid)
@@ -954,9 +1093,9 @@ class Radio:
             return f"{cs}, no position."
         pos = (t["x"], t["z"])
         if ctl.job:
-            rem = path_len(pos, ctl.route) if ctl.route else 0
+            rem = self.remaining_m(ctl, t)
             txt = ctl.task_text(self.world)
-            if ctl.route:
+            if rem is not None:
                 return f"{cs}, {txt}, {rem:.0f} meters out."
             return f"{cs}, {txt}."
         near = min(self.world.sites.values(), key=lambda s: math.dist(pos, s.point))
@@ -1023,6 +1162,9 @@ class Radio:
         path = CACHE_DIR / f"{key}.mp3"
         if path.exists():
             return f"/api/radio/audio/{key}.mp3"
+        if not LIMITS["tts"].allow("*"):
+            log.warning("tts rate limit reached; reply goes out without audio")
+            return None
         try:
             r = await self.http.post(
                 f"{EL_BASE}/v1/text-to-speech/{voice}",
@@ -1068,14 +1210,14 @@ class Radio:
     # ---- websocket
     def truck_view(self, t: dict) -> dict:
         ctl = self.c(t["id"])
-        pos = (t["x"], t["z"])
         return {
             "id": t["id"], "callsign": callsign(t["id"]), "x": round(t["x"], 2), "z": round(t["z"], 2),
             "yaw": round(t.get("yaw", 0), 1), "speed": round(t.get("speed", 0), 2), "status": t.get("status"),
             "goal": t.get("goal"), "phase": ctl.phase, "task": ctl.task_text(self.world),
             "target": self.world.sites[ctl.target].name if ctl.target else None,
-            "remaining_m": round(path_len(pos, ctl.route)) if ctl.route else None,
-            "route": [[round(w.x, 1), round(w.z, 1)] for w in ctl.route],
+            "remaining_m": None if (rem := self.remaining_m(ctl, t)) is None else round(rem),
+            "route": [[round(x, 1), round(z, 1)] for x, z in
+                      (route_points(t.get("route")) if ctl.dest else [(w.x, w.z) for w in ctl.route])],
         }
 
     def state_msg(self) -> dict:
@@ -1102,10 +1244,95 @@ class Radio:
             "tts": bool(EL_KEY), "tts_model": EL_TTS_MODEL if EL_KEY else None,
             "llm": bool(OPENAI_KEY), "llm_model": OPENAI_MODEL if OPENAI_KEY else None,
             "voices_ready": bool(self.voices), "last_error": self.last_error,
+            "routing": "brain" if self.brain_routing else "radio", "auth_required": bool(RADIO_PIN),
         }
+
+    def public_health(self) -> dict:
+        h = self.health()
+        return {k: h[k] for k in ("ok", "mode", "brain_ok", "sim_connected", "stt", "tts", "llm", "routing", "auth_required")}
 
 
 # --------------------------------------------------------------------------- app
+
+
+class Limiter:
+    def __init__(self, per_min: int):
+        self.per_min = per_min
+        self.hits: dict[str, deque] = {}
+
+    def room(self, key: str, now: float) -> bool:
+        if self.per_min <= 0:
+            return True
+        q = self.hits.get(key)
+        while q and now - q[0] >= 60.0:
+            q.popleft()
+        if q is not None and not q:
+            del self.hits[key]
+            q = None
+        return q is None or len(q) < self.per_min
+
+    def hit(self, key: str, now: float) -> None:
+        if self.per_min > 0:
+            self.hits.setdefault(key, deque()).append(now)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        if not self.room(key, now):
+            return False
+        self.hit(key, now)
+        return True
+
+
+class RateGate:
+    def __init__(self, per_client: int, per_all: int):
+        self.client, self.all = Limiter(per_client), Limiter(per_all)
+
+    def allow(self, key: str) -> bool:
+        now = time.monotonic()
+        if not (self.client.room(key, now) and self.all.room("*", now)):
+            return False
+        self.client.hit(key, now)
+        self.all.hit("*", now)
+        return True
+
+
+LIMITS = {
+    "stt": RateGate(env_int("RADIO_STT_PER_MIN", 10), env_int("RADIO_STT_GLOBAL_PER_MIN", 30)),
+    "command": RateGate(env_int("RADIO_COMMAND_PER_MIN", 20), env_int("RADIO_COMMAND_GLOBAL_PER_MIN", 60)),
+    "login": RateGate(env_int("RADIO_LOGIN_PER_MIN", 5), env_int("RADIO_LOGIN_GLOBAL_PER_MIN", 20)),
+    "tts": Limiter(env_int("RADIO_TTS_GLOBAL_PER_MIN", 60)),
+}
+SESSIONS: dict[str, float] = {}
+
+
+def client_ip(request: Request | WebSocket) -> str:
+    fwd = request.headers.get("cf-connecting-ip") or request.headers.get("x-forwarded-for", "").split(",")[0].strip()
+    return fwd or (request.client.host if request.client else "?")
+
+
+def session_of(cookies) -> str | None:
+    tok = cookies.get(SESSION_COOKIE) or ""
+    exp = SESSIONS.get(tok)
+    return tok if exp and exp > time.time() else None
+
+
+def requester(request: Request) -> str:
+    if not RADIO_PIN:
+        return "ip:" + client_ip(request)
+    tok = session_of(request.cookies)
+    if not tok:
+        raise HTTPException(401, "access code required")
+    return "s:" + tok
+
+
+def is_https(request: Request) -> bool:
+    return request.url.scheme == "https" or request.headers.get("x-forwarded-proto", "").split(",")[0].strip() == "https"
+
+
+def limit(kind: str, who: str) -> None:
+    if not LIMITS[kind].allow(who):
+        raise HTTPException(429, f"{kind} rate limit, try again in a minute")
+
 
 radio = Radio()
 
@@ -1117,7 +1344,7 @@ async def lifespan(app: FastAPI):
     await radio.stop()
 
 
-app = FastAPI(title="Haul truck radio", lifespan=lifespan)
+app = FastAPI(title="Haul truck radio", lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
 
 # Aerial 3D view for the laptop/projector: /view -> envgen/preview (live mode follows this radio's truck state)
 from fastapi.responses import RedirectResponse  # noqa: E402
@@ -1137,46 +1364,79 @@ class Command(BaseModel):
     text: str
 
 
+class Login(BaseModel):
+    pin: str
+
+
 @app.get("/")
 def index():
     return FileResponse(WEB_INDEX, headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/radio/health")
-def health():
+def health(request: Request):
+    if RADIO_PIN and not session_of(request.cookies):
+        return radio.public_health()
     return radio.health()
 
 
+@app.post("/api/radio/login")
+def login(body: Login, request: Request, response: Response):
+    if not RADIO_PIN:
+        return {"ok": True, "auth_required": False}
+    limit("login", client_ip(request))
+    if not hmac.compare_digest(body.pin.strip().encode(), RADIO_PIN.encode()):
+        raise HTTPException(401, "wrong access code")
+    now = time.time()
+    for tok in [t for t, exp in SESSIONS.items() if exp <= now]:
+        del SESSIONS[tok]
+    tok = secrets.token_urlsafe(32)
+    SESSIONS[tok] = now + SESSION_TTL_S
+    response.set_cookie(SESSION_COOKIE, tok, max_age=int(SESSION_TTL_S), httponly=True, secure=is_https(request),
+                        samesite="strict", path="/")
+    return {"ok": True}
+
+
 @app.get("/api/radio/state")
-def state():
+def state(who: str = Depends(requester)):
     return dict(radio.state_msg(), log=list(radio.events)[-15:])
 
 
 @app.get("/api/radio/world")
-def world():
+def world(who: str = Depends(requester)):
     w = radio.world
     return {"id": w.raw.get("id"), "bounds": w.bounds, "roads": w.road_lines,
             "sites": [{"id": s.id, "type": s.type, "name": s.name, "x": s.point[0], "z": s.point[1]} for s in w.sites.values()]}
 
 
+AUDIO_TYPES = {"audio/webm": "webm", "video/webm": "webm", "audio/mp4": "m4a", "video/mp4": "m4a", "audio/x-m4a": "m4a",
+               "audio/aac": "aac", "audio/ogg": "ogg", "audio/wav": "wav", "audio/x-wav": "wav", "audio/mpeg": "mp3"}
+
+
 @app.post("/api/radio/transcribe")
-async def transcribe(audio: UploadFile = File(...)):
-    data = await audio.read()
+async def transcribe(audio: UploadFile = File(...), who: str = Depends(requester)):
+    ctype = (audio.content_type or "").split(";")[0].strip().lower()
+    if ctype not in AUDIO_TYPES:
+        raise HTTPException(415, "unsupported audio type")
+    data = await audio.read(MAX_AUDIO_BYTES + 1)
+    if len(data) > MAX_AUDIO_BYTES:
+        raise HTTPException(413, f"recording too long (max {MAX_AUDIO_BYTES // 1024} KB)")
     if len(data) < 800:
         return {"text": "", "note": "recording too short"}
-    ctype = (audio.content_type or "audio/webm").split(";")[0]
-    ext = {"audio/mp4": "m4a", "audio/x-m4a": "m4a", "audio/aac": "aac", "audio/ogg": "ogg", "audio/wav": "wav",
-           "audio/mpeg": "mp3"}.get(ctype, "webm")
+    limit("stt", who)
     t0 = time.monotonic()
-    text = await radio.transcribe(data, f"ptt.{ext}", ctype)
+    text = await radio.transcribe(data, f"ptt.{AUDIO_TYPES[ctype]}", ctype)
     return {"text": text, "ms": round((time.monotonic() - t0) * 1000)}
 
 
 @app.post("/api/radio/command")
-async def command(cmd: Command):
+async def command(cmd: Command, who: str = Depends(requester)):
     text = cmd.text.strip()
     if not text:
         raise HTTPException(400, "empty command")
+    if len(text) > MAX_COMMAND_CHARS:
+        raise HTTPException(413, f"command too long (max {MAX_COMMAND_CHARS} characters)")
+    limit("command", who)
     t0 = time.monotonic()
     await radio.radio_event("Dispatch", None, text, kind="operator", audio=False)
     calls, parser = await radio.parse(text)
@@ -1194,37 +1454,47 @@ async def command(cmd: Command):
 
 
 @app.post("/api/radio/release")
-async def release():
+async def release(who: str = Depends(requester)):
     await radio.release()
     await radio.radio_event("Control", None, "All radio tasks released. Trucks holding.", kind="control")
     return {"ok": True}
 
 
 @app.get("/api/radio/audio/{name}")
-def audio(name: str):
+def audio(name: str, who: str = Depends(requester)):
     if not re.fullmatch(r"[0-9a-f]{20}\.mp3", name):
         raise HTTPException(404)
     p = CACHE_DIR / name
-    if not p.exists():
+    if not p.is_file():
         raise HTTPException(404)
-    return FileResponse(p, media_type="audio/mpeg", headers={"Cache-Control": "public, max-age=86400"})
+    return FileResponse(p, media_type="audio/mpeg", headers={"Cache-Control": "private, max-age=86400"})
+
+
+WS_MAX_MSG = 512
 
 
 @app.websocket("/ws/radio")
 async def ws_radio(ws: WebSocket):
     await ws.accept()
+    if RADIO_PIN and not session_of(ws.cookies):
+        await ws.close(code=4401)
+        return
     radio.sockets.add(ws)
     try:
         await ws.send_json({"type": "hello", "health": radio.health(), "log": list(radio.events)})
         await ws.send_json(radio.state_msg())
         while True:
             msg = await ws.receive_text()
+            if len(msg) > WS_MAX_MSG:
+                await ws.close(code=1009)
+                break
             try:
                 m = json.loads(msg)
             except ValueError:
                 continue
-            if m.get("type") == "ping":
-                await ws.send_json({"type": "pong", "t": m.get("t")})
+            if isinstance(m, dict) and m.get("type") == "ping":
+                t = m.get("t")
+                await ws.send_json({"type": "pong", "t": t if isinstance(t, (int, float)) else None})
     except (WebSocketDisconnect, RuntimeError):
         pass
     finally:
@@ -1236,10 +1506,42 @@ async def http_exc(_, exc: HTTPException):
     return JSONResponse({"error": exc.detail}, status_code=exc.status_code)
 
 
+@app.exception_handler(Exception)
+async def any_exc(_, exc: Exception):
+    log.exception("unhandled: %s", exc)
+    return JSONResponse({"error": "internal error"}, status_code=500)
+
+
+def lan_ip() -> str:
+    if ip := os.environ.get("RADIO_LAN_IP"):
+        return ip
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+            s.connect(("10.255.255.255", 1))
+            return s.getsockname()[0]
+    except OSError:
+        return "127.0.0.1"
+
+
+def self_signed_cert() -> tuple[str, str]:
+    d = RADIO_DIR / "secrets" / "tls"
+    cert, key, stamp = d / "cert.pem", d / "key.pem", d / "san.txt"
+    ip = lan_ip()
+    if not (cert.is_file() and key.is_file() and stamp.is_file() and stamp.read_text() == ip):
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "30",
+                        "-subj", "/CN=haul-radio", "-addext", f"subjectAltName=DNS:localhost,IP:127.0.0.1,IP:{ip}",
+                        "-keyout", str(key), "-out", str(cert)], check=True, capture_output=True)
+        key.chmod(0o600)
+        stamp.write_text(ip)
+    return str(cert), str(key)
+
+
 if __name__ == "__main__":
     import uvicorn
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     try:
         import websockets  # noqa: F401
     except ImportError:
@@ -1248,4 +1550,15 @@ if __name__ == "__main__":
         except ImportError:
             log.warning("no websocket library: /ws/radio disabled, phone falls back to HTTP polling. "
                         "Use --with 'uvicorn[standard]' (see radio/run.sh) for websockets.")
-    uvicorn.run(app, host=os.environ.get("HOST", "127.0.0.1"), port=int(os.environ.get("PORT", 8090)), log_level="info")
+    host, port = os.environ.get("HOST", "127.0.0.1"), int(os.environ.get("PORT", 8090))
+    tls: dict = {}
+    cert, key = os.environ.get("SSL_CERTFILE"), os.environ.get("SSL_KEYFILE")
+    if not cert and os.environ.get("RADIO_TLS", "").lower() in ("1", "true", "yes"):
+        cert, key = self_signed_cert()
+    if cert:
+        tls = {"ssl_certfile": cert, "ssl_keyfile": key}
+        log.info("HTTPS on https://%s:%d (self-signed: accept the browser warning once)",
+                 lan_ip() if host == "0.0.0.0" else host, port)
+    if RADIO_PIN:
+        log.info("access code required (RADIO_PIN)")
+    uvicorn.run(app, host=host, port=port, log_level="info", ws_max_size=64 * 1024, server_header=False, **tls)

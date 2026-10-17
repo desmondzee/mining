@@ -118,6 +118,28 @@
 <div id="toast"></div>
 
 <script>
+const rawFetch = window.fetch.bind(window);
+let loginPending = null, loginDeclined = false;
+function login() {
+  if (loginDeclined) return Promise.resolve(false);
+  loginPending = loginPending || (async () => {
+    for (;;) {
+      const pin = window.prompt("Radio access code");
+      if (pin === null) { loginDeclined = true; return false; }
+      const r = await rawFetch("/api/radio/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ pin }) }).catch(() => null);
+      if (r && r.ok) return true;
+      if (r && r.status === 429) { alert("Too many attempts. Wait a minute."); loginDeclined = true; return false; }
+    }
+  })().finally(() => { loginPending = null; });
+  return loginPending;
+}
+document.addEventListener("pointerdown", () => { loginDeclined = false; });
+window.fetch = async (url, opts) => {
+  const r = await rawFetch(url, opts);
+  if (r.status === 401 && !String(url).endsWith("/api/radio/login") && await login()) return rawFetch(url, opts);
+  return r;
+};
+const MAX_REC_MS = 30000;
 "use strict";
 const $ = (s) => document.querySelector(s);
 const COLORS = { "truck-0": "var(--t0)", "truck-1": "var(--t1)", "truck-2": "var(--t2)" };
@@ -395,6 +417,8 @@ async function pttDown(e) {
   squelch(0.05, 0.1);
   rec.start();
   recStart = performance.now(); recording = true;
+  const started = recStart;
+  setTimeout(() => { if (recording && recStart === started) { toast("30 s limit reached"); pttUp(); } }, MAX_REC_MS);
   btn.classList.add("rec"); btn.firstChild.textContent = "TALK";
   setHeard("Listening…", true);
   meter();
@@ -472,7 +496,11 @@ function connect() {
       addLog(msg); enqueue(msg);
     }
   };
-  ws.onclose = () => { wsOpen = false; setTimeout(connect, backoff); backoff = Math.min(5000, backoff * 2); };
+  ws.onclose = async (e) => {
+    wsOpen = false;
+    if (e.code === 4401 && !(await login())) { setTimeout(connect, 5000); return; }
+    setTimeout(connect, backoff); backoff = Math.min(5000, backoff * 2);
+  };
 }
 function health(h) {
   if (!h) return;
