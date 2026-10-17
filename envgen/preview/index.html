@@ -201,6 +201,10 @@ if (world.assets.surround) {
 const roadMat = new THREE.MeshBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.38, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.85 });
+// yellow road overlay: hidden by default; press R to toggle (or ?roads=1)
+let SHOW_ROADS = new URLSearchParams(location.search).get('roads') === '1';
+const ROAD_OBJS = [];
+addEventListener('keydown', e => { if (e.key === 'r' || e.key === 'R') { SHOW_ROADS = !SHOW_ROADS; for (const o of ROAD_OBJS) o.visible = SHOW_ROADS; } });
 for (const r of world.roads || []) {
   const P = r.points.map(p => new THREE.Vector3(p[0], p[1] + 0.35, p[2])), w = (r.width_m || 15) / 2;
   const pos = [], idx = [], left = [], right = [];
@@ -212,8 +216,8 @@ for (const r of world.roads || []) {
     if (k) idx.push(2*k-2, 2*k-1, 2*k, 2*k-1, 2*k+1, 2*k);
   });
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
-  const ribbon = new THREE.Mesh(g, roadMat); ribbon.renderOrder = 2; scene.add(ribbon);
-  for (const edge of [left, right]) scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(edge), edgeMat));
+  const ribbon = new THREE.Mesh(g, roadMat); ribbon.renderOrder = 2; ribbon.visible = SHOW_ROADS; ROAD_OBJS.push(ribbon); scene.add(ribbon);
+  for (const edge of [left, right]) { const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(edge), edgeMat); ln.visible = SHOW_ROADS; ROAD_OBJS.push(ln); scene.add(ln); }
 }
 const siteColor = { ore: 0x3fd0b0, crusher: 0xe5484d, dump: 0x9b6bd6, parking: 0x4a8fe0, fuel: 0xf2b63c };
 const labels = [];
