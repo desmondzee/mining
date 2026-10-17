@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/brain_state.schema.json",
+  "title": "Brain GET /api/state",
+  "description": "brain (origin/main brain/brain/app.py + world.py, port 8080): World.snapshot(). /ws/state streams the same object at 10 Hz without roads/sites/junctions (refetch GET /api/world when world_seq changes). The radio only reads trucks[].{id,x,z,yaw,speed,status,goal} and sim_connected. The radio's in-process MockBrain returns a subset ({sim_connected, mock: true, trucks[{id,x,z,yaw,speed,goal,status,throttle,steer}]}), which this schema also accepts. Authoritative prose: spec.md (Web, Planner, Sim protocol).",
+  "type": "object",
+  "required": ["sim_connected", "trucks"],
+  "properties": {
+    "world_seq": {"description": "Bumped on every sim hello that sets the road network.", "type": "integer", "minimum": 0},
+    "sim_connected": {"type": "boolean"},
+    "bounds": {"description": "From sim hello (or the nav grid); default [-100,-100,100,100].", "$ref": "common.schema.json#/$defs/Bounds"},
+    "cameras": {"type": "array", "items": {"type": "string"}},
+    "truck_model": {"type": "string"},
+    "obstacles": {"type": "array", "items": {"$ref": "#/$defs/Obstacle"}},
+    "paths": {"description": "Pedestrian paths from hello.", "type": "array", "items": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/XZ"}}},
+    "pedestrians": {"type": "array", "items": {"$ref": "#/$defs/Pedestrian"}},
+    "roads": {"type": "array", "items": {"$ref": "#/$defs/NetRoad"}},
+    "sites": {"type": "array", "items": {"$ref": "#/$defs/NetSite"}},
+    "junctions": {"type": "array", "items": {"$ref": "#/$defs/NetJunction"}},
+    "mock": {"description": "Only set by the radio's MockBrain.", "const": true},
+    "trucks": {"type": "array", "items": {"$ref": "#/$defs/BrainTruck"}}
+  },
+  "$defs": {
+    "BrainTruck": {
+      "description": "world.Truck.to_dict() (path renamed to route). Also the response body of POST/DELETE /api/trucks/{id}/goal.",
+      "type": "object",
+      "required": ["id", "x", "z", "yaw", "speed", "goal", "status"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/TruckId"},
+        "x": {"type": "number"},
+        "z": {"type": "number"},
+        "yaw": {"description": "Degrees, Unity eulerAngles.y (0 = +z, clockwise).", "type": "number"},
+        "speed": {"description": "m/s.", "type": "number"},
+        "goal": {"oneOf": [{"$ref": "common.schema.json#/$defs/Vec2"}, {"type": "null"}]},
+        "goal_site": {"description": "Node id (site or junction) the goal was resolved to, or null.", "type": ["string", "null"]},
+        "status": {"type": "string", "enum": ["idle", "driving", "avoiding", "holding", "arrived"]},
+        "throttle": {"type": "number", "minimum": 0, "maximum": 1},
+        "steer": {"description": "-1..1, positive = right.", "type": "number", "minimum": -1, "maximum": 1},
+        "route": {"description": "Planner A* path [[x, z], ...].", "$ref": "common.schema.json#/$defs/Polyline2"},
+        "path_idx": {"type": "integer", "minimum": 0},
+        "ghost_paths": {"description": "Safe candidate rollouts.", "type": "array", "items": {"$ref": "common.schema.json#/$defs/Polyline2"}}
+      }
+    },
+    "Obstacle": {"type": "object", "required": ["x", "z"], "properties": {"x": {"type": "number"}, "z": {"type": "number"}, "r": {"type": "number"}}},
+    "Pedestrian": {"type": "object", "required": ["x", "z"], "properties": {"id": {}, "x": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}}},
+    "NetRoad": {
+      "description": "Road as sent in the sim hello (Unity reduces world.json roads to x, z).",
+      "type": "object",
+      "required": ["id", "points"],
+      "properties": {
+        "id": {"type": "string"},
+        "from": {"type": "string"},
+        "to": {"type": "string"},
+        "width_m": {"type": "number"},
+        "one_way": {"type": "boolean"},
+        "points": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/XZ"}}
+      }
+    },
+    "NetSite": {"type": "object", "required": ["id", "x", "z"], "properties": {"id": {"type": "string"}, "type": {"type": "string"}, "name": {"type": "string"}, "x": {"type": "number"}, "z": {"type": "number"}}},
+    "NetJunction": {"type": "object", "required": ["id", "x", "z"], "properties": {"id": {"type": "string"}, "x": {"type": "number"}, "z": {"type": "number"}}},
+    "BrainWorld": {
+      "description": "GET /api/world.",
+      "type": "object",
+      "required": ["bounds", "roads", "sites", "junctions", "preview"],
+      "properties": {
+        "bounds": {"$ref": "common.schema.json#/$defs/Bounds"},
+        "roads": {"type": "array", "items": {"$ref": "#/$defs/NetRoad"}},
+        "sites": {"type": "array", "items": {"$ref": "#/$defs/NetSite"}},
+        "junctions": {"type": "array", "items": {"$ref": "#/$defs/NetJunction"}},
+        "preview": {"type": "boolean"},
+        "preview_bounds": {"description": "WORLD_DIR/world.json bounds.", "oneOf": [{"$ref": "common.schema.json#/$defs/Bounds"}, {"type": "null"}]}
+      }
+    },
+    "BrainSites": {
+      "description": "GET /api/sites (from WORLD_DIR world.json via the nav map).",
+      "type": "array",
+      "items": {"type": "object", "required": ["id", "type", "pos"], "properties": {"id": {"type": "string"}, "type": {"type": "string"}, "pos": {"$ref": "common.schema.json#/$defs/Vec2"}}}
+    }
+  }
+}

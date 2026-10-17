@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/radio_world.schema.json",
+  "title": "GET /api/radio/world",
+  "description": "Flattened world for the phone minimap (radio/web). Derived from world.json: roads reduced to [x, z]; each site's x, z is where trucks stop (load_point / dump_point if present, else pos).",
+  "type": "object",
+  "required": ["id", "bounds", "roads", "sites"],
+  "properties": {
+    "id": {"type": ["string", "null"]},
+    "bounds": {"oneOf": [{"$ref": "common.schema.json#/$defs/Bounds"}, {"type": "null"}]},
+    "origin": {"oneOf": [{"$ref": "common.schema.json#/$defs/Vec2"}, {"type": "null"}]},
+    "size_m": {"oneOf": [{"$ref": "common.schema.json#/$defs/Vec2"}, {"type": "null"}]},
+    "basemap": {"description": "/data/worlds/<id>/minimap.png when that file exists, else null.", "type": ["string", "null"]},
+    "roads": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "points"],
+        "properties": {
+          "id": {"type": "string"},
+          "name": {"type": ["string", "null"]},
+          "points": {"$ref": "common.schema.json#/$defs/Polyline2"}
+        },
+        "additionalProperties": false
+      }
+    },
+    "sites": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "type", "name", "x", "z"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"$ref": "common.schema.json#/$defs/SiteType"},
+          "name": {"type": "string"},
+          "x": {"type": "number"},
+          "z": {"type": "number"}
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false
+}

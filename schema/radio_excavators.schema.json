@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/radio_excavators.schema.json",
+  "title": "GET /api/radio/excavators",
+  "description": "Lightweight excavator state for pollers (Unity MineRadioLink polls this, read-only, to animate MineExcavatorRig). A projection of radio_state.schema.json#/$defs/RadioExcavator. Exists on this branch's radio/server.py only (origin/main's radio has no such route).",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "required": ["id", "face", "state", "heading_deg", "pos3"],
+    "properties": {
+      "id": {"$ref": "common.schema.json#/$defs/ExcavatorId"},
+      "face": {"description": "Ore site id.", "type": ["string", "null"]},
+      "state": {"$ref": "radio_state.schema.json#/$defs/ExcState"},
+      "heading_deg": {"type": "number"},
+      "pos3": {"oneOf": [{"$ref": "common.schema.json#/$defs/Vec3"}, {"type": "null"}]}
+    },
+    "additionalProperties": false
+  }
+}

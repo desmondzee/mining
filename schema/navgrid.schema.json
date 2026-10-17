@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/navgrid.schema.json",
+  "title": "navgrid.json",
+  "description": "data/worlds/<id>/navgrid.json (envgen common.navgrid_dict, compact JSON). Row-major, index = row * width + col, row = z index (row 0 = min z), col = x index (col 0 = min x). Cell (col,row) covers [origin.x + col*cell_m, +cell_m) x [origin.z + row*cell_m, +cell_m). Read width/height/cell_m/origin; never assume 200x200 @ 2 m. Road corridors (max(width_m,10)/2 around each centreline) and 12 m pads around sites / load / dump points / slots are carved to cost 1.0 (common.carve_road_corridors). Consumers: brain planner (planning/navmap.py, WORLD_DIR), envgen checks. len(heights) == len(cost) == width*height is checked by validate.py (not expressible in JSON Schema).",
+  "type": "object",
+  "required": ["width", "height", "cell_m", "origin", "heights", "cost"],
+  "properties": {
+    "width": {"description": "Cells in x.", "type": "integer", "minimum": 1},
+    "height": {"description": "Cells in z.", "type": "integer", "minimum": 1},
+    "cell_m": {"description": "Cell edge in metres (procedural 2.0; quarry 2.5; marble = extent/220, >= 0.5).", "type": "number", "exclusiveMinimum": 0},
+    "origin": {"description": "World [x, z] of cell (0,0)'s min corner.", "$ref": "common.schema.json#/$defs/Vec2"},
+    "heights": {"description": "Ground height y in metres per cell.", "type": "array", "items": {"type": "number"}},
+    "cost": {
+      "description": "Traversal cost per cell: 1.0 = flat road, > 1 harder (slope), -1 = impassable.",
+      "type": "array",
+      "items": {"type": "number", "anyOf": [{"const": -1}, {"minimum": 1}]}
+    }
+  },
+  "additionalProperties": false
+}

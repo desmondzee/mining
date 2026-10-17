@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/common.schema.json",
+  "title": "Shared primitives",
+  "description": "Units and primitives shared by every schema in this folder. Metres, seconds, degrees. Right-handed, Y up, X east, Z north. Ground points are [x, z]; 3D points are [x, y, z]. Headings: 0 = +z (north), clockwise positive seen from above (Unity eulerAngles.y), heading = atan2(dx, dz).",
+  "$defs": {
+    "Vec2": {
+      "description": "Ground point [x, z] in metres.",
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}],
+      "minItems": 2,
+      "maxItems": 2
+    },
+    "Vec3": {
+      "description": "3D point [x, y, z] in metres, Y up. Maps to Unity Vector3(x, y, z) directly.",
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}],
+      "minItems": 3,
+      "maxItems": 3
+    },
+    "XZ": {
+      "description": "Ground point as an object {x, z} (brain / sim protocol style).",
+      "type": "object",
+      "required": ["x", "z"],
+      "properties": {"x": {"type": "number"}, "z": {"type": "number"}}
+    },
+    "Bounds": {
+      "description": "[xmin, zmin, xmax, zmax] in metres.",
+      "type": "array",
+      "prefixItems": [{"type": "number"}, {"type": "number"}, {"type": "number"}, {"type": "number"}],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "HeadingDeg": {
+      "description": "Heading in degrees, 0 = +z (north), clockwise positive, [0, 360).",
+      "type": "number",
+      "minimum": 0,
+      "exclusiveMaximum": 360
+    },
+    "Pose": {
+      "description": "Stop pose written by envgen (load_point, dump_point, parking slot).",
+      "type": "object",
+      "required": ["pos3", "heading_deg"],
+      "properties": {
+        "pos3": {"$ref": "#/$defs/Vec3"},
+        "heading_deg": {"$ref": "#/$defs/HeadingDeg"}
+      },
+      "additionalProperties": false
+    },
+    "SiteType": {
+      "type": "string",
+      "enum": ["crusher", "dump", "ore", "parking", "fuel"]
+    },
+    "TruckId": {
+      "description": "Truck id. Current worlds and the brain use truck-N (N from 0). Legacy Marble worlds (marble_pit, marble_draft_test) still carry T1..T5.",
+      "type": "string",
+      "pattern": "^(truck-[0-9]+|T[0-9]+)$"
+    },
+    "ExcavatorId": {
+      "description": "Excavator id, exc-N (N from 0), one per ore face.",
+      "type": "string",
+      "pattern": "^exc-[0-9]+$"
+    },
+    "Id": {
+      "description": "Site / junction / road id: lowercase snake_case (e.g. ore_1, crusher, j_1, ramp_1).",
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9_]*$"
+    },
+    "Polyline2": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/Vec2"}
+    }
+  }
+}

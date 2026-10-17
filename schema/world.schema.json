@@ -1,0 +1,324 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/world.schema.json",
+  "title": "world.json",
+  "description": "data/worlds/<id>/world.json, written by envgen (procedural.py, scan.py, worldlabs.py; surround.py adds assets.surround). Read by the radio (RADIO_WORLD), the brain (WORLD_DIR, assets.preview and bounds), Unity (MineWorldImporter / MineGoals bake) and envgen/preview. Writers: envgen/common.py, procedural.py, scan.py, worldlabs.py, surround.py. Narrative: envgen/CONTRACT.md. Extra keys are allowed everywhere (additive contract).",
+  "type": "object",
+  "required": ["id", "name", "source", "size_m", "origin", "assets", "sites", "roads", "junctions", "trucks", "navgrid"],
+  "properties": {
+    "id": {"description": "Equals the folder name under data/worlds/.", "type": "string", "pattern": "^[a-z0-9_]+$"},
+    "name": {"description": "Display name.", "type": "string"},
+    "source": {"type": "string", "enum": ["procedural", "marble", "scan"]},
+    "size_m": {"description": "World extent [x, z] in metres.", "$ref": "common.schema.json#/$defs/Vec2"},
+    "origin": {"description": "Min corner [x, z].", "$ref": "common.schema.json#/$defs/Vec2"},
+    "bounds": {"description": "[xmin, zmin, xmax, zmax] = origin .. origin + size_m. Missing only in legacy Marble worlds.", "$ref": "common.schema.json#/$defs/Bounds"},
+    "assets": {"$ref": "#/$defs/Assets"},
+    "splat_transform": {"$ref": "#/$defs/SplatTransform"},
+    "scan_transform": {"$ref": "#/$defs/ScanTransform"},
+    "scan": {"$ref": "#/$defs/ScanStats"},
+    "marble": {"$ref": "#/$defs/MarbleInfo"},
+    "generator": {"$ref": "#/$defs/Generator"},
+    "sites": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Site"}},
+    "junctions": {"type": "array", "items": {"$ref": "#/$defs/Junction"}},
+    "roads": {"type": "array", "items": {"$ref": "#/$defs/Road"}},
+    "trucks": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Truck"}},
+    "equipment": {"type": "array", "items": {"$ref": "#/$defs/Equipment"}},
+    "navgrid": {"description": "Navgrid file name, always navgrid.json (navgrid.schema.json).", "type": "string"},
+    "design": {"$ref": "#/$defs/Design"}
+  },
+  "allOf": [
+    {"if": {"properties": {"source": {"const": "scan"}}}, "then": {"required": ["scan_transform", "bounds"]}},
+    {"if": {"properties": {"source": {"const": "marble"}}}, "then": {"required": ["splat_transform"]}},
+    {"if": {"properties": {"source": {"const": "procedural"}}}, "then": {"required": ["splat_transform", "bounds", "generator", "design", "equipment"]}}
+  ],
+  "$defs": {
+    "AssetFile": {"description": "File name relative to the world folder, or null when absent.", "type": ["string", "null"]},
+    "Assets": {
+      "description": "Files in the world folder. Values are file names relative to data/worlds/<id>/ or null. scan.py/procedural.py keep pano, pano_source and surround from the previous world.json (common.preserve_assets).",
+      "type": "object",
+      "properties": {
+        "splat": {"$ref": "#/$defs/AssetFile", "description": "Gaussian splat (splat_500k.spz) for marble worlds."},
+        "splat_lowres": {"$ref": "#/$defs/AssetFile", "description": "splat_100k.spz (marble)."},
+        "collider": {"$ref": "#/$defs/AssetFile", "description": "collider.glb, untextured, world frame (marble, scan)."},
+        "visual": {"$ref": "#/$defs/AssetFile", "description": "visual.glb, original textured scan; place with scan_transform (scan)."},
+        "terrain_mesh": {"$ref": "#/$defs/AssetFile", "description": "terrain.glb, vertex-coloured heightmap mesh, world frame."},
+        "surround": {"$ref": "#/$defs/AssetFile", "description": "surround.glb apron (envgen/surround.py), world frame, no collider."},
+        "pano": {"$ref": "#/$defs/AssetFile", "description": "Sky panorama: pano.jpg (marble) or sky_pano.jpg (borrowed backdrop)."},
+        "pano_source": {"type": ["string", "null"], "description": "Free-text provenance of pano (not a file)."},
+        "concept": {"$ref": "#/$defs/AssetFile", "description": "concept.png used to prompt Marble."},
+        "heightmap_raw": {"$ref": "#/$defs/AssetFile", "description": "heightmap.raw, uint16 LE, square 2^n+1 (heightmap_meta.schema.json)."},
+        "heightmap_meta": {"$ref": "#/$defs/AssetFile", "description": "heightmap_meta.json."},
+        "preview": {"$ref": "#/$defs/AssetFile", "description": "preview.png top-down, north up, aligned to bounds (served by the brain at /api/world/preview)."},
+        "thumbnail": {"$ref": "#/$defs/AssetFile", "description": "thumbnail.jpg from Marble."}
+      },
+      "additionalProperties": {"type": ["string", "null"]}
+    },
+    "SplatTransform": {
+      "description": "Places splat/collider assets in the world. Marble: p = raw*scale; p.y -= ground_offset (raw frame); then rotate rotation_euler_deg. Procedural: scale 1, offset 0, [0,0,0].",
+      "type": "object",
+      "required": ["scale", "ground_offset", "rotation_euler_deg"],
+      "properties": {
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "ground_offset": {"type": "number"},
+        "rotation_euler_deg": {"$ref": "common.schema.json#/$defs/Vec3"},
+        "frame": {"type": "string", "enum": ["opencv", "gltf"]},
+        "order": {"type": "string"}
+      }
+    },
+    "ScanTransform": {
+      "description": "Places visual.glb: p_world = scale * (R @ p_gltf) + translation. y = 0 is the scan's ref_percentile terrain height.",
+      "type": "object",
+      "required": ["scale", "rotation_euler_deg", "rotation_matrix", "translation", "matrix"],
+      "properties": {
+        "scale": {"type": "number", "exclusiveMinimum": 0},
+        "rotation_euler_deg": {"$ref": "common.schema.json#/$defs/Vec3"},
+        "rotation_matrix": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"$ref": "common.schema.json#/$defs/Vec3"}},
+        "translation": {"$ref": "common.schema.json#/$defs/Vec3"},
+        "up_axis": {"type": "string", "pattern": "^[+-][xyz]$"},
+        "frame": {"type": "string", "const": "gltf"},
+        "matrix": {"description": "4x4 row-major, column vectors.", "type": "array", "minItems": 4, "maxItems": 4,
+                   "items": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}}},
+        "order": {"type": "string"},
+        "native_extent_xz": {"$ref": "common.schema.json#/$defs/Vec2"},
+        "metric": {"type": "boolean"},
+        "ref_percentile": {"type": "number", "minimum": 0, "maximum": 100},
+        "source_file": {"type": "string"}
+      }
+    },
+    "ScanStats": {
+      "type": "object",
+      "properties": {
+        "pit_depth_m": {"type": "number"},
+        "floor_y": {"type": "number"},
+        "max_y": {"type": "number"},
+        "hole_fraction": {"type": "number", "minimum": 0, "maximum": 1},
+        "tris": {"type": "integer", "minimum": 0},
+        "collider_tris": {"type": "integer", "minimum": 0}
+      }
+    },
+    "MarbleInfo": {
+      "description": "World Labs Marble provenance (worldlabs.py). The raw API responses sit beside it in marble_world.json / marble_operation.json (opaque, not schema'd).",
+      "type": "object",
+      "properties": {
+        "world_id": {"type": ["string", "null"]},
+        "marble_url": {"type": ["string", "null"]},
+        "caption": {"type": ["string", "null"]},
+        "model": {"type": ["string", "null"]}
+      }
+    },
+    "Generator": {
+      "description": "Procedural parameters (procedural.py): seed plus the pit meta it computed.",
+      "type": "object",
+      "required": ["seed"],
+      "properties": {
+        "seed": {"type": "integer"},
+        "rim_level": {"type": "number"},
+        "floor_level": {"type": "number"},
+        "ramp_length_m": {"type": "number"},
+        "ramp_turns": {"type": "number"},
+        "ramp_runout_m": {"type": "number"},
+        "ramp_min_centreline_radius_m": {"type": "number"},
+        "pit_crest_radius_m": {"type": "number"},
+        "floor_radius_m": {"type": "number"},
+        "ramp_top": {"$ref": "common.schema.json#/$defs/Vec2"},
+        "ramp_bottom": {"$ref": "common.schema.json#/$defs/Vec2"},
+        "design_truck": {"$ref": "#/$defs/DesignTruckKey"}
+      }
+    },
+    "Site": {
+      "description": "A named operating location. Look sites up by type, not id: ids differ per world (default: crusher, dump_south, parking, fuel, pit_floor, pit_south, pit_west; scan/marble: ore_1..3, crusher, dump, parking, fuel).",
+      "type": "object",
+      "required": ["id", "type", "name", "pos"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/Id"},
+        "type": {"$ref": "common.schema.json#/$defs/SiteType"},
+        "name": {"description": "Display / spoken label (e.g. 'Lower Face', 'Primary Crusher', 'Ready Line').", "type": "string"},
+        "pos": {"$ref": "common.schema.json#/$defs/Vec2"},
+        "pos3": {"description": "[x, terrain y, z] at pos.", "$ref": "common.schema.json#/$defs/Vec3"},
+        "tonnes": {"description": "Ore sites: initial tonnes (they deplete).", "type": "number", "minimum": 0},
+        "load_point": {"description": "Ore sites: truck stop pose beside the excavator (road end; heading = arrival direction from the crusher).", "$ref": "common.schema.json#/$defs/Pose"},
+        "dump_point": {"description": "Crusher / dump: tip stop pose (road end; heading = arrival direction from the first ore site).", "$ref": "common.schema.json#/$defs/Pose"},
+        "slots": {"description": "Parking: one pose per truck, side by side, 4.9 m apart, facing out along the exit road. trucks[i].spawn/heading_deg equal slots[i].", "type": "array", "items": {"$ref": "common.schema.json#/$defs/Pose"}}
+      },
+      "allOf": [
+        {"if": {"properties": {"type": {"const": "ore"}}}, "then": {"required": ["tonnes"]}},
+        {"if": {"properties": {"type": {"not": {"const": "ore"}}}}, "then": {"not": {"required": ["load_point"]}}},
+        {"if": {"properties": {"type": {"not": {"enum": ["crusher", "dump"]}}}}, "then": {"not": {"required": ["dump_point"]}}},
+        {"if": {"properties": {"type": {"not": {"const": "parking"}}}}, "then": {"not": {"required": ["slots"]}}}
+      ]
+    },
+    "Junction": {
+      "type": "object",
+      "required": ["id", "name", "pos"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/Id"},
+        "name": {"type": "string"},
+        "pos": {"description": "3D [x, y, z] (unlike sites[].pos, which is [x, z]).", "$ref": "common.schema.json#/$defs/Vec3"}
+      }
+    },
+    "Road": {
+      "description": "Road centreline between two nodes (site or junction ids). Roads + junctions form a connected graph; every site is an endpoint of at least one road.",
+      "type": "object",
+      "required": ["id", "name", "type", "from", "to", "width_m", "grade_pct", "one_way", "points"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/Id"},
+        "name": {"type": "string"},
+        "type": {"type": "string", "enum": ["ramp", "haul", "spur"]},
+        "from": {"description": "Site or junction id; points[0] is here.", "$ref": "common.schema.json#/$defs/Id"},
+        "to": {"description": "Site or junction id; points[-1] is here.", "$ref": "common.schema.json#/$defs/Id"},
+        "width_m": {"description": "design.ramp_width_m for ramps, design.road_width_m otherwise.", "type": "number", "exclusiveMinimum": 0},
+        "grade_pct": {"description": "Average grade, percent.", "type": "number"},
+        "one_way": {"type": "boolean"},
+        "points": {"description": "3D centreline, <= 5 m spacing, ordered from -> to.", "type": "array", "minItems": 2, "items": {"$ref": "common.schema.json#/$defs/Vec3"}}
+      }
+    },
+    "Truck": {
+      "type": "object",
+      "required": ["id", "callsign", "spawn", "heading_deg", "capacity_t"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/TruckId"},
+        "callsign": {"description": "envgen writes 'Truck N' with the id's own number ('Truck 0' for truck-0). The radio speaks 'Truck One' for truck-0 (radio/server.py callsign()).", "type": "string"},
+        "spawn": {"$ref": "common.schema.json#/$defs/Vec2"},
+        "heading_deg": {"$ref": "common.schema.json#/$defs/HeadingDeg"},
+        "capacity_t": {"description": "Payload in tonnes (= design_truck.payload_t; legacy 200).", "type": "number", "exclusiveMinimum": 0},
+        "model": {"type": ["string", "null"]},
+        "slot": {"description": "Index into the parking site's slots.", "type": "integer", "minimum": 0}
+      }
+    },
+    "Equipment": {
+      "description": "Static equipment; currently one excavator per ore face. The radio reads type == excavator, id, face, pos3, heading_deg, name.",
+      "type": "object",
+      "required": ["id", "type", "face", "pos3", "heading_deg"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ExcavatorId"},
+        "type": {"type": "string", "enum": ["excavator"]},
+        "name": {"description": "'Excavator N' with N = index + 1.", "type": "string"},
+        "face": {"description": "Ore site id it digs at.", "$ref": "common.schema.json#/$defs/Id"},
+        "pos3": {"$ref": "common.schema.json#/$defs/Vec3"},
+        "heading_deg": {"description": "Faces its face's load point.", "$ref": "common.schema.json#/$defs/HeadingDeg"},
+        "model": {"type": "string"}
+      }
+    },
+    "DesignTruckKey": {"type": "string", "enum": ["komatsu_hd465", "cat785d", "cat797f", "komatsu930e"]},
+    "DesignTruck": {
+      "description": "envgen/mine_spec.py Truck dataclass + mid_axle_height_m.",
+      "type": "object",
+      "required": ["key", "name", "payload_t", "width_m", "length_m"],
+      "properties": {
+        "key": {"$ref": "#/$defs/DesignTruckKey"},
+        "name": {"type": "string"},
+        "payload_t": {"type": "number"},
+        "width_m": {"type": "number"},
+        "length_m": {"type": "number"},
+        "height_m": {"type": "number"},
+        "wheelbase_m": {"type": "number"},
+        "tire": {"type": "string"},
+        "tire_diameter_m": {"type": "number"},
+        "top_speed_kmh": {"type": "number"},
+        "turning_diameter_m": {"type": "number"},
+        "clearance_diameter_m": {"type": "number"},
+        "source": {"type": "string"},
+        "mid_axle_height_m": {"type": "number"}
+      }
+    },
+    "DesignCheck": {
+      "type": "object",
+      "required": ["param", "value", "ok", "severity"],
+      "properties": {
+        "param": {"type": "string"},
+        "value": {"type": "number"},
+        "min": {"type": ["number", "null"]},
+        "max": {"type": ["number", "null"]},
+        "unit": {"type": "string"},
+        "ok": {"type": "boolean"},
+        "severity": {"type": "string", "enum": ["error", "warning"]},
+        "ref": {"type": "string"},
+        "note": {"type": "string"}
+      }
+    },
+    "NumberMap": {"description": "{road_id: number}", "type": "object", "additionalProperties": {"type": "number"}},
+    "NavgridCheck": {
+      "description": "common.navgrid_check summary (footprint-aware connectivity).",
+      "type": "object",
+      "required": ["truck_width_m", "erosion_radius_m", "min_required_width_m", "min_corridor_width_m", "pairs_connected"],
+      "properties": {
+        "truck_width_m": {"type": "number"},
+        "erosion_radius_m": {"type": "number"},
+        "min_required_width_m": {"type": "number"},
+        "min_corridor_width_m": {"$ref": "#/$defs/NumberMap"},
+        "pairs_connected": {"type": "string", "pattern": "^[0-9]+/[0-9]+$"},
+        "nav_point_pairs_connected": {"type": "string", "pattern": "^[0-9]+/[0-9]+$"},
+        "nav_points": {"type": "integer"},
+        "method": {"type": "string"}
+      }
+    },
+    "FaceOrder": {
+      "description": "Hillside layout: Lower/Middle/Upper face ordering evidence (common.check_face_order).",
+      "type": "object",
+      "required": ["y", "route_m", "plan_t", "plan_offset_m"],
+      "properties": {
+        "y": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+        "route_m": {"type": "array", "minItems": 3, "maxItems": 3, "items": {"type": "number"}},
+        "plan_t": {"type": "number"},
+        "plan_offset_m": {"type": "number"}
+      }
+    },
+    "AsBuilt": {
+      "description": "Geometry measured back from heightmap.raw. Scan worlds: pit_depth_m + per-road grade maps. Procedural: envgen/measure_geometry.py blocks ({spec, measured_*, p25_p75 / p10_p90, n, ...}).",
+      "type": "object",
+      "properties": {
+        "method": {"type": "string"},
+        "pit_depth_m": {"type": "number"},
+        "road_max_grade_pct_20m": {"$ref": "#/$defs/NumberMap"},
+        "road_sustained_grade_pct_50m": {"$ref": "#/$defs/NumberMap"}
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": {"type": ["number", "string", "boolean", "array", "null"]}
+      }
+    },
+    "Design": {
+      "description": "Pit / haul-road design spec (envgen/mine_spec.py, DESIGN_SPEC.md). Procedural worlds carry the full spec; scan worlds only the haul-road part plus layout, haul_cycle_roads, face_order.",
+      "type": "object",
+      "required": ["design_truck", "road_width_m", "ramp_width_m", "ramp_grade_pct"],
+      "properties": {
+        "design_truck": {"$ref": "#/$defs/DesignTruck"},
+        "rock": {"type": "string"},
+        "bench_height_m": {"type": "number"},
+        "n_benches": {"type": "integer"},
+        "pit_depth_m": {"type": "number"},
+        "face_angle_deg": {"type": "number"},
+        "face_horizontal_m": {"type": "number"},
+        "berm_width_m": {"type": "number"},
+        "mrc_min_berm_m": {"type": "number"},
+        "inter_ramp_angle_deg": {"type": "number"},
+        "overall_slope_deg": {"type": "number"},
+        "overall_slope_deg_two_ramp_legs": {"type": "number"},
+        "ramp_grade_pct": {"type": "number"},
+        "max_road_grade_pct": {"type": "number"},
+        "lanes": {"type": "integer"},
+        "lane_factor": {"type": "number"},
+        "road_width_m": {"type": "number"},
+        "ramp_width_m": {"type": "number"},
+        "safety_berm_height_m": {"type": "number"},
+        "safety_berm_base_m": {"type": "number"},
+        "safety_berm_side_deg": {"type": "number"},
+        "cross_fall_pct": {"type": "number"},
+        "ramp_design_speed_kmh": {"type": "number"},
+        "min_curve_radius_m": {"type": "number"},
+        "floor_radius_m": {"type": "number"},
+        "ramp_type": {"type": "string"},
+        "checks": {"type": "array", "items": {"$ref": "#/$defs/DesignCheck"}},
+        "violations": {"type": "array", "items": {"type": "string"}},
+        "warnings": {"type": "array", "items": {"type": "string"}},
+        "references": {"type": "object", "additionalProperties": {"type": "string"}},
+        "notes": {"description": "List of strings (procedural) or one string (scan).", "type": ["array", "string"], "items": {"type": "string"}},
+        "layout": {"type": "string", "enum": ["hillside", "pit"]},
+        "haul_cycle_roads": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/Id"}},
+        "face_order": {"$ref": "#/$defs/FaceOrder"},
+        "navgrid_check": {"$ref": "#/$defs/NavgridCheck"},
+        "as_built": {"$ref": "#/$defs/AsBuilt"}
+      }
+    }
+  }
+}

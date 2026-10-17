@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/heightmap_meta.schema.json",
+  "title": "heightmap_meta.json",
+  "description": "data/worlds/<id>/heightmap_meta.json, describing heightmap.raw (envgen common.write_heightmap_raw). heightmap.raw = resolution x resolution uint16 little-endian, row-major, row 0 = south edge (min z), col 0 = west edge (min x). world_y = min_height_m + value/65535 * height_range_m. Unity terrain: size = (size_m[0], height_range_m, size_m[1]), position = (origin[0], min_height_m, origin[1]). File size == resolution^2 * 2 bytes is checked by validate.py.",
+  "type": "object",
+  "required": ["resolution", "size_m", "origin", "min_height_m", "max_height_m", "height_range_m"],
+  "properties": {
+    "file": {"type": "string", "const": "heightmap.raw"},
+    "resolution": {"description": "Square side, 2^n + 1 (Unity terrain heightmap).", "type": "integer", "enum": [33, 65, 129, 257, 513, 1025, 2049, 4097]},
+    "format": {"type": "string"},
+    "row0": {"type": "string"},
+    "size_m": {"description": "[x, z] extent covered, metres (matches world.json size_m).", "$ref": "common.schema.json#/$defs/Vec2"},
+    "origin": {"description": "[x, z] min corner (matches world.json origin).", "$ref": "common.schema.json#/$defs/Vec2"},
+    "min_height_m": {"type": "number"},
+    "max_height_m": {"type": "number"},
+    "height_range_m": {"description": "max_height_m - min_height_m.", "type": "number", "minimum": 0},
+    "note": {"type": "string"}
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/brain_goal.schema.json",
+  "title": "Brain POST /api/trucks/{truck_id}/goal (request body)",
+  "description": "Set a truck goal. {site}: a node id from the sim hello sites/junctions (fallback world.json sites), A* routed. {x, z}: when the hello carried roads the brain SNAPS the point to the nearest site/junction node (spec.md: 'brain snaps to a node when roads exist'); otherwise drives/plans to the exact point. Response 200: brain_state.schema.json#/$defs/BrainTruck. 404 unknown truck/site; 422 missing fields. DELETE /api/trucks/{truck_id}/goal (no body) clears goal, goal_site, route and returns BrainTruck. POST /api/trucks/{truck_id}/site/{site_id} is equivalent to {site}. The radio (this branch) only sends {x, z} waypoints; Unity MineGoals.GoalJson builds {x, z} too.",
+  "oneOf": [
+    {"$ref": "#/$defs/SiteGoal"},
+    {"$ref": "#/$defs/PointGoal"}
+  ],
+  "$defs": {
+    "SiteGoal": {
+      "type": "object",
+      "required": ["site"],
+      "properties": {"site": {"type": "string"}, "x": {"type": "null"}, "z": {"type": "null"}}
+    },
+    "PointGoal": {
+      "type": "object",
+      "required": ["x", "z"],
+      "properties": {"x": {"type": "number"}, "z": {"type": "number"}, "site": {"type": "null"}}
+    },
+    "GoalResponse": {"$ref": "brain_state.schema.json#/$defs/BrainTruck"}
+  }
+}
