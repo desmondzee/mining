@@ -91,3 +91,15 @@ def test_jpeg_frame_passes_through_with_depth():
     out, out_depth, encoded = decode_frame(header, jpeg + depth.tobytes())
     assert encoded == jpeg and out.shape == (36, 64, 3) and abs(int(out[0, 0, 0]) - 200) < 10
     np.testing.assert_array_equal(out_depth, depth)
+
+
+def test_encode_reset_round_trip():
+    from brain.protocol import encode_reset
+
+    async def read():
+        reader = asyncio.StreamReader()
+        reader.feed_data(encode_reset())
+        return await read_message(reader)
+
+    header, payload = asyncio.run(read())
+    assert header == {"type": "reset"} and payload == b""

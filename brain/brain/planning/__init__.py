@@ -3,14 +3,37 @@ import os
 from functools import cache
 from pathlib import Path
 
-from .driver import LIDAR_HEIGHT, Decision, Scorer, drive, plan_route
+from .driver import (
+    LIDAR_HEIGHT,
+    REPLAN_AFTER,
+    Decision,
+    Scorer,
+    drive,
+    plan_route,
+    route_blocked,
+    static_obstacles,
+)
+from .follow import follow, reset
 from .navmap import NavMap, load
 
 log = logging.getLogger(__name__)
 
-DEFAULT_WORLD_DIR = Path(__file__).resolve().parents[3] / "data" / "worlds" / "default"
+DEFAULT_WORLD_DIR = Path(__file__).resolve().parents[3] / "data" / "worlds" / "quarry"
 
-__all__ = ["Decision", "NavMap", "drive", "lidar_height", "nav_map", "plan_route", "scorer"]
+__all__ = [
+    "REPLAN_AFTER",
+    "Decision",
+    "NavMap",
+    "drive",
+    "follow",
+    "lidar_height",
+    "nav_map",
+    "plan_route",
+    "reset",
+    "route_blocked",
+    "scorer",
+    "static_obstacles",
+]
 
 
 @cache
@@ -24,13 +47,29 @@ def nav_map() -> NavMap | None:
 
 @cache
 def scorer() -> Scorer | None:
-    ckpt = os.environ.get("PLANNER_CKPT")
+    ckpt = os.environ.get("PLANNER_CKPT") or os.environ.get("PLANNER_CHECKPOINT")
     if not ckpt:
         return None
-    from .scorer import load_scorer
+    path = Path(ckpt)
+    if path.suffix == ".pt" and path.with_suffix(".npz").is_file():
+        path = path.with_suffix(".npz")
+    if not path.is_file():
+        log.warning("planner checkpoint %s not found; driving with the rule-based scorer", ckpt)
+        return None
+    from .learned import load_scorer
 
-    log.info("driving with learned scorer %s", ckpt)
-    return load_scorer(ckpt)
+    try:
+        if path.suffix == ".pt":
+            from .export_scorer import export
+
+            export(path, path.with_suffix(".npz"))
+            path = path.with_suffix(".npz")
+        model = load_scorer(path)
+    except Exception as e:
+        log.warning("cannot load planner checkpoint %s (%s); driving with the rule-based scorer", path, e)
+        return None
+    log.info("driving with learned scorer %s on %s %s", path, getattr(model, "device", "cpu"), model.config)
+    return model
 
 
 def lidar_height() -> float:

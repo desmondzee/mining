@@ -114,3 +114,13 @@ def test_quat_roundtrip():
     r = yaw_matrix(33) @ yaw_matrix(10)
     np.testing.assert_allclose(quat_matrix(quat_from_matrix(r)), r, atol=1e-9)
     np.testing.assert_allclose(yaw_matrix(90) @ [0, 0, 1], [1, 0, 0], atol=1e-12)
+
+
+def test_truck_reset_returns_to_spawn_and_stops():
+    t = Truck("a", 3, 4, 90, 1.5)
+    drive(t, 1.0, 0.3, 4.0)
+    assert t.speed > 1 and t.x != 3
+    t.reset()
+    assert (t.x, t.y, t.z, t.yaw) == (3, 1.5, 4, 90) and (t.speed, t.throttle, t.steer) == (0.0, 0.0, 0.0)
+    t.step(1 / 60, 0.0)
+    assert t.speed == 0.0

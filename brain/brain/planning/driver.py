@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import roadgraph
 from .navmap import NavMap, chaikin, resample
 
 MAX_V = 8.0
@@ -35,10 +36,16 @@ TRUCK_HALF_W = 2.12
 EDGE_MARGIN = 0.5
 LIDAR_HEIGHT = 3.0
 MIN_OBSTACLE_HEIGHT = 0.8
+WALL_SNAP_M = 1.0
 OBSTACLE_RADIUS = 4.0
 OBSTACLE_REACH = MAX_V * HORIZON + OBSTACLE_RADIUS + 2.0
+HIT_MARGIN = 0.5
+REPLAN_AFTER = 4.0
+STATIC_CELL_M = 2.0
+STATIC_AFTER = 1.5
+ROUTE_CHECK_AHEAD = 30
 
-Scorer = Callable[[np.ndarray, np.ndarray, np.ndarray], int]
+Scorer = Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
 
 
 @dataclass
@@ -49,14 +56,28 @@ class Decision:
     choice: int
     candidates: np.ndarray
     safe: np.ndarray
+    obstacles: np.ndarray
+    scores: np.ndarray
+    planner: str
 
 
-def plan_route(nav: NavMap, start: tuple[float, float], goal: tuple[float, float]) -> np.ndarray | None:
-    cells = nav.astar(start, goal)
-    if cells is None:
+def plan_route(
+    nav: NavMap, start: tuple[float, float], goal: tuple[float, float], avoid: np.ndarray | None = None
+) -> np.ndarray | None:
+    has_avoid = avoid is not None and len(avoid) > 0
+    pts = roadgraph.route(nav, start, goal, avoid, OBSTACLE_RADIUS if has_avoid else 0.0)
+    if pts is None and has_avoid:
+        blocked = nav.cells_near(avoid, OBSTACLE_RADIUS + 1.0)
+        pts = nav.astar(start, goal, extra_blocked=blocked)
+        if pts is None:
+            pts = nav.astar(start, goal, inflate=False, extra_blocked=blocked)
+    elif pts is None:
+        pts = nav.astar(start, goal)
+        if pts is None:
+            pts = nav.astar(start, goal, inflate=False)
+    if pts is None:
         return None
-    pts = np.vstack([start, cells, goal])
-    return resample(chaikin(pts, 3), ROUTE_STEP)
+    return resample(chaikin(np.vstack([start, pts, goal]), 3), ROUTE_STEP)
 
 
 def ego(points: np.ndarray, x: float, z: float, yaw: float) -> np.ndarray:
@@ -78,7 +99,10 @@ def split_lidar(
         above = sensor_y + points[:, 1] - nav.ground_at(wx, wz) > MIN_OBSTACLE_HEIGHT
     local = points[above][:, [0, 2]]
     world = np.stack([wx[above], wz[above]], axis=1)
-    dynamic = world[~nav.inflated_at(world[:, 0], world[:, 1])]
+    wall = np.zeros(len(world), bool)
+    for ox, oz in ((0, 0), (WALL_SNAP_M, 0), (-WALL_SNAP_M, 0), (0, WALL_SNAP_M), (0, -WALL_SNAP_M)):
+        wall |= nav.blocked_at(world[:, 0] + ox, world[:, 1] + oz)
+    dynamic = world[~wall]
     near = dynamic[np.hypot(dynamic[:, 0] - x, dynamic[:, 1] - z) < OBSTACLE_REACH]
     return local, np.unique(np.round(near), axis=0)
 
@@ -89,8 +113,42 @@ def lidar_ranges(local: np.ndarray) -> np.ndarray:
         bearing = np.arctan2(local[:, 0], local[:, 1])
         idx = np.floor((bearing + LIDAR_FOV / 2) / (LIDAR_FOV / N_RAYS)).astype(int)
         ok = (idx >= 0) & (idx < N_RAYS)
-        np.minimum.at(ranges, idx[ok], np.minimum(np.hypot(local[ok, 0], local[ok, 1]), LIDAR_RANGE))
-    return ranges
+        np.minimum.at(ranges, idx[ok], np.hypot(local[ok, 0], local[ok, 1]))
+    return np.clip(np.ceil(ranges), 1.0, LIDAR_RANGE)
+
+
+def grid_ranges(nav: NavMap, x: float, z: float, yaw: float) -> np.ndarray:
+    ang = yaw - LIDAR_FOV / 2 + (np.arange(N_RAYS) + 0.5) * LIDAR_FOV / N_RAYS
+    dist = np.arange(1.0, LIDAR_RANGE + 1.0)
+    hit = nav.blocked_at(x + np.sin(ang)[:, None] * dist[None], z + np.cos(ang)[:, None] * dist[None])
+    return dist[np.where(hit.any(axis=1), hit.argmax(axis=1), len(dist) - 1)]
+
+
+def features(
+    nav: NavMap,
+    route: np.ndarray,
+    ni: int,
+    x: float,
+    z: float,
+    yaw: float,
+    speed: float,
+    last_steer: float,
+    load: float,
+    local: np.ndarray,
+    pts: np.ndarray,
+    clear: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    step = int(ROUTE_SPACING / ROUTE_STEP)
+    idx = np.minimum(len(route) - 1, ni + step * np.arange(1, ROUTE_POINTS + 1))
+    rays = np.minimum(lidar_ranges(local), grid_ranges(nav, x, z, yaw))
+    obs = np.concatenate(
+        [rays / LIDAR_RANGE, ego(route[idx], x, z, yaw).ravel() / 40.0, [speed / MAX_V, last_steer, load]]
+    ).astype(np.float32)
+    shape = ego(pts, x, z, yaw).reshape(N_CAND, 2 * N_ROLL) / 30.0
+    cands = np.concatenate(
+        [shape, CAND_STEER[:, None], CAND_SPEED[:, None] / MAX_V, np.minimum(clear, 20.0)[:, None] / 20.0], axis=1
+    ).astype(np.float32)
+    return obs, cands
 
 
 def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -113,9 +171,33 @@ def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.n
 
 
 def off_road(nav: NavMap, x, z, yaw, half_w: float) -> np.ndarray:
-    """True where the centre or either side of the truck at (x, z, yaw) is on a blocked cell."""
-    rx, rz = np.cos(yaw) * half_w, -np.sin(yaw) * half_w
-    return nav.blocked_at(x, z) | nav.blocked_at(x + rx, z + rz) | nav.blocked_at(x - rx, z - rz)
+    """True where any point across the truck width at (x, z, yaw) is on a blocked cell.
+
+    Samples are at most half a cell apart, so a one-cell wall between the centre and a side is not missed.
+    """
+    n = int(math.ceil(2 * half_w / (nav.cell / 2))) + 1
+    rx, rz = np.cos(yaw), -np.sin(yaw)
+    out = np.zeros(np.shape(x), dtype=bool)
+    for off in np.linspace(-half_w, half_w, n):
+        out |= nav.blocked_at(x + rx * off, z + rz * off)
+    return out
+
+
+def static_obstacles(seen: dict[tuple[int, int], float], obstacles: np.ndarray, now: float) -> np.ndarray:
+    cells = {tuple(c) for c in np.floor(obstacles / STATIC_CELL_M).astype(int).tolist()}
+    first = {c: seen.get(c, now) for c in cells}
+    seen.clear()
+    seen.update(first)
+    static = [c for c, t0 in first.items() if now - t0 >= STATIC_AFTER]
+    return (np.array(static, dtype=float) + 0.5) * STATIC_CELL_M if static else np.zeros((0, 2))
+
+
+def route_blocked(route: np.ndarray, route_idx: int, static: np.ndarray) -> bool:
+    if not len(static) or not len(route):
+        return False
+    ahead = route[route_idx : route_idx + ROUTE_CHECK_AHEAD]
+    d = np.linalg.norm(ahead[:, None, :] - static[None], axis=-1)
+    return bool((d < OBSTACLE_RADIUS + STATIC_CELL_M).any())
 
 
 def nearest_index(route: np.ndarray, start: int, x: float, z: float) -> int:
@@ -138,10 +220,12 @@ def drive(
     lidar_height: float = LIDAR_HEIGHT,
     load: float = 0.0,
 ) -> tuple[Decision, int]:
+    planner = "learned" if scorer is not None else "rules"
     ni = nearest_index(route, route_idx, x, z)
     end = route[-1]
     if math.hypot(end[0] - x, end[1] - z) < ARRIVE_RADIUS:
-        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, np.zeros((0, N_ROLL, 2)), np.zeros(0, bool)), ni
+        none = np.zeros((0, N_ROLL, 2)), np.zeros(0, bool), np.zeros((0, 2)), np.zeros(0)
+        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, *none, planner), ni
 
     yaw = math.radians(yaw_deg)
     fine, pts, fine_yaw = rollout(x, z, yaw, speed)
@@ -152,44 +236,32 @@ def drive(
     clear = np.full(N_CAND, np.inf)
     if len(obstacles):
         obs = obstacles.astype(np.float32)
-        diff = pts.astype(np.float32)[:, :, None, :] - obs[None, None]
-        d2 = np.einsum("ctmk,ctmk->ctm", diff, diff)
+        flat = pts.astype(np.float32).reshape(-1, 2)
+        dx = flat[:, 0, None] - obs[None, :, 0]
+        dz = flat[:, 1, None] - obs[None, :, 1]
+        d2 = (dx * dx + dz * dz).reshape(N_CAND, N_ROLL, len(obs))
         d0 = np.hypot(obs[:, 0] - x, obs[:, 1] - z) - OBSTACLE_RADIUS
-        limit = OBSTACLE_RADIUS + np.minimum(1.5, d0 - 0.05)
+        limit = OBSTACLE_RADIUS + np.minimum(HIT_MARGIN, d0 - 0.05)
         hit |= (d2 < np.square(np.maximum(limit, 0.0))[None, None, :]).any(axis=(1, 2))
         clear = np.sqrt(d2.min(axis=(1, 2))) - OBSTACLE_RADIUS
     safe = ~hit
 
-    if not safe.any():
-        choice = HOLD_ACTION
-    elif scorer is not None:
-        step = int(ROUTE_SPACING / ROUTE_STEP)
-        idx = np.minimum(len(route) - 1, ni + step * np.arange(1, ROUTE_POINTS + 1))
-        obs = np.concatenate(
-            [
-                lidar_ranges(local) / LIDAR_RANGE,
-                ego(route[idx], x, z, yaw).ravel() / 40.0,
-                [speed / MAX_V, last_steer, load],
-            ]
-        ).astype(np.float32)
-        shape = ego(pts, x, z, yaw).reshape(N_CAND, 2 * N_ROLL) / 30.0
-        cands = np.concatenate(
-            [shape, CAND_STEER[:, None], CAND_SPEED[:, None] / MAX_V, np.minimum(clear, 20.0)[:, None] / 20.0], axis=1
-        ).astype(np.float32)
-        choice = scorer(obs, cands, safe)
+    if scorer is not None:
+        obs, cands = features(nav, route, ni, x, z, yaw, speed, last_steer, load, local, pts, clear)
+        scores = np.asarray(scorer(obs, cands, safe), dtype=float)
     else:
         tgt = route[min(len(route) - 1, ni + 12)]
         ends = pts[:, -1, :]
         window = route[ni : ni + 30]
         cross = np.linalg.norm(ends[:, None, :] - window[None], axis=-1).min(axis=1)
-        score = (
+        scores = -(
             np.linalg.norm(ends - tgt, axis=1)
             + 1.5 * cross
             + 4 * np.abs(CAND_STEER - last_steer)
             - 1.2 * CAND_SPEED
             + 10 * np.maximum(0, 1 - clear / 10)
         )
-        choice = int(np.argmin(np.where(safe, score, np.inf)))
+    choice = int(np.argmax(np.where(safe, scores, -np.inf))) if safe.any() else HOLD_ACTION
 
     if not safe[choice] or CAND_SPEED[choice] == 0:
         status = "holding"
@@ -197,4 +269,7 @@ def drive(
         status = "avoiding"
     else:
         status = "driving"
-    return Decision(float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe), ni
+    decision = Decision(
+        float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe, obstacles, scores, planner
+    )
+    return decision, ni

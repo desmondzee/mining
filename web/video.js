@@ -1,6 +1,16 @@
 const KEYFRAME = 1;
 const MAX_DECODE_QUEUE = 30;
+const MAX_PENDING_META = 64;
 const names = new TextDecoder();
+
+export function readMeta(buf, offset) {
+  const n = buf[offset] | (buf[offset + 1] << 8);
+  let meta = null;
+  if (n) {
+    try { meta = JSON.parse(names.decode(buf.subarray(offset + 2, offset + 2 + n))); } catch {}
+  }
+  return { meta, end: offset + 2 + n };
+}
 
 function spsCodec(au) {
   for (let i = 0; i + 4 < au.length; i++) {
@@ -13,13 +23,17 @@ function spsCodec(au) {
 }
 
 function draw(tile, frame) {
+  const meta = tile.meta ? tile.meta.get(frame.timestamp) : null;
+  if (meta !== undefined && tile.meta) tile.meta.delete(frame.timestamp);
+  tile.frames++;
+  if (tile.accept && !tile.accept(meta || null)) { frame.close(); return; }
   const c = tile.canvas;
   if (c.width !== frame.displayWidth) c.width = frame.displayWidth;
   if (c.height !== frame.displayHeight) c.height = frame.displayHeight;
   c.getContext("2d").drawImage(frame, 0, 0);
   frame.close();
-  tile.frames++;
   tile.el.classList.add("live");
+  if (tile.onFrame) tile.onFrame(meta || null);
 }
 
 function decoderFor(tile, codec) {
@@ -42,7 +56,13 @@ function onH264(tileFor, ev) {
   const view = new DataView(ev.data, 1 + n, 5);
   const key = (view.getUint8(0) & KEYFRAME) !== 0;
   const timestamp = view.getUint32(1, true) * 1000;
-  const au = buf.subarray(6 + n);
+  const { meta, end } = readMeta(buf, 6 + n);
+  const au = buf.subarray(end);
+  if (meta) {
+    tile.meta ??= new Map();
+    tile.meta.set(timestamp, meta);
+    if (tile.meta.size > MAX_PENDING_META) tile.meta.delete(tile.meta.keys().next().value);
+  }
 
   let s = tile.h264;
   if (s && s.decoder.decodeQueueSize > MAX_DECODE_QUEUE) {
@@ -76,6 +96,7 @@ async function h264Supported() {
 }
 
 export async function videoFeed(tileFor, onJpeg) {
-  if (!(await h264Supported())) return { codec: "jpeg", path: "/ws/video?codec=jpeg", onMessage: onJpeg };
+  const want = new URLSearchParams(location.search).get("codec");
+  if (want !== "h264" || !(await h264Supported())) return { codec: "jpeg", path: "/ws/video?codec=jpeg", onMessage: onJpeg };
   return { codec: "h264", path: "/ws/video", onMessage: (ev) => onH264(tileFor, ev) };
 }

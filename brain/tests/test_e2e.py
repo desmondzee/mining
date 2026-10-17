@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from brain.app import create_app
 from brain.fakesim import FakeQuarry
+from brain.hud import unpack_meta
 from brain.protocol import encode, encode_frame, encode_lidar, read_message
 
 QUARRY = Path(__file__).resolve().parents[2] / "data" / "worlds" / "quarry"
@@ -27,11 +28,13 @@ def test_frame_produces_action_and_jpeg():
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(encode({"type": "hello", "trucks": [t.id], "cameras": [t.id], "bounds": quarry.bounds}))
         await writer.drain()
-        await asyncio.sleep(0.05)
+        view, _ = await asyncio.wait_for(read_message(reader), 5)
+        assert view == {"type": "view", "camera": "overview", "box": None}
         world.trucks[t.id].goal = (t.x + 40, t.z)
 
         rgb, depth = quarry.render_truck(t)
-        writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose={"x": t.x, "z": t.z, "yaw": 0}))
+        cam = {"x": t.x, "y": 3.6, "z": t.z, "yaw": 0, "pitch": 0, "roll": 0, "hfov": 90}
+        writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose={"x": t.x, "z": t.z, "yaw": 0}, cam=cam))
         await writer.drain()
         header, _ = await asyncio.wait_for(read_message(reader), 5)
         frames = await asyncio.wait_for(video.wait_newer({}), 5)
@@ -44,8 +47,10 @@ def test_frame_produces_action_and_jpeg():
     header, frames, connected = asyncio.run(go())
     assert header["type"] == "action" and header["truck"] == "truck-0"
     assert header["steer"] > 0 and header["throttle"] > 0
-    (camera, jpeg), = frames
-    assert camera == "truck-0" and jpeg[:2] == b"\xff\xd8"
+    (camera, msg), = frames
+    meta, offset = unpack_meta(msg)
+    assert camera == "truck-0" and msg[offset : offset + 2] == b"\xff\xd8"
+    assert meta["truck"] == "truck-0" and meta["cam"]["hfov"] == 90 and meta["pose"]["yaw"] == 0 and meta["t"] > 0
     assert connected
 
 
@@ -154,3 +159,61 @@ def test_world_endpoint_and_preview(quarry, tmp_path, monkeypatch):
     assert r.status_code == 200 and r.content[:4] == b"\x89PNG"
     monkeypatch.setenv("WORLD_DIR", str(tmp_path))
     assert TestClient(create_app(sim_port=None, web_dir=None)).get("/api/world/preview").status_code == 404
+
+
+def test_reset_api_clears_trucks_and_tells_sim():
+    async def go():
+        app = create_app(sim_port=None, web_dir=None)
+        bridge, world = app.state.bridge, app.state.world
+        server = await asyncio.start_server(bridge.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(encode({"type": "hello", "trucks": ["truck-0", "truck-1"], "cameras": [], "bounds": [-100, -100, 100, 100]}))
+        await writer.drain()
+        await asyncio.wait_for(read_message(reader), 5)
+        for t in world.trucks.values():
+            t.set_goal((5.0, 6.0))
+            t.throttle, t.steer, t.speed = 0.7, 0.2, 3.0
+        client = TestClient(app)
+        body = await asyncio.to_thread(lambda: client.post("/api/reset").json())
+        msg, _ = await asyncio.wait_for(read_message(reader), 5)
+        writer.close()
+        server.close()
+        return body, msg, world
+
+    body, msg, world = asyncio.run(go())
+    assert body == {"trucks": ["truck-0", "truck-1"], "sim": True}
+    assert msg == {"type": "reset"}
+    for t in world.trucks.values():
+        assert t.goal is None and t.path == []
+        assert (t.throttle, t.steer, t.speed, t.status) == (0.0, 0.0, 0.0, "idle")
+
+
+def test_reset_api_without_sim():
+    app = create_app(sim_port=None, web_dir=None)
+    app.state.world.truck("truck-0").set_goal((1.0, 2.0))
+    r = TestClient(app).post("/api/reset")
+    assert r.json() == {"trucks": ["truck-0"], "sim": False}
+    assert app.state.world.trucks["truck-0"].goal is None
+
+
+def test_web_files_are_not_cached():
+    from fastapi.testclient import TestClient
+    from brain.app import create_app
+
+    with TestClient(create_app()) as c:
+        r = c.get("/app.js")
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+
+
+def test_index_points_at_versioned_assets():
+    from fastapi.testclient import TestClient
+    from brain.app import create_app
+
+    with TestClient(create_app()) as c:
+        html = c.get("/").text
+        assert '"/v/' in html and '"app.js"' not in html
+        path = html.split('src="')[1].split('"')[0]
+        r = c.get(path)
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"
+        assert c.get(path.replace("app.js", "../pyproject.toml")).status_code == 404

@@ -2,84 +2,138 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="radio-url" content="">
   <title>Quarry</title>
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Inter+Tight:wght@400;500&family=JetBrains+Mono:wght@400;500&display=swap">
   <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="hud.css">
   <script>
-    try { const t = localStorage.getItem("quarry-theme"); if (t) document.documentElement.dataset.theme = t; } catch {}
+    try { document.documentElement.dataset.theme = localStorage.getItem("quarry-theme") || "dark"; } catch { document.documentElement.dataset.theme = "dark"; }
+    try { document.documentElement.dataset.view = localStorage.getItem("quarry-view") || "ops"; } catch { document.documentElement.dataset.view = "ops"; }
   </script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <span class="brand-dot" aria-hidden="true"></span>
-      <h1>Quarry</h1>
-      <span class="divider" aria-hidden="true"></span>
-      <span id="summary" class="summary mono"></span>
-    </div>
-    <div class="topbar-actions">
-      <span id="sim-status" class="pill off" role="status">sim offline</span>
-      <div class="segmented" role="group" aria-label="Theme">
-        <button type="button" data-theme-choice="light" aria-pressed="false">Light</button>
-        <button type="button" data-theme-choice="auto" aria-pressed="true">Auto</button>
-        <button type="button" data-theme-choice="dark" aria-pressed="false">Dark</button>
-      </div>
-    </div>
-  </header>
-  <main class="layout">
-    <section class="feeds-wrap" aria-label="Camera feeds">
-      <div class="section-head">
-        <h2 class="eyebrow">Cameras</h2>
-        <span id="feeds-meta" class="eyebrow-meta mono"></span>
-      </div>
-      <div class="feeds-stage">
-        <div id="feeds"></div>
-        <div id="feeds-empty" class="empty-state" hidden>
-          <span class="empty-icon" aria-hidden="true"></span>
-          <p class="empty-title"></p>
-          <p class="empty-body"></p>
-        </div>
+  <main id="views" class="views" aria-live="off">
+    <section id="surface-video" class="surface" data-surface="video" aria-label="Camera">
+      <div id="feeds" class="feeds"></div>
+      <p class="surface-empty" id="feeds-empty">no cameras</p>
+    </section>
+    <section id="surface-lidar" class="surface" data-surface="lidar" aria-label="Lidar">
+      <canvas id="lidar" role="img" aria-label="3D lidar point cloud for the selected truck. Drag to orbit."></canvas>
+    </section>
+    <section id="surface-map" class="surface" data-surface="map" aria-label="Map">
+      <canvas id="map" width="1200" height="1200" role="img" aria-label="Top-down site map. Click to send the selected truck to a point."></canvas>
+    </section>
+    <section id="surface-fleet" class="surface page" data-surface="fleet" aria-label="Fleet">
+      <div class="page-inner">
+        <dl class="kpis" id="kpis">
+          <div><dt>loads</dt><dd data-kpi="loads">0</dd></div>
+          <div><dt>tonnes</dt><dd data-kpi="tonnes">0</dd></div>
+          <div><dt>avg cycle</dt><dd data-kpi="cycle">—</dd></div>
+          <div><dt>idle</dt><dd data-kpi="idle">—</dd></div>
+        </dl>
+        <p class="kpi-since meta" id="kpi-since"></p>
+        <ul class="roster" id="roster" aria-label="Vehicles"></ul>
       </div>
     </section>
-    <aside class="side">
-      <section class="panel" aria-labelledby="map-title">
-        <div class="panel-head">
-          <h2 id="map-title" class="eyebrow">Map</h2>
-          <span class="eyebrow-meta" id="map-hint">Select a truck, then click the map or pick a site</span>
-        </div>
-        <div class="map-frame">
-          <canvas id="map" width="800" height="800" role="img" aria-label="Top-down site map. Click to send the selected truck to a point."></canvas>
-        </div>
-        <ul class="legend" aria-hidden="true">
-          <li><i class="lg-rock"></i>Rocks</li>
-          <li><i class="lg-ped"></i>Pedestrians</li>
-          <li><i class="lg-path"></i>Paths</li>
-          <li><i class="lg-road"></i>Roads</li>
-          <li><i class="lg-site"></i>Sites</li>
-          <li><i class="lg-route"></i>Route</li>
-        </ul>
-      </section>
-      <section class="panel" aria-labelledby="trucks-title">
-        <div class="panel-head">
-          <h2 id="trucks-title" class="eyebrow">Fleet</h2>
-          <span class="eyebrow-meta mono" id="fleet-meta"></span>
-        </div>
-        <ul id="trucks" class="truck-list"></ul>
-      </section>
-      <section class="panel" aria-labelledby="lidar-title">
-        <div class="panel-head">
-          <h2 id="lidar-title" class="eyebrow">Lidar</h2>
-          <span class="eyebrow-meta mono" id="lidar-meta">no truck selected</span>
-        </div>
-        <div class="lidar-frame">
-          <canvas id="lidar" role="img" aria-label="3D lidar point cloud for the selected truck. Drag to orbit."></canvas>
-        </div>
-      </section>
-    </aside>
+    <section id="surface-radio" class="surface page" data-surface="radio" aria-label="Radio">
+      <ol class="transcript" id="transcript" aria-live="polite"></ol>
+    </section>
+    <section id="surface-judge" class="surface page" data-surface="judge" aria-label="Judge">
+      <div class="judge">
+        <ol class="transcript large" id="judge-transcript" aria-live="polite"></ol>
+        <aside class="judge-side">
+          <div class="qr" id="qr" aria-label="Radio QR code"></div>
+          <p class="judge-url meta" id="judge-url"></p>
+          <p class="judge-pin" id="judge-pin" hidden></p>
+          <p class="judge-kpis meta" id="judge-kpis"></p>
+        </aside>
+      </div>
+    </section>
   </main>
+
+  <header class="chrome bar">
+    <nav class="bar-left tabs" aria-label="Views">
+      <button type="button" class="tab" data-tab="ops">ops</button>
+      <button type="button" class="tab" data-tab="video">video</button>
+      <button type="button" class="tab" data-tab="map">map</button>
+      <button type="button" class="tab" data-tab="lidar">lidar</button>
+      <button type="button" class="tab" data-tab="fleet">fleet</button>
+      <button type="button" class="tab" data-tab="radio">radio</button>
+      <button type="button" class="tab" data-tab="judge">judge</button>
+      <button type="button" class="tab" data-tab="split">split</button>
+      <span class="tab-rule" aria-hidden="true"></span>
+      <span id="bar-camera" class="bar-camera"></span>
+    </nav>
+    <dl class="bar-kpis" aria-label="Shift totals">
+      <div><dd data-kpi="loads">0</dd><dt>loads</dt></div>
+      <div><dd data-kpi="tonnes">0</dd><dt>t</dt></div>
+      <div><dd data-kpi="cycle">—</dd><dt>cycle</dt></div>
+      <div><dd data-kpi="idle">—</dd><dt>idle</dt></div>
+    </dl>
+    <div class="bar-right">
+      <span id="summary" class="status" role="status"></span>
+      <button type="button" id="stop-all" class="bar-stop" aria-keyshortcuts="Shift+Escape">stop</button>
+      <button type="button" id="reset-fleet" class="bar-stop">reset</button>
+      <button type="button" id="palette-open" class="slash" aria-label="Open command palette" aria-keyshortcuts="/ Meta+K Control+K"><kbd>/</kbd></button>
+    </div>
+  </header>
+
+  <footer class="chrome chrome-bottom">
+    <ul id="trucks" class="fleet" aria-label="Fleet"></ul>
+    <p id="caption-hint" class="caption-hint meta"></p>
+  </footer>
+
+  <div id="alert" class="alert" role="alert" hidden></div>
+  <p id="notice" class="notice" role="status" hidden></p>
+
+  <div id="toast" class="toast" role="status" hidden>
+    <p class="toast-title"></p>
+    <p class="toast-body"></p>
+  </div>
+
+  <div id="palette" class="palette-root" hidden>
+    <div class="palette-scrim" data-close></div>
+    <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
+      <div class="palette-input-row">
+        <span class="palette-glyph" aria-hidden="true">/</span>
+        <input id="palette-input" class="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="command">
+      </div>
+      <div class="palette-body">
+        <div id="palette-list" class="palette-list" role="listbox" aria-label="Commands"></div>
+        <span class="palette-cursor" aria-hidden="true"></span>
+      </div>
+      <p class="palette-empty" hidden>no match</p>
+    </div>
+  </div>
+
+  <div id="schedule" class="palette-root" hidden>
+    <div class="palette-scrim" data-close></div>
+    <div class="palette schedule" role="dialog" aria-modal="true" aria-label="Schedule">
+      <div class="palette-input-row">
+        <span class="palette-glyph" aria-hidden="true">\</span>
+        <input class="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="schedule-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="schedule">
+      </div>
+      <div class="palette-body">
+        <div id="schedule-list" class="palette-list" role="listbox" aria-label="Schedule"></div>
+        <span class="palette-cursor" aria-hidden="true"></span>
+      </div>
+      <p class="palette-empty" hidden>no match</p>
+    </div>
+  </div>
+
+  <div id="help" class="palette-root" hidden>
+    <div class="palette-scrim" data-close></div>
+    <div class="palette help" role="dialog" aria-modal="true" aria-labelledby="help-title" tabindex="-1">
+      <div class="palette-input-row"><h2 id="help-title" class="help-title">keyboard</h2></div>
+      <dl class="help-list"></dl>
+    </div>
+  </div>
+
   <script type="importmap">
     {
       "imports": {

@@ -9,14 +9,25 @@ dependencies = [
     "numpy>=2.0",
     "pillow>=10.4",
     "av>=19.0.1",
+    "httpx>=0.27",
+    "websockets>=13",
 ]
+
+[project.optional-dependencies]
+# Only to export or load a .pt planner checkpoint; the brain runs the exported .npz with numpy.
+model = ["torch>=2.2"]
+detector = ["onnxruntime>=1.20"]
+gpu = ["onnxruntime-gpu[cuda,cudnn]>=1.31; sys_platform == 'linux'", "onnx>=1.16"]
 
 [project.scripts]
 brain = "brain.app:main"
 fakesim = "brain.fakesim:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "onnx>=1.16"]
+
+[tool.uv]
+conflicts = [[{ extra = "detector" }, { extra = "gpu" }]]
 
 [build-system]
 requires = ["hatchling"]

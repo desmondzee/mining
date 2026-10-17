@@ -25,7 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--cache", default=str(ROOT / "downloads/isaac/cache"))
     p.add_argument("--renderer", default="")
     p.add_argument("--fps", type=float, default=0.0)
-    p.add_argument("--fx", choices=["off", "low", "high"], default="low")
+    p.add_argument("--fx", choices=["off", "low", "high"], default="off")
     p.add_argument("--no-views", action="store_true")
     p.add_argument("--save-dir", default="")
     p.add_argument("--save-every", type=int, default=0)
@@ -56,16 +56,23 @@ def raycast_enabled(mode: str) -> bool:
 
 
 class DryRenderer:
-    def __init__(self, sim) -> None:
+    def __init__(self, sim, config: dict) -> None:
         import numpy as np
 
-        from isaac.sim.sensors import CAM_H, CAM_W
+        from isaac.sim.sensors import CAM_H, CAM_W, OVERVIEW_HFOV
+        from isaac.sim.zoom import OverviewZoom
 
-        self.frames = {name: np.zeros((CAM_H, CAM_W, 3), np.uint8) for name in ["overview", *(t.id for t in sim.trucks)]}
+        ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        self.zoom = OverviewZoom(np.eye(4), OVERVIEW_HFOV, ow / oh)
+        self.frames = {t.id: np.zeros((CAM_H, CAM_W, 3), np.uint8) for t in sim.trucks}
+        self.frames["overview"] = np.zeros((oh, ow, 3), np.uint8)
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
+        self.frames.update({c: np.zeros((CAM_H, CAM_W, 3), np.uint8) for c in sim.cab_cameras})
         self.view_poses = {}
+        self.loads = {}
 
     def update(self, sim, dt: float) -> None:
+        self.zoom.step(dt)
         self.view_poses = sim.view_poses(dt)
 
     def render(self) -> dict:
@@ -84,20 +91,25 @@ def run(args: argparse.Namespace) -> None:
 
     from isaac.sim.bridge import Bridge
     from isaac.sim.protocol import encode_actors, encode_frame, encode_jpeg, encode_lidar
-    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
+    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HFOV, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []))
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), extra_excavators=config.get("extra_excavators", []),
+              excavator_cameras=config.get("excavator_cameras", False), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
-        renderer = DryRenderer(sim)
+        renderer = DryRenderer(sim, config)
     else:
         from isaac.sim.scene import IsaacRenderer
 
         renderer = IsaacRenderer(app, sim, args, config)
 
     host, port = args.brain.rsplit(":", 1)
-    bridge = Bridge(host, int(port), sim.hello, sim.command).start()
+    def on_view(camera: str, box: list | None) -> None:
+        if camera == "overview":
+            renderer.zoom.set(box)
+
+    bridge = Bridge(host, int(port), sim.hello, sim.command, on_view, sim.request_reset).start()
     jpeg_pool = ThreadPoolExecutor(6)
     publisher = ThreadPoolExecutor(1)
     noise = float(config.get("noise_sigma", 0.0))
@@ -105,22 +117,36 @@ def run(args: argparse.Namespace) -> None:
     save = Path(args.save_dir) if args.save_dir else None
     if save:
         save.mkdir(parents=True, exist_ok=True)
-    hfov = {v.name: v.hfov for v in sim.views}
+    hfov = sim.view_hfov
 
     def jpeg(rgb):
         if noise > 0:
             rgb = np.clip(rgb + rng.normal(0, noise, rgb.shape), 0, 255).astype(np.uint8)
         return encode_jpeg(rgb), rgb.shape[1], rgb.shape[0]
 
-    def publish(images, depths, poses, cams, views, frame):
-        encoded = dict(zip(images, jpeg_pool.map(jpeg, images.values())))
+    dedupe = not args.dry_run
+    last_sig: dict[str, bytes] = {}
+    fresh: dict[str, int] = {}
+
+    def publish(images, depths, poses, cams, views, loads, overview, frame):
+        new = {}
+        for name, img in images.items():
+            sig = img[::17, ::23].tobytes()
+            if not dedupe or last_sig.get(name) != sig:
+                last_sig[name] = sig
+                fresh[name] = fresh.get(name, 0) + 1
+                new[name] = img
+        encoded = dict(zip(new, jpeg_pool.map(jpeg, new.values())))
         if bridge.connected.is_set():
             for name, (data, w, h) in encoded.items():
                 if name in poses:
                     i, pose, speed = poses[name]
-                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name]))
+                    extra = {"load": loads[name]} if name in loads else {}
+                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name], **extra))
                 elif name in views:
                     bridge.send(encode_frame(name, data, w, h, cam=views[name]))
+                elif name == "overview":
+                    bridge.send(encode_frame(name, data, w, h, view=overview))
                 else:
                     bridge.send(encode_frame(name, data, w, h))
         if save and args.save_every and frame % args.save_every == 0:
@@ -131,7 +157,8 @@ def run(args: argparse.Namespace) -> None:
     start = last = next_tick = time.monotonic()
     next_lidar = next_actors = 0.0
     frames = 0
-    pending = None
+    pending = previous = None
+    lag = getattr(renderer, "lag", 0)
     timing = dict.fromkeys(["step", "render", "rays", "publish"], 0.0)
     stats_at = start + STATS_EVERY
     while app is None or app.is_running():
@@ -154,18 +181,21 @@ def run(args: argparse.Namespace) -> None:
         views = {name: cam_field(p, r, hfov[name]) for name, (p, r) in renderer.view_poses.items()}
         if live:
             if sim.time >= next_actors:
-                next_actors = sim.time + 1 / ACTORS_HZ
+                next_actors = max(next_actors + 1 / ACTORS_HZ, sim.time - 1 / ACTORS_HZ)
                 bridge.send(encode_actors(sim.actors()))
             if sim.time >= next_lidar:
-                next_lidar = sim.time + 1 / LIDAR_HZ
-                for t, points in zip(sim.trucks, sim.lidars()):
-                    bridge.send(encode_lidar(t.id, points, t.pose()))
+                next_lidar = max(next_lidar + 1 / LIDAR_HZ, sim.time - 1 / LIDAR_HZ)
+                for i, (t, points) in enumerate(zip(sim.trucks, sim.lidars())):
+                    bridge.send(encode_lidar(t.id, points, t.pose(), cam_field(*sim.lidar_pose(i), LIDAR_HFOV)))
         t3 = time.monotonic()
         if pending is not None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        pending = publisher.submit(publish, images, depths, poses, cams, views, frames)
+        meta = (depths, poses, cams, views, dict(renderer.loads), renderer.zoom.meta())
+        if lag:
+            meta, previous = (previous or meta), meta
+        pending = publisher.submit(publish, images, *meta, frames)
         timing["step"] += t1 - t0
         timing["render"] += t2 - t1
         timing["rays"] += t3 - t2
@@ -175,6 +205,7 @@ def run(args: argparse.Namespace) -> None:
             span = now - start
             print(
                 f"t={span:.0f}s fps={frames / span:.1f} " + " ".join(f"{k}={v / n * 1000:.1f}ms" for k, v in timing.items())
+                + " fresh_fps=" + ",".join(f"{k}:{v / span:.1f}" for k, v in fresh.items())
                 + f" connected={live} sent={bridge.sent} dropped={bridge.dropped} "
                 + " ".join(f"{t.id}=({t.x:.1f},{t.y:.1f},{t.z:.1f},{t.yaw:.0f}deg,{t.speed:.1f}m/s)" for t in sim.trucks),
                 flush=True,

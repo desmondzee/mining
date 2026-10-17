@@ -10,7 +10,7 @@ REPO = Path(__file__).resolve().parents[2]
 TRUCK_MODEL = "komatsu_hd465"
 TRUCK_GLB = "unity/Assets/Models/Trucks/komatsu_hd465.glb"
 TRUCK_LENGTH = 9.35
-EXCAVATOR_GLB = "assets/models/excavator/excavator.glb"
+EXCAVATOR_GLB = "assets/models/excavator/excavator_rigged.glb"
 EXCAVATOR_LENGTH = 10.0
 EXCAVATOR_SINK = 0.15
 TRUCK_COUNT = 3
@@ -21,10 +21,6 @@ SPAWN_GAP = 2.0
 SPAWN_SEARCH = 10.0
 SPAWN_SEARCH_STEP = 0.5
 WHEEL_FRACTION = 0.8
-PEDESTRIANS_PER_PATH = 3
-MIN_WALK_SPEED = 1.2
-MAX_WALK_SPEED = 1.6
-WALK_SEED = 1
 UNITY_FLIP = np.diag([-1.0, 1.0, 1.0, 1.0])
 
 Height = Callable[[float, float], float]
@@ -217,8 +213,9 @@ def truck_box(repo: Path = REPO) -> tuple[np.ndarray, tuple[float, float, float]
     return model_box(repo / TRUCK_GLB, length=TRUCK_LENGTH)
 
 
-def excavators(world: World, height: Height, repo: Path = REPO) -> list[Box]:
+def excavators(world: World, height: Height, repo: Path = REPO, extra: list[dict] = ()) -> list[Box]:
     entries = [e for e in world.equipment if not e.get("type") or "excavat" in e["type"].lower() or "shovel" in e["type"].lower()]
+    entries += list(extra)
     if not entries:
         return []
     _, size = model_box(repo / EXCAVATOR_GLB, horizontal=EXCAVATOR_LENGTH)
@@ -243,9 +240,12 @@ def prop_obstacles(world: World) -> list[dict]:
     ]
 
 
-def walk_speeds(n: int, seed: int = WALK_SEED) -> list[float]:
-    rng = np.random.default_rng(seed)
-    return [float(v) for v in rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED, n)]
+def walker_network(world: World) -> tuple[list[dict], dict[str, str]]:
+    roads = [
+        {"id": r.id, "from": r.start, "to": r.end, "width_m": r.width_m, "one_way": r.one_way, "points": [(float(p[0]), float(p[-1])) for p in r.points]}
+        for r in world.roads
+    ]
+    return roads, {s.id: s.type for s in world.sites}
 
 
 def hello(

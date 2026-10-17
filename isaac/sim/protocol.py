@@ -44,8 +44,10 @@ def pack_points(points: np.ndarray) -> bytes:
     return np.clip(np.round(points * 100), -32768, 32767).astype("<i2").tobytes()
 
 
-def encode_lidar(truck: str, points: np.ndarray, pose: dict) -> bytes:
+def encode_lidar(truck: str, points: np.ndarray, pose: dict, sensor: dict | None = None) -> bytes:
     header = {"type": "lidar", "truck": truck, "points": len(points), "format": "int16cm", "pose": pose}
+    if sensor is not None:
+        header["sensor"] = sensor
     return encode(header, pack_points(points))
 
 

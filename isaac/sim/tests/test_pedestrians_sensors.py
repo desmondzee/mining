@@ -4,31 +4,6 @@ import numpy as np
 import pytest
 
 from isaac.sim import sensors as S
-from isaac.sim.pedestrians import Walker, make_walkers
-
-
-def test_walkers_start_fractions_and_ids():
-    paths = [[(0.0, 0.0), (30.0, 0.0)], [(0.0, 10.0), (0.0, 40.0)]]
-    walkers = make_walkers(paths)
-    assert [w.id for w in walkers] == [f"Pedestrian_{i:02d}" for i in range(6)]
-    assert [round(w.x, 6) for w in walkers[:3]] == [0.0, 10.0, 20.0]
-    assert all(1.2 <= w.speed <= 1.6 for w in walkers)
-
-
-def test_ping_pong():
-    w = Walker("p", [(0.0, 0.0), (10.0, 0.0)], 0.0, 1.0)
-    xs = []
-    for _ in range(int(22 / 0.05)):
-        w.step(0.05)
-        xs.append(w.x)
-    assert max(xs) > 9.7 and min(xs[len(xs) // 2 :]) < 1.0
-    assert 0 < w.x < 5
-
-
-def test_walker_ground_follow():
-    w = Walker("p", [(0.0, 0.0), (10.0, 0.0)], 0.0, 1.0)
-    w.step(0.1, lambda x, z, ref: 5.0 + x)
-    assert w.y == pytest.approx(5.0 + w.x)
 
 
 def test_lidar_pattern():

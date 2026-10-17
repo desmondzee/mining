@@ -10,6 +10,7 @@ class Truck:
     z: float = 0.0
     yaw: float = 0.0
     speed: float = 0.0
+    load: float | None = None
     goal: tuple[float, float] | None = None
     goal_site: str | None = None
     status: str = "idle"
@@ -18,15 +19,25 @@ class Truck:
     path: list[list[float]] = field(default_factory=list)
     path_idx: int = 0
     ghost_paths: list[list[list[float]]] = field(default_factory=list)
+    planner: str = "rules"
+    choice: int = -1
+    candidates: list[list[list[float]]] = field(default_factory=list)
+    candidate_scores: list[float | None] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = asdict(self)
         d["route"] = d.pop("path")
         return d
 
+    def halt(self) -> None:
+        self.set_goal(None)
+        self.throttle = self.steer = self.speed = 0.0
+        self.status = "idle"
+
     def set_goal(self, goal: tuple[float, float] | None, site: str | None = None) -> None:
         self.goal, self.goal_site = goal, site
         self.path, self.path_idx, self.ghost_paths = [], 0, []
+        self.choice, self.candidates, self.candidate_scores = -1, [], []
         self.status = "driving" if goal else "idle"
 
 
@@ -35,6 +46,7 @@ class Scan:
     seq: int
     pose: dict
     points: np.ndarray
+    sensor: dict | None = None
 
 
 @dataclass
@@ -52,6 +64,7 @@ class World:
     sites: list[dict] = field(default_factory=list)
     junctions: list[dict] = field(default_factory=list)
     world_seq: int = 0
+    views: dict[str, dict] = field(default_factory=lambda: {"overview": {"box": None}})
 
     def set_network(self, roads: list[dict], sites: list[dict], junctions: list[dict]) -> None:
         self.roads, self.sites, self.junctions = roads, sites, junctions
@@ -80,4 +93,5 @@ class World:
             "paths": self.paths,
             "pedestrians": self.pedestrians,
             "trucks": [t.to_dict() for t in self.trucks.values()],
+            "views": self.views,
         }

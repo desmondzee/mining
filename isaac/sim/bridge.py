@@ -11,10 +11,12 @@ OUTBOX = 256
 
 
 class Bridge:
-    def __init__(self, host: str, port: int, hello: Callable[[], dict], on_action: Callable[[str, float, float, float], None]) -> None:
+    def __init__(self, host: str, port: int, hello: Callable[[], dict], on_action: Callable[[str, float, float, float], None], on_view: Callable[[str, list | None], None] | None = None, on_reset: Callable[[], None] | None = None) -> None:
         self.host, self.port = host, port
         self.hello = hello
         self.on_action = on_action
+        self.on_view = on_view
+        self.on_reset = on_reset
         self.outbox: queue.Queue[bytes] = queue.Queue(OUTBOX)
         self.connected = threading.Event()
         self.running = True
@@ -74,7 +76,12 @@ class Bridge:
         try:
             while True:
                 header, _ = read_message(sock)
-                if header.get("type") == "action":
+                kind = header.get("type")
+                if kind == "action":
                     self.on_action(str(header.get("truck")), float(header.get("throttle", 0)), float(header.get("steer", 0)), time.monotonic())
+                elif kind == "reset" and self.on_reset:
+                    self.on_reset()
+                elif kind == "view" and self.on_view:
+                    self.on_view(str(header.get("camera")), header.get("box"))
         except (OSError, ValueError, ConnectionError):
             pass
