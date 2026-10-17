@@ -147,9 +147,11 @@ class FakeCore(Sim):
         self.excavators = [W.Box(e["id"], float(e["pos3"][0]), 0.0, float(e["pos3"][2]), float(e.get("heading_deg", 0.0)),
                                  DEFAULT_EXCAVATOR_SIZE, DEFAULT_EXCAVATOR_SIZE[1] / 2)
                            for e in self.world.equipment if "excavat" in str(e.get("type", "excavator")).lower()]
-        self.paths = W.crossing_paths(self.world) if self.world.roads else [[(float(a), float(b)) for a, b in p] for p in
-                                                                             [[(-30, -40), (30, -40)], [(-10, -10), (10, -10), (10, 10), (-10, 10)], [(-50, 20), (-10, 60)], [(40, -20), (40, 40)]]]
-        self.walkers = make_walkers(self.paths)
+        flat = [[(-30, -40), (30, -40)], [(-10, -10), (10, -10), (10, 10), (-10, 10)], [(-50, 20), (-10, 60)], [(40, -20), (40, 40)]]
+        network = W.walker_network(self.world) if self.world.roads else (
+            [{"id": f"flat_{i}", "from": f"a{i}", "to": f"b{i}", "width_m": 10.0, "points": p} for i, p in enumerate(flat)], {})
+        self.areas, self.walkers = make_walkers(*network)
+        self.paths = [a.polygon() for a in self.areas]
         specs = W.spawn_trucks(self.world, self.truck_size, lambda x, z: 0.0, n_trucks) if self.world.roads else self.world.trucks[:n_trucks]
         self.trucks = [Truck(t.id, t.x, t.z, t.yaw, 0.0) for t in specs]
         self.follow = {t.id: GroundFollow(self.truck_size) for t in self.trucks}

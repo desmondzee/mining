@@ -98,7 +98,8 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | `world.py` | no | `world.json` → dataclasses, crossing paths, truck spawn layout, excavator and prop obstacles, hello payload |
 | `protocol.py` | no | framing and encoders (byte-identical to `brain.protocol`) |
 | `kinematics.py` | no | bicycle model, command timeout, ground follow + tilt (Unity `MineGroundFollow`) |
-| `pedestrians.py` | no | ping-pong walkers, seeded speeds |
+| `pedestrians.py` | no | seeded wander near the parking-to-ore routes (spec "Pedestrian wander"), copied to `brain/brain/pedestrians.py` |
+| `people.py` | pxr (Isaac for the assets root) | NVIDIA construction worker characters, walk/idle clips retargeted to their skeletons, speed-synced gait, capsule fallback |
 | `sensors.py` | no | camera/depth/lidar ray patterns, mounts, `cam` pose field |
 | `views.py` | no | chase/orbit/fixed extra camera poses |
 | `raycast.py` | Warp | collider, surround and props meshes, truck/excavator boxes, pedestrian cylinders |
@@ -118,7 +119,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | Trucks: Komatsu model, bicycle model, timeout, terrain height + tilt | done |
 | Spawn: slots, road heading, spread with slope search | done |
 | Excavators: model from `excavator.glb`, `equipment` pose, box for raycasts, hello obstacles | done |
-| Pedestrians: 4 road crossings × 3, ping-pong, ground follow, hit by depth/lidar | done, capsule visuals |
+| Pedestrians: 12 in 6 wander areas on the haul routes, crossings, edge stands, corridor cap, yield to trucks, ground follow, hit by depth/lidar | done |
 | Depth 64 × 36 and lidar 240 × 30 | done, Warp raycasts |
 | RTX RGB truck cameras, orthographic overview, extra views | done |
 | Animated people | not yet; Rocketbox FBX through `omni.kit.asset_converter` gives an unskinned T-pose mesh in cm |

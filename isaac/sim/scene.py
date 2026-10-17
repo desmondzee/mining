@@ -12,7 +12,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 
 from . import world as W
 from .kinematics import yaw_matrix
-from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS
+from .people import make_people
 from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, OVERVIEW_HFOV
 from .excavators import JOINTS
 from .kinematics import quat_from_matrix
@@ -20,7 +20,6 @@ from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matri
 from .zoom import OverviewZoom
 
 APERTURE = 20.955
-PERSON_COLOUR = (1.0, 0.47, 0.08)
 WARMUP = 30
 PROPS_LOADER = "isaac/props/load.py"
 PROPS_JSON = "props.json"
@@ -161,17 +160,7 @@ class IsaacRenderer:
             self.views[v.name] = cam.AddTransformOp()
             cameras.append((v.name, cam.GetPath().pathString, v.width, v.height))
 
-        self.people = []
-        for w in sim.walkers:
-            path = f"/World/People/{w.id}"
-            xf = UsdGeom.Xform.Define(stage, path)
-            self.people.append(xf.AddTransformOp())
-            body = UsdGeom.Capsule.Define(stage, path + "/body")
-            body.CreateAxisAttr(UsdGeom.Tokens.z)
-            body.CreateRadiusAttr(PEDESTRIAN_RADIUS)
-            body.CreateHeightAttr(PEDESTRIAN_HEIGHT - 2 * PEDESTRIAN_RADIUS)
-            body.CreateDisplayColorAttr([Gf.Vec3f(*PERSON_COLOUR)])
-            body.AddTranslateOp().Set(Gf.Vec3d(0, 0, PEDESTRIAN_HEIGHT / 2))
+        self.people = make_people(stage, sim.walkers)
 
         self.annotators, self.tiles = [], None
         self.subframes = int(config.get("rt_subframes", 1))
@@ -267,8 +256,7 @@ class IsaacRenderer:
             for j, op in joints.items():
                 w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
                 op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
-        for op, w in zip(self.people, sim.walkers):
-            op.Set(isaac_matrix(yaw_matrix(w.yaw), np.array([w.x, w.y, w.z])))
+        self.people.update(dt, sim.walkers)
         self.view_poses = sim.view_poses(dt)
         for name, (p, r) in self.view_poses.items():
             self.views[name].Set(camera_matrix(r, p))

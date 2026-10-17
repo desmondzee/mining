@@ -43,8 +43,8 @@ class Sim:
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
         radio = os.environ.get("RADIO_URL")
         self.radio = RadioPoller(radio, self.rigs).start() if radio else None
-        self.paths = W.crossing_paths(self.world)
-        self.walkers = make_walkers(self.paths)
+        self.areas, self.walkers = make_walkers(*W.walker_network(self.world))
+        self.paths = [a.polygon() for a in self.areas]
         for w in self.walkers:
             w.y = height(w.x, w.z)
         self.trucks = [Truck(t.id, t.x, t.z, t.yaw, height(t.x, t.z)) for t in W.spawn_trucks(self.world, self.truck_size, height)]
@@ -79,8 +79,9 @@ class Sim:
             f.apply(t, heights[5 * i : 5 * i + 5], dt)
         for rig in self.rigs.values():
             rig.step(dt)
+        near = [(t.x, t.z, t.yaw, t.speed) for t in self.trucks]
         for w in self.walkers:
-            w.step(dt)
+            w.step(dt, trucks=near)
         if self.walkers:
             ys = np.array([w.y for w in self.walkers])
             h = self.probe(np.array([w.x for w in self.walkers]), np.array([w.z for w in self.walkers]), ys + PEDESTRIAN_PROBE, np.full(len(ys), PEDESTRIAN_PROBE * 2))

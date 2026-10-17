@@ -21,10 +21,6 @@ SPAWN_GAP = 2.0
 SPAWN_SEARCH = 10.0
 SPAWN_SEARCH_STEP = 0.5
 WHEEL_FRACTION = 0.8
-PEDESTRIANS_PER_PATH = 3
-MIN_WALK_SPEED = 1.2
-MAX_WALK_SPEED = 1.6
-WALK_SEED = 1
 UNITY_FLIP = np.diag([-1.0, 1.0, 1.0, 1.0])
 
 Height = Callable[[float, float], float]
@@ -243,9 +239,12 @@ def prop_obstacles(world: World) -> list[dict]:
     ]
 
 
-def walk_speeds(n: int, seed: int = WALK_SEED) -> list[float]:
-    rng = np.random.default_rng(seed)
-    return [float(v) for v in rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED, n)]
+def walker_network(world: World) -> tuple[list[dict], dict[str, str]]:
+    roads = [
+        {"id": r.id, "from": r.start, "to": r.end, "width_m": r.width_m, "one_way": r.one_way, "points": [(float(p[0]), float(p[-1])) for p in r.points]}
+        for r in world.roads
+    ]
+    return roads, {s.id: s.type for s in world.sites}
 
 
 def hello(

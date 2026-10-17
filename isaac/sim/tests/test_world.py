@@ -90,10 +90,11 @@ def test_hello_payload(world):
     json.dumps(h)
 
 
-def test_walk_speeds_in_range():
-    s = W.walk_speeds(12)
-    assert len(s) == 12 and all(W.MIN_WALK_SPEED <= v <= W.MAX_WALK_SPEED for v in s)
-    assert s == W.walk_speeds(12)
+def test_walker_network(world):
+    roads, sites = W.walker_network(world)
+    assert [r["id"] for r in roads] == [r.id for r in world.roads]
+    assert roads[0]["points"][0] == (float(world.roads[0].points[0][0]), float(world.roads[0].points[0][2]))
+    assert sites["parking"] == "parking" and sites["ore_1"] == "ore"
 
 
 def test_heightmap_matches_road_heights(world, height):

@@ -17,7 +17,8 @@ def sim(request):
 def test_hello(sim):
     h = sim.hello()
     assert h["cameras"] == ["overview", "truck-0", "truck-1", "truck-2", "drone"]
-    assert len(h["obstacles"]) == 3 and len(h["paths"]) == 4
+    assert len(h["obstacles"]) == 3 and len(h["paths"]) == len(sim.areas) == 6
+    assert all(len(p["points"]) >= 4 for p in h["paths"])
 
 
 def test_drive_and_sensors(sim):
@@ -28,6 +29,8 @@ def test_drive_and_sensors(sim):
         sim.step(1 / 30, k / 30)
     assert np.hypot(t.x - x0, t.z - z0) > 5
     assert abs(t.y - sim.height(t.x, t.z)) < 1.5
+    assert len(sim.actors()) == 12
+    assert all(abs(w.y - sim.height(w.x, w.z)) < 1.0 for w in sim.walkers)
     sim.sync_obstacles()
     depths, lidars = sim.depths(), sim.lidars()
     assert len(depths) == len(lidars) == 3
