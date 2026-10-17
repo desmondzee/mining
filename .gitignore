@@ -23,3 +23,5 @@ unity/**/*.csproj
 unity/**/*.sln
 
 downloads/
+unity/Assets/Models/People/
+unity/Assets/Models/People.meta
