@@ -126,6 +126,9 @@ class BucketMaterial:
         self.instancer = self.make_instancer(np.array(self.colour) * ROCK_DARKEN)
         self.dust = self.make_dust() if m.cfg.max_dust else None
         self.last_bed = np.full(len(trucks_cfg), -1.0)
+        self.last_heap = [None] * len(excavators_cfg)
+        self.last_pile = np.full(len(excavators_cfg), -1.0)
+        self.chunks_visible = True
 
     def pile_faces(self) -> np.ndarray:
         r, s = PILE_RINGS, PILE_SEGMENTS
@@ -189,8 +192,11 @@ class BucketMaterial:
         heaps = m.bucket_points()
         for i in range(len(m.exc_ids)):
             self.bucket_ops[i].Set(gf(m.matrix[i]))
-            self.buckets[i].GetPointsAttr().Set(vec3(heaps[i]))
-            if not np.isnan(m.pile_pos[i, 0]):
+            if not np.array_equal(heaps[i], self.last_heap[i]):
+                self.last_heap[i] = heaps[i].copy()
+                self.buckets[i].GetPointsAttr().Set(vec3(heaps[i]))
+            if not np.isnan(m.pile_pos[i, 0]) and m.pile[i] != self.last_pile[i]:
+                self.last_pile[i] = m.pile[i]
                 t = np.eye(4)
                 t[:3, 3] = m.pile_pos[i]
                 self.pile_ops[i].Set(gf(t))
@@ -205,10 +211,13 @@ class BucketMaterial:
                 pts = m.bed_points() if pts is None else pts
                 self.beds[k].GetPointsAttr().Set(vec3(pts[k]))
         pos, quat, scale = m.instances()
-        pos = np.where(scale[:, None] > 0, pos, HIDDEN)
-        self.instancer.GetPositionsAttr().Set(vec3(pos))
-        self.instancer.GetScalesAttr().Set(vec3(np.repeat(scale[:, None], 3, 1)))
-        self.instancer.GetOrientationsAttr().Set(self.quats(quat))
+        visible = bool(scale.any())
+        if visible or self.chunks_visible:
+            self.chunks_visible = visible
+            pos = np.where(scale[:, None] > 0, pos, HIDDEN)
+            self.instancer.GetPositionsAttr().Set(vec3(pos))
+            self.instancer.GetScalesAttr().Set(vec3(np.repeat(scale[:, None], 3, 1)))
+            self.instancer.GetOrientationsAttr().Set(self.quats(quat))
         if self.dust is None:
             return
         dpos, dsize = m.dust()
