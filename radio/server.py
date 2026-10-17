@@ -143,7 +143,9 @@ class World:
                 if first == "middle":
                     aliases |= {"mid face", "mid bench", "midface"}
             elif t == "crusher":
-                aliases |= {"crusher", "crushers", "the crusher", "primary", "plant", "crush", "rusher"}
+                aliases |= {"crusher", "crushers", "the crusher", "primary", "plant", "crush", "rusher",
+                            "unload", "unloading", "unload point", "unloading point", "unloading area", "unload area",
+                            "offload", "off load", "drop off", "dropoff", "dump point", "tipping point", "unloader"}
                 spoken = "crusher"
             elif t == "dump":
                 aliases |= {"dump", "waste dump", "waste", "tip", "spoil", "dump site"}
