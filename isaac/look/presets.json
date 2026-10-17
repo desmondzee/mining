@@ -1,0 +1,23 @@
+{
+ "defaults": {
+  "sun": {"azimuth": "pano", "elevation": "pano", "intensity": 4000.0, "angle": 0.53, "color": [1.0, 0.96, 0.9], "shadows": true},
+  "sky": {
+   "texture": "sky_pano.jpg", "intensity": 500.0, "color": [1.0, 1.0, 1.0], "visible": true,
+   "pano_azimuth": 220.0, "latlong_offset": 90.0, "latlong_sign": -1.0,
+   "remove_sun_deg": 0.0, "saturation": 1.0, "gamma": 1.0, "tint": [1.0, 1.0, 1.0], "drift_deg_per_s": 0.0
+  },
+  "fog": {"enabled": false, "color": [0.75, 0.72, 0.66], "intensity": 1.0, "start": 120.0, "end": 4000.0, "density": 0.15, "height": 0.0, "height_density": 0.0, "height_falloff": 0.01},
+  "exposure": {"auto": false, "iso": 100.0, "ev": -1.0, "shutter": 50.0, "fnumber": 5.0, "min_ev": 9.0, "max_ev": 15.0, "white_scale": 10.0, "tau": 1.0},
+  "tonemap": {"op": "aces", "whitepoint": [1.0, 1.0, 1.0], "saturation": 1.0, "contrast": 1.0, "gain": [1.0, 1.0, 1.0], "gamma": 1.0, "offset": 0.0},
+  "materials": {
+   "scan": {"tint": [0.78, 0.7, 0.58], "roughness": 0.92, "specular": 0.02},
+   "surround": {"mode": "mdl", "roughness": 0.9, "gain": 1.0},
+   "truck": {"default": {"roughness": 0.6, "metallic": 0.0}, "by_name": {}},
+   "excavator": {"default": {"roughness": 0.6, "metallic": 0.0}, "by_name": {}}
+  },
+  "rtx": {}
+ },
+ "presets": {
+  "day": {}
+ }
+}
