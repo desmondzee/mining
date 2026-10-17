@@ -37,8 +37,8 @@ def test_encoder_output_decodes_with_keyframe_on_join():
         hub = VideoHub()
         early = hub.subscribe()
         imgs = frames(GOP_FRAMES + 5)
-        for img in imgs:
-            hub.submit("truck-0", img)
+        for i, img in enumerate(imgs):
+            hub.submit("truck-0", img, b'{"i":%d}' % i)
             await asyncio.sleep(0.02)
         first = await collect(hub, early, GOP_FRAMES + 5)
         late = hub.subscribe()
@@ -47,8 +47,9 @@ def test_encoder_output_decodes_with_keyframe_on_join():
         return imgs, first, joined
 
     imgs, first, joined = asyncio.run(go())
-    camera, key, _, au = unpack_au(first[0])
+    camera, key, _, au, meta = unpack_au(first[0])
     assert camera == "truck-0" and key and {7, 8, 5} <= nal_types(au)
+    assert [unpack_au(m)[4] for m in first] == [b'{"i":%d}' % i for i in range(len(first))]
     assert unpack_au(first[GOP_FRAMES])[1]
     assert not any(unpack_au(m)[1] for m in first[1:GOP_FRAMES])
 
@@ -58,7 +59,7 @@ def test_encoder_output_decodes_with_keyframe_on_join():
     err = np.abs(decoded[0].to_ndarray(format="rgb24").astype(int) - imgs[0]).mean()
     assert err < 8
 
-    _, key, _, au = unpack_au(joined[0])
+    _, key, _, au, _ = unpack_au(joined[0])
     assert key and 7 in nal_types(au)
 
 
@@ -89,11 +90,11 @@ def test_ws_video_h264_and_jpeg_fallback():
     with TestClient(app) as client:
         hub.publish("cam", AccessUnit(True, 7, pack_au("cam", True, 7, b"\0\0\1\x67")))
         with client.websocket_connect("/ws/video") as ws:
-            assert unpack_au(ws.receive_bytes()) == ("cam", True, 7, b"\0\0\1\x67")
+            assert unpack_au(ws.receive_bytes()) == ("cam", True, 7, b"\0\0\1\x67", b"")
         with client.websocket_connect("/ws/video?codec=jpeg") as ws:
-            client.portal.call(app.state.video.publish, "cam", b"\xff\xd8jpeg")
+            client.portal.call(app.state.video.publish, "cam", b"\x00\x00\xff\xd8jpeg")
             msg = ws.receive_bytes()
-            assert msg == b"\x03cam\xff\xd8jpeg"
+            assert msg == b"\x03cam\x00\x00\xff\xd8jpeg"
 
 
 @pytest.mark.parametrize("seed", [0, 1])

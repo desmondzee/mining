@@ -1,9 +1,10 @@
 import { createLidarView } from "./lidar.js";
 import { lidarDecoder } from "./lidar_stream.js";
+import { createHud } from "./hud.js";
 import { createPalette } from "./palette.js";
 import { createDialog, createShell, isTyping, SPLITS, VIEWS } from "./shell.js";
 import { applyTheme, onTheme, palette, renderChrome, storedTheme, THEMES } from "./ui.js";
-import { videoFeed } from "./video.js";
+import { readMeta, videoFeed } from "./video.js";
 
 const COLOURS = ["#9aa5e6", "#d9b98a", "#c98f86", "#9cbfa6"];
 const feeds = document.getElementById("feeds");
@@ -15,6 +16,7 @@ const captionHint = document.getElementById("caption-hint");
 const SITE_COLOURS = { ore: "#7fa38f", crusher: "#b0736a", dump: "#8f86a8", parking: "#b59a5e", fuel: "#b5835e" };
 const RADIO_URL = document.querySelector('meta[name="radio-url"]')?.content || "";
 const lidarView = createLidarView(document.getElementById("lidar"));
+const hud = createHud({ focusOnClick: false });
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [], cameras: [] };
 let network = { roads: [], sites: [], junctions: [] };
@@ -74,6 +76,8 @@ function tileFor(name) {
   feeds.append(el);
   tile = { el, canvas: el.querySelector("canvas"), frames: 0, fps: 0, busy: false };
   tiles.set(name, tile);
+  hud.attach(name, el, tile.canvas);
+  tile.onFrame = (meta) => hud.frame(name, meta);
   document.getElementById("feeds-empty").hidden = true;
   const active = shell.camera && tiles.has(shell.camera) ? shell.camera : tiles.has("overview") ? "overview" : name;
   if (!feeds.querySelector(".feed.active") || active === name) shell.setCamera(active, tiles);
@@ -88,13 +92,15 @@ async function onVideo(ev) {
   if (tile.busy) return;
   tile.busy = true;
   try {
-    const bmp = await createImageBitmap(new Blob([buf.subarray(1 + n)], { type: "image/jpeg" }));
+    const { meta, end } = readMeta(buf, 1 + n);
+    const bmp = await createImageBitmap(new Blob([buf.subarray(end)], { type: "image/jpeg" }));
     if (tile.canvas.width !== bmp.width) tile.canvas.width = bmp.width;
     if (tile.canvas.height !== bmp.height) tile.canvas.height = bmp.height;
     tile.canvas.getContext("2d").drawImage(bmp, 0, 0);
     bmp.close();
     tile.frames++;
     tile.el.classList.add("live");
+    tile.onFrame(meta);
   } finally {
     tile.busy = false;
   }
@@ -353,6 +359,7 @@ function onState(ev) {
   renderTruckList();
   drawMap();
   renderChrome(state, { tileFor, tiles, truckColour, selected });
+  hud.setState(state);
 }
 
 map.addEventListener("click", (e) => {

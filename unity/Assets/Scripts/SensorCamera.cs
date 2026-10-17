@@ -39,12 +39,14 @@ public class SensorCamera : MonoBehaviour
         {
             camera = cameraName,
             rgb = new BrainProtocol.RgbMeta { w = width, h = height, flip = flipRows },
+            cam = CameraPose(),
         };
         float[] depth = null;
         if (truck != null)
         {
             header.truck = truck.truckId;
             header.pose = truck.Pose();
+            header.pose.y = truck.transform.position.y;
             header.speed = truck.Speed;
             depth = CaptureDepth();
             header.depth = new BrainProtocol.Size { w = depthWidth, h = depthHeight };
@@ -75,6 +77,18 @@ public class SensorCamera : MonoBehaviour
             if (depth != null) System.Buffer.BlockCopy(depth, 0, payload, image.Length, depthBytes);
             client.Send(BrainProtocol.Encode(JsonUtility.ToJson(header), payload));
         });
+    }
+
+    BrainProtocol.CamPose CameraPose()
+    {
+        var p = transform.position;
+        var e = transform.eulerAngles;
+        return new BrainProtocol.CamPose
+        {
+            x = p.x, y = p.y, z = p.z,
+            yaw = e.y, pitch = Mathf.DeltaAngle(0f, e.x), roll = Mathf.DeltaAngle(0f, e.z),
+            hfov = horizontalFov,
+        };
     }
 
     float[] CaptureDepth()

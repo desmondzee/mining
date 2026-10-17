@@ -20,7 +20,7 @@ VIEWER_QUEUE = 30
 PRESET = "veryfast"
 PROFILE = "baseline"
 KEYFRAME = 1
-AU_HEADER = struct.Struct("<BI")
+AU_HEADER = struct.Struct("<BIH")
 
 
 @dataclass(frozen=True)
@@ -30,15 +30,17 @@ class AccessUnit:
     message: bytes
 
 
-def pack_au(camera: str, key: bool, timestamp_ms: int, data: bytes) -> bytes:
+def pack_au(camera: str, key: bool, timestamp_ms: int, data: bytes, meta: bytes = b"") -> bytes:
     name = camera.encode()
-    return struct.pack("B", len(name)) + name + AU_HEADER.pack(KEYFRAME if key else 0, timestamp_ms & 0xFFFFFFFF) + data
+    header = AU_HEADER.pack(KEYFRAME if key else 0, timestamp_ms & 0xFFFFFFFF, len(meta))
+    return struct.pack("B", len(name)) + name + header + meta + data
 
 
-def unpack_au(msg: bytes) -> tuple[str, bool, int, bytes]:
+def unpack_au(msg: bytes) -> tuple[str, bool, int, bytes, bytes]:
     n = msg[0]
-    flags, ts = AU_HEADER.unpack_from(msg, 1 + n)
-    return msg[1 : 1 + n].decode(), bool(flags & KEYFRAME), ts, msg[1 + n + AU_HEADER.size :]
+    flags, ts, meta_len = AU_HEADER.unpack_from(msg, 1 + n)
+    start = 1 + n + AU_HEADER.size
+    return msg[1 : 1 + n].decode(), bool(flags & KEYFRAME), ts, msg[start + meta_len :], msg[start : start + meta_len]
 
 
 def bitrate_for(camera: str) -> int:
@@ -70,7 +72,7 @@ class CameraEncoder:
         self.camera = camera
         self.bitrate = bitrate or bitrate_for(camera)
         self._on_au = on_au
-        self._pending: np.ndarray | None = None
+        self._pending: tuple[np.ndarray, bytes] | None = None
         self._cond = threading.Condition()
         self._closed = False
         self.encoded = 0
@@ -80,11 +82,11 @@ class CameraEncoder:
         self._thread = threading.Thread(target=self._run, name=f"h264-{camera}", daemon=True)
         self._thread.start()
 
-    def submit(self, rgb: np.ndarray) -> None:
+    def submit(self, rgb: np.ndarray, meta: bytes = b"") -> None:
         with self._cond:
             if self._pending is not None:
                 self.dropped += 1
-            self._pending = rgb
+            self._pending = (rgb, meta)
             self._cond.notify()
 
     def close(self) -> None:
@@ -101,7 +103,7 @@ class CameraEncoder:
                 self._cond.wait_for(lambda: self._pending is not None or self._closed)
                 if self._closed:
                     return
-                rgb, self._pending = self._pending, None
+                (rgb, meta), self._pending = self._pending, None
             h, w = rgb.shape[:2]
             w, h = w & ~1, h & ~1
             try:
@@ -119,7 +121,7 @@ class CameraEncoder:
                 ctx = None
                 continue
             for p in packets:
-                self._on_au(self.camera, bool(p.is_keyframe), int(p.pts), bytes(p))
+                self._on_au(self.camera, bool(p.is_keyframe), int(p.pts), bytes(p), meta)
 
 
 class Viewer:
@@ -163,16 +165,16 @@ class VideoHub:
         self.viewers: set[Viewer] = set()
         self._loop: asyncio.AbstractEventLoop | None = None
 
-    def submit(self, camera: str, rgb: np.ndarray) -> None:
+    def submit(self, camera: str, rgb: np.ndarray, meta: bytes = b"") -> None:
         if self._loop is None:
             self._loop = asyncio.get_running_loop()
         enc = self.encoders.get(camera)
         if enc is None:
             enc = self.encoders[camera] = CameraEncoder(camera, self._from_encoder)
-        enc.submit(rgb)
+        enc.submit(rgb, meta)
 
-    def _from_encoder(self, camera: str, key: bool, timestamp_ms: int, data: bytes) -> None:
-        au = AccessUnit(key, timestamp_ms, pack_au(camera, key, timestamp_ms, data))
+    def _from_encoder(self, camera: str, key: bool, timestamp_ms: int, data: bytes, meta: bytes = b"") -> None:
+        au = AccessUnit(key, timestamp_ms, pack_au(camera, key, timestamp_ms, data, meta))
         try:
             self._loop.call_soon_threadsafe(self.publish, camera, au)
         except RuntimeError:
