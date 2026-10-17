@@ -1350,7 +1350,12 @@ app = FastAPI(title="Haul truck radio", lifespan=lifespan, docs_url=None, redoc_
 from fastapi.responses import RedirectResponse  # noqa: E402
 from fastapi.staticfiles import StaticFiles  # noqa: E402
 
-for _url, _dir in (("/envgen/preview", REPO / "envgen" / "preview"), ("/data", REPO / "data"), ("/assets", REPO / "assets")):
+for _url, _dir in (
+    ("/envgen/preview", REPO / "envgen" / "preview"),
+    ("/data", REPO / "data"),
+    ("/assets", REPO / "assets"),
+    ("/unity/Assets/Models/Trucks", REPO / "unity" / "Assets" / "Models" / "Trucks"),
+):
     if _dir.is_dir():
         app.mount(_url, StaticFiles(directory=_dir), name=_url.strip("/").replace("/", "_"))
 
