@@ -261,6 +261,8 @@ def write_preview(path, H, colors, spacing, world, px=800):
     shade = 0.45 + 0.75 * hillshade(H, spacing)[..., None]
     img = np.clip(colors * shade, 0, 1)[::-1]  # flip so north is up
     im = Image.fromarray((img * 255).astype(np.uint8)).resize((px, px), Image.LANCZOS)
+    # clean top-down basemap (no overlays) for live maps; covers world origin..origin+size_m, north up
+    Image.fromarray((img * 255).astype(np.uint8)).resize((1024, 1024), Image.LANCZOS).save(Path(path).with_name("minimap.png"))
     d = ImageDraw.Draw(im)
     try:
         font = ImageFont.load_default(size=14)

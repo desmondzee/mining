@@ -414,3 +414,74 @@
 | Commands per session / global (per min) | 20 / 60 | |
 | TTS syntheses global (per min) | 60 | |
 | Login attempts per IP / global (per min) | 5 / 20 | |
+
+## Isaac sim
+
+| Item | Value | Source |
+|---|---|---|
+| Code | `isaac/sim/`, container files `isaac/docker/` | |
+| Image | `nvcr.io/nvidia/isaac-sim:6.2.0` (ARM64), build arg `ISAAC_TAG` | |
+| Entry | `/isaac-sim/python.sh /mining/isaac/sim/main.py --brain 127.0.0.1:9000 --world /data/worlds/quarry --cache /cache` | |
+| Container | `mining-isaac-sim`, compose `isaac/docker/compose.yml`, profile `isaac`, host network, `nvidia.com/gpu=all` | |
+| Renderer | RTX `RealTimePathTracing`, headless, Replicator `rgb` annotators | |
+| Stage | Z up, metres; Isaac (X, Y, Z) = world (x, z, y) | |
+| Yaw | world yaw (0 = +z, clockwise) = rotation about Isaac -Z from +Y | |
+| Assets | own GLB reader → USD (`isaac/sim/usdbuild.py`), axis swap and transforms baked into points, cached in `downloads/isaac/cache` | |
+| Scan visual | `visual.glb` node transforms, then `scan_transform.matrix`, then axis swap | |
+| Collider / surround | world frame, axis swap only | |
+| Sky | `sky_pano.jpg` latlong dome light, rotation `--dome-rotation` | |
+| Raycasts | NVIDIA Warp `mesh_query_ray` on collider + surround meshes, oriented truck/excavator boxes, pedestrian cylinders | |
+| Lidar method | Warp raycasts (RTX lidar not used) | |
+| Frame rate (default; `fps` in `isaac/sim/config.json`) | 30 | `isaac/sim/sensors.py:FPS` |
+| Truck camera width | 640 | `isaac/sim/sensors.py:CAM_W` |
+| Truck camera height | 360 | `isaac/sim/sensors.py:CAM_H` |
+| Horizontal FOV | 90 | `isaac/sim/sensors.py:HFOV` |
+| Depth width | 64 | `isaac/sim/sensors.py:DEPTH_W` |
+| Depth height | 36 | `isaac/sim/sensors.py:DEPTH_H` |
+| Depth range (m) | 100 | `isaac/sim/sensors.py:DEPTH_RANGE` |
+| Sensor offset ahead of box (m) | 0.2 | `isaac/sim/sensors.py:SENSOR_OFFSET` |
+| Camera height (fraction of truck height) | 0.8 | `isaac/sim/sensors.py:CAMERA_HEIGHT_FRACTION` |
+| Lidar height (fraction of truck height) | 0.6 | `isaac/sim/sensors.py:LIDAR_HEIGHT_FRACTION` |
+| Lidar range (m) | 100 | `isaac/sim/sensors.py:LIDAR_RANGE` |
+| Lidar horizontal FOV (deg) | 120 | `isaac/sim/sensors.py:LIDAR_HFOV` |
+| Lidar vertical min (deg) | -20 | `isaac/sim/sensors.py:LIDAR_VMIN` |
+| Lidar vertical max (deg) | 10 | `isaac/sim/sensors.py:LIDAR_VMAX` |
+| Lidar columns | 240 | `isaac/sim/sensors.py:LIDAR_COLS` |
+| Lidar channels | 30 | `isaac/sim/sensors.py:LIDAR_CHANNELS` |
+| Lidar rate (Hz) | 10 | `isaac/sim/sensors.py:LIDAR_HZ` |
+| Actors rate (Hz) | 10 | `isaac/sim/sensors.py:ACTORS_HZ` |
+| JPEG quality | 80 | `isaac/sim/protocol.py:JPEG_QUALITY` |
+| Overview | orthographic top-down, 640 × 360, vertical extent = bounds z range, image top = +z | |
+| Overview camera height (m) | 400 | `isaac/sim/sensors.py:OVERVIEW_HEIGHT` |
+| Truck frame `cam` | `{x, y, z, yaw, pitch, roll, hfov}` camera world pose, Unity Euler (pitch > 0 looks down) | |
+| Physics substep (s) | 1/60, real-time paced | |
+| Max speed (m/s) | 8 | `isaac/sim/kinematics.py:MAX_SPEED` |
+| Max steer (deg) | 30 | `isaac/sim/kinematics.py:MAX_STEER_DEG` |
+| Wheelbase (m) | 5 | `isaac/sim/kinematics.py:WHEELBASE` |
+| Speed response (1/s) | 1.5 | `isaac/sim/kinematics.py:ACCEL` |
+| Command timeout (s) | 0.5 | `isaac/sim/kinematics.py:COMMAND_TIMEOUT` |
+| Ground follow | 4 wheels + centre, Warp ray down the collider (surround fallback), height smoothing, tilt of body and sensors | |
+| Height smoothing (s) | 0.06 | `isaac/sim/kinematics.py:HEIGHT_SMOOTH` |
+| Snap distance (m) | 4 | `isaac/sim/kinematics.py:SNAP_DISTANCE` |
+| Max tilt (deg) | 25 | `isaac/sim/kinematics.py:MAX_TILT_DEG` |
+| Tilt smoothing (s) | 0.15 | `isaac/sim/kinematics.py:TILT_SMOOTH` |
+| Truck model | Komatsu HD465, GLB X flipped (Unity frame), length along z | |
+| Truck length (m) | 9.35 | `isaac/sim/world.py:TRUCK_LENGTH` |
+| Trucks | 3 | `isaac/sim/world.py:TRUCK_COUNT` |
+| Spawn | `world.json` spawns, heading along the first road leaving the nearest site, spread along the slot line | |
+| Heading look-ahead (m) | 20 | `isaac/sim/world.py:SPAWN_LOOK_AHEAD` |
+| Minimum gap between parked trucks (m) | 2 | `isaac/sim/world.py:SPAWN_GAP` |
+| Slot-line shift search (m) | 10 | `isaac/sim/world.py:SPAWN_SEARCH` |
+| Slot-line shift step (m) | 0.5 | `isaac/sim/world.py:SPAWN_SEARCH_STEP` |
+| Excavator length (m) | 10 | `isaac/sim/world.py:EXCAVATOR_LENGTH` |
+| Crossing paths | 4 | `isaac/sim/world.py:CROSSING_COUNT` |
+| Crossing length beyond road width (m) | 12 | `isaac/sim/world.py:CROSSING_MARGIN` |
+| Pedestrians per path | 3 | `isaac/sim/world.py:PEDESTRIANS_PER_PATH` |
+| Min walking speed (m/s) | 1.2 | `isaac/sim/world.py:MIN_WALK_SPEED` |
+| Max walking speed (m/s) | 1.6 | `isaac/sim/world.py:MAX_WALK_SPEED` |
+| Pedestrian turn rate (deg/s) | 360 | `isaac/sim/pedestrians.py:TURN_RATE` |
+| Pedestrian height (m) | 1.8 | `isaac/sim/pedestrians.py:PEDESTRIAN_HEIGHT` |
+| Pedestrian radius (m) | 0.3 | `isaac/sim/pedestrians.py:PEDESTRIAN_RADIUS` |
+| Pedestrian IDs | `Pedestrian_NN` | |
+| Pedestrian visual | orange capsule | |
+| Dry run | `--dry-run`: no Isaac imports, black JPEG frames, Warp raycasts when `warp` is importable, heightmap otherwise | |
