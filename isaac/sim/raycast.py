@@ -55,6 +55,8 @@ def cast_kernel(
     ground: wp.uint64,
     surround: wp.uint64,
     has_surround: int,
+    props: wp.uint64,
+    has_props: int,
     box_c: wp.array(dtype=wp.vec3),
     box_r: wp.array(dtype=wp.mat33),
     box_h: wp.array(dtype=wp.vec3),
@@ -80,6 +82,10 @@ def cast_kernel(
         q2 = wp.mesh_query_ray(surround, o, d, wp.min(max_t, best))
         if q2.result and q2.t < best:
             best = q2.t
+    if has_props != 0:
+        q3 = wp.mesh_query_ray(props, o, d, wp.min(max_t, best))
+        if q3.result and q3.t < best:
+            best = q3.t
     for k in range(nbox):
         if k != ignore[i]:
             best = wp.min(best, hit_box(o, d, box_c[k], box_r[k], box_h[k]))
@@ -123,6 +129,8 @@ class Caster:
         self.ground = make_mesh(*ground, self.device)
         self.surround = make_mesh(*surround, self.device) if surround is not None else self.ground
         self.has_surround = int(surround is not None)
+        self.props = self.ground
+        self.has_props = 0
         self.set_boxes(np.zeros((0, 3)), np.zeros((0, 3, 3)), np.zeros((0, 3)))
         self.set_cylinders(np.zeros((0, 3)), 0.3, 1.8)
 
@@ -131,6 +139,10 @@ class Caster:
         if len(a) == 0:
             a = np.zeros((1, *a.shape[1:]), np.float32)
         return wp.array(a[: max(rows, 1)], dtype=dtype, device=self.device)
+
+    def set_props(self, points: np.ndarray, tris: np.ndarray) -> None:
+        self.props = make_mesh(points, tris, self.device)
+        self.has_props = 1
 
     def set_boxes(self, centres: np.ndarray, rotations: np.ndarray, half: np.ndarray) -> None:
         self.nbox = len(centres)
@@ -152,6 +164,7 @@ class Caster:
             dim=n,
             inputs=[
                 self.ground.id, self.surround.id, self.has_surround,
+                self.props.id, self.has_props,
                 self.box_c, self.box_r, self.box_h, self.nbox,
                 self.cyl, self.ncyl, self.cyl_r, self.cyl_h,
                 wp.array(np.asarray(origins, np.float32), dtype=wp.vec3, device=self.device),

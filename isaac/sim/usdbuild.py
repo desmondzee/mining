@@ -22,6 +22,24 @@ def isaac_matrix(rotation: np.ndarray, position: np.ndarray) -> Gf.Matrix4d:
     return Gf.Matrix4d(m.T.tolist())
 
 
+def camera_matrix(rotation: np.ndarray, position: np.ndarray) -> Gf.Matrix4d:
+    s = TO_ISAAC[:3, :3]
+    m = np.eye(4)
+    m[:3, :3] = np.column_stack([s @ rotation[:, 0], s @ rotation[:, 1], -(s @ rotation[:, 2])])
+    m[:3, 3] = s @ position
+    return Gf.Matrix4d(m.T.tolist())
+
+
+def sun_matrix(elevation: float, azimuth: float) -> Gf.Matrix4d:
+    e, a = np.radians(elevation), np.radians(azimuth)
+    z = np.array([np.cos(e) * np.sin(a), np.cos(e) * np.cos(a), np.sin(e)])
+    x = np.cross([0.0, 0.0, 1.0], z)
+    x = x / np.linalg.norm(x) if np.linalg.norm(x) > 1e-9 else np.array([1.0, 0, 0])
+    m = np.eye(4)
+    m[:3, :3] = np.column_stack([x, np.cross(z, x), z])
+    return Gf.Matrix4d(m.T.tolist())
+
+
 def cache_key(src: Path, matrix: np.ndarray) -> str:
     st = src.stat()
     h = hashlib.sha1(f"{VERSION}|{src.resolve()}|{st.st_size}|{st.st_mtime_ns}|{np.round(matrix, 9).tobytes().hex()}".encode())

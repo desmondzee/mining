@@ -230,6 +230,19 @@ def excavators(world: World, height: Height, repo: Path = REPO) -> list[Box]:
     return out
 
 
+def prop_obstacles(world: World) -> list[dict]:
+    path = world.dir / "props.json"
+    if not path.exists():
+        return []
+    raw = json.loads(path.read_text())
+    entries = raw.get("props", []) if isinstance(raw, dict) else raw
+    return [
+        {"x": float(o["x"]), "z": float(o["z"]), "r": float(o["r"])}
+        for o in (e.get("obstacle") for e in entries if isinstance(e, dict))
+        if o
+    ]
+
+
 def walk_speeds(n: int, seed: int = WALK_SEED) -> list[float]:
     rng = np.random.default_rng(seed)
     return [float(v) for v in rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED, n)]

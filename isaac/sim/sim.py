@@ -7,12 +7,14 @@ from .glb import read_glb
 from .kinematics import GroundFollow, Truck, yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
 from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
+from .views import View, view_pose
 
 PEDESTRIAN_PROBE = 30.0
 
 
 class Sim:
-    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO) -> None:
+    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None) -> None:
+        self.views = [View.from_dict(v) for v in views or []]
         self.world = W.load_world(world_dir)
         self.truck_matrix, self.truck_size = W.truck_box(repo)
         self.caster = None
@@ -43,7 +45,12 @@ class Sim:
         self.time = 0.0
 
     def hello(self) -> dict:
-        return W.hello(self.world, [t.id for t in self.trucks], self.paths, [b.circle() for b in self.excavators])
+        h = W.hello(self.world, [t.id for t in self.trucks], self.paths, [b.circle() for b in self.excavators] + W.prop_obstacles(self.world))
+        h["cameras"] += [v.name for v in self.views]
+        return h
+
+    def view_poses(self, dt: float) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        return {v.name: view_pose(v, self, dt) for v in self.views}
 
     def command(self, truck_id: str, throttle: float, steer: float, now: float) -> None:
         for t in self.trucks:
@@ -68,6 +75,9 @@ class Sim:
             for w, y in zip(self.walkers, np.where(np.isfinite(h), h, ys)):
                 w.y = float(y)
 
+    def fx_state(self) -> list[tuple]:
+        return [(t.id, (t.x, t.y, t.z), t.yaw, t.speed, [tuple(map(float, c)) for c in self.follow[t.id].contacts]) for t in self.trucks]
+
     def rotation(self, t: Truck) -> np.ndarray:
         return self.follow[t.id].rotation(t.yaw)
 
@@ -83,19 +93,25 @@ class Sim:
         self.caster.set_boxes(centres, np.array([r for _, r, _ in boxes]), np.array([np.array(s) / 2 for _, _, s in boxes]))
         self.caster.set_cylinders(np.array([[w.x, w.y, w.z] for w in self.walkers]).reshape(-1, 3), PEDESTRIAN_RADIUS, PEDESTRIAN_HEIGHT)
 
-    def depth(self, index: int) -> np.ndarray | None:
-        if not self.caster:
-            return None
-        t = self.trucks[index]
-        o, d = self.rig.depth_rays(self.position(t), self.rotation(t))
-        return depth_image(self.caster.cast(o, d, DEPTH_RANGE, index), self.rig.depth_dirs)
+    def _cast_all(self, rays, max_range: float) -> list[np.ndarray]:
+        origins, dirs, ignore = [], [], []
+        for i, t in enumerate(self.trucks):
+            o, d = rays(self.position(t), self.rotation(t))
+            origins.append(o)
+            dirs.append(d)
+            ignore.append(np.full(len(d), i))
+        dist = self.caster.cast(np.concatenate(origins), np.concatenate(dirs), max_range, np.concatenate(ignore))
+        return np.split(dist, len(self.trucks))
 
-    def lidar(self, index: int) -> np.ndarray:
-        if not self.caster:
-            return np.zeros((0, 3), np.float32)
-        t = self.trucks[index]
-        o, d = self.rig.lidar_rays(self.position(t), self.rotation(t))
-        return lidar_points(self.caster.cast(o, d, LIDAR_RANGE, index), self.rig.lidar_dirs)
+    def depths(self) -> list[np.ndarray | None]:
+        if not self.caster or not self.trucks:
+            return [None] * len(self.trucks)
+        return [depth_image(d, self.rig.depth_dirs) for d in self._cast_all(self.rig.depth_rays, DEPTH_RANGE)]
+
+    def lidars(self) -> list[np.ndarray]:
+        if not self.caster or not self.trucks:
+            return [np.zeros((0, 3), np.float32) for _ in self.trucks]
+        return [lidar_points(d, self.rig.lidar_dirs) for d in self._cast_all(self.rig.lidar_rays, LIDAR_RANGE)]
 
     def actors(self) -> list[dict]:
         return [w.state() for w in self.walkers]

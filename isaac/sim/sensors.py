@@ -4,7 +4,7 @@ import numpy as np
 
 CAM_W = 640
 CAM_H = 360
-FPS = 15
+FPS = 30
 HFOV = 90.0
 DEPTH_W = 64
 DEPTH_H = 36

@@ -99,6 +99,7 @@ class GroundFollow:
         self.half_track = box_size[0] * 0.38
         self.tilt = np.array([1.0, 0.0, 0.0, 0.0])
         self.smooth_y: float | None = None
+        self.contacts = np.zeros((4, 3))
         self.tilt_init = False
 
     def sample(self, probe: Probe, xs: np.ndarray, zs: np.ndarray, ref: float | np.ndarray) -> np.ndarray:
@@ -145,6 +146,8 @@ class GroundFollow:
                 nxt = max(nxt, target - 0.25)
             self.smooth_y = nxt
         truck.y = self.smooth_y
+        self.contacts = self.points(truck)[1:]
+        self.contacts[:, 1] = wheels
         self.update_tilt(*wheels, dt)
 
     def update_tilt(self, fl: float, fr: float, rl: float, rr: float, dt: float) -> None:

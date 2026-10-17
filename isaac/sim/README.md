@@ -24,7 +24,6 @@ Run one Isaac container at a time on watson, and stop `mining-fakesim-1` first: 
 | `--world` | `data/worlds/quarry` | world directory (`world.json` + GLBs) |
 | `--dry-run` | off | no Isaac imports, black JPEG frames |
 | `--raycast` | `auto` | Warp depth/lidar/ground raycasts (`auto` = if `warp` imports); `off` uses the heightmap for ground and sends no depth or lidar points |
-| `--lidar` | `raycast` | lidar method |
 | `--cache` | `downloads/isaac/cache` | generated USD files |
 | `--renderer` | `RealTimePathTracing` | RTX mode (`PathTracing` for offline quality) |
 | `--fps` | 15 | frame rate |
@@ -59,5 +58,5 @@ Run one Isaac container at a time on watson, and stop `mining-fakesim-1` first: 
 | Depth 64 × 36 and lidar 240 × 30 | done, Warp raycasts |
 | RTX RGB cameras, overview orthographic | done |
 | Excavators: static models + boxes + hello obstacles | done |
-| Animated people | not yet (orange capsules) |
+| Animated people | not yet (orange capsules); Rocketbox FBX through `omni.kit.asset_converter` gives an unskinned T-pose mesh in cm, no walk animation |
 | RTX lidar | not yet (raycast pattern matches Unity exactly) |

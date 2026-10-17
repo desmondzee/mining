@@ -99,3 +99,15 @@ def test_walk_speeds_in_range():
 def test_heightmap_matches_road_heights(world, height):
     errs = [abs(height(p[0], p[2]) - p[1]) for r in world.roads for p in r.points]
     assert np.median(errs) < 1.0
+
+
+def test_prop_obstacles(tmp_path):
+    import shutil
+
+    shutil.copy(QUARRY / "world.json", tmp_path / "world.json")
+    w = W.load_world(tmp_path)
+    assert W.prop_obstacles(w) == []
+    (tmp_path / "props.json").write_text(json.dumps({"props": [{"pos": [1, 2, 3], "obstacle": {"x": 1, "z": 3, "r": 2.5}}, {"pos": [0, 0, 0], "obstacle": None}]}))
+    assert W.prop_obstacles(w) == [{"x": 1.0, "z": 3.0, "r": 2.5}]
+    (tmp_path / "props.json").write_text(json.dumps([{"obstacle": {"x": 4, "z": 5, "r": 1}}]))
+    assert W.prop_obstacles(w) == [{"x": 4.0, "z": 5.0, "r": 1.0}]

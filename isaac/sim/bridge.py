@@ -7,7 +7,7 @@ from collections.abc import Callable
 from .protocol import encode, read_message
 
 RETRY = 2.0
-OUTBOX = 64
+OUTBOX = 256
 
 
 class Bridge:

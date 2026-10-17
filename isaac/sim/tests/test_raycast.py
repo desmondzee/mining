@@ -50,3 +50,12 @@ def test_roads_lie_on_collider():
     err = np.abs(h - pts[:, 1])
     assert np.isfinite(h).all()
     assert np.percentile(err, 95) < 1.0
+
+
+def test_props_mesh():
+    c = Caster(PLANE, device="cpu")
+    wall = (np.array([[-5, 0, 10], [5, 0, 10], [5, 5, 10], [-5, 5, 10]], float), np.array([[0, 1, 2], [0, 2, 3]]))
+    o, d = np.array([[0, 1, 0]]), np.array([[0, 0, 1.0]])
+    assert math.isinf(c.cast(o, d, 100)[0])
+    c.set_props(*wall)
+    assert c.cast(o, d, 100)[0] == pytest.approx(10.0)

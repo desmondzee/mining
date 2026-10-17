@@ -309,8 +309,8 @@
 | Collider / surround | world frame, axis swap only | |
 | Sky | `sky_pano.jpg` latlong dome light, rotation `--dome-rotation` | |
 | Raycasts | NVIDIA Warp `mesh_query_ray` on collider + surround meshes, oriented truck/excavator boxes, pedestrian cylinders | |
-| Lidar method | Warp raycasts (`--lidar raycast`) | |
-| Frame rate | 15 | `isaac/sim/sensors.py:FPS` |
+| Lidar method | Warp raycasts (RTX lidar not used) | |
+| Frame rate (default; `fps` in `isaac/sim/config.json`) | 30 | `isaac/sim/sensors.py:FPS` |
 | Truck camera width | 640 | `isaac/sim/sensors.py:CAM_W` |
 | Truck camera height | 360 | `isaac/sim/sensors.py:CAM_H` |
 | Horizontal FOV | 90 | `isaac/sim/sensors.py:HFOV` |
