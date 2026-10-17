@@ -619,7 +619,7 @@ kbd {
 
 .palette-glyph { font-family: var(--font-mono); font-size: 14px; color: var(--ink-35); }
 
-#palette-input {
+.palette-input {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -631,7 +631,7 @@ kbd {
   color: var(--ink-90);
 }
 
-#palette-input::placeholder { color: var(--ink-35); }
+.palette-input::placeholder { color: var(--ink-35); }
 
 .palette-body {
   position: relative;
@@ -691,7 +691,10 @@ kbd {
 .palette-option .label { flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .palette-option .label mark { background: none; color: var(--ink-90); font-weight: 500; }
 .palette-option.armed .label { color: var(--alert); }
-.palette-option .detail { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-35); white-space: nowrap; }
+.palette-option .detail { font-family: var(--font-mono); font-size: 10.5px; color: var(--ink-35); white-space: pre; }
+.schedule { width: min(760px, calc(100vw - 32px)); }
+.schedule .palette-option .detail { font-size: 11px; color: var(--ink-60); font-variant-numeric: tabular-nums; }
+.schedule .palette-option[aria-selected="true"] .detail { color: var(--ink-90); }
 .palette-option .keys { display: inline-flex; gap: 4px; }
 
 .palette-empty { padding: 28px 20px 32px; text-align: center; font-family: var(--font-mono); font-size: 11px; color: var(--ink-35); }

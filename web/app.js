@@ -42,6 +42,8 @@ fetch("/radio/data/worlds/quarry/world.json").then((r) => (r.ok ? r.json() : nul
 }).catch(() => {});
 const help = createDialog(document.getElementById("help"));
 const commandPalette = createPalette({ root: document.getElementById("palette"), commands });
+const schedulePalette = createPalette({ root: document.getElementById("schedule"), commands: schedule, recents: false });
+setInterval(() => schedulePalette.refresh(), 500);
 
 function wsUrl(path) {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${path}`;
@@ -559,9 +561,44 @@ function commands(query = "") {
   return out;
 }
 
+const PHASE_LABEL = { idle: "idle", to_site: "en route", to_load: "to load", loading: "loading", to_dump: "hauling", dumping: "dumping", returning: "returning" };
+
+function eta(m, speed) {
+  if (m == null || !(speed > 0.5)) return "";
+  const s = Math.round(m / speed);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function scheduleTruck(id) {
+  schedulePalette.close(true);
+  select(id);
+  if (shell.view !== "ops") shell.setView("ops");
+  if (tiles.has(id)) shell.setCamera(id, tiles);
+  layoutOps();
+}
+
+function schedule() {
+  const pad = (v, n) => String(v ?? "").padEnd(n);
+  const lpad = (v, n) => String(v ?? "").padStart(n);
+  const out = state.trucks.map((t) => {
+    const r = radio.online ? radio.trucks.get(t.id) : null;
+    const phase = r?.phase && r.phase !== "idle" ? PHASE_LABEL[r.phase] || r.phase : t.status;
+    const dest = r?.target || (t.goal_site ? siteName(t.goal_site) : "");
+    const metres = r?.remaining_m ?? null;
+    const load = r?.load ?? t.load;
+    const detail = [pad(dest, 16), lpad(metres != null ? `${metres} m` : "", 7), lpad(eta(metres, t.speed), 6), lpad(kmh(t.speed), 8), lpad(load != null ? `${load} t` : "", 5)].join("  ");
+    return { id: `sched:${t.id}`, group: "trucks", title: `${t.id} · ${phase}`, keywords: `${dest} ${r?.task || ""}`, detail, run: () => scheduleTruck(t.id) };
+  });
+  for (const e of radio.online ? radio.state.excavators || [] : []) {
+    out.push({ id: `sched:${e.id}`, group: "excavators", title: `${e.id} · ${e.state || ""}`, keywords: e.face || "", detail: pad(e.face_name || "", 16), run: () => {} });
+  }
+  return out;
+}
+
 const SHORTCUTS = [
   ["Command palette", ["/"]],
   ["Command palette", ["⌘", "K"]],
+  ["Schedule", ["\\"]],
   ["Ops · video · map · lidar", ["O", "V", "M", "L"]],
   ["Fleet · radio · judge · split", ["F", "R", "J", "S"]],
   ["Stop everything (twice)", ["⇧", "esc"]],
@@ -588,13 +625,15 @@ addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     if (help.isOpen()) help.close();
+    schedulePalette.close();
     commandPalette.toggle();
     return;
   }
   if (e.key === "Escape" && e.shiftKey) { e.preventDefault(); armedStop(); return; }
-  if (commandPalette.isOpen() || help.isOpen() || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (commandPalette.isOpen() || schedulePalette.isOpen() || help.isOpen() || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
   const key = e.key.toLowerCase();
   if (e.key === "/") { e.preventDefault(); commandPalette.open(); }
+  else if (e.key === "\\") { e.preventDefault(); schedulePalette.open(); }
   else if (e.key === "?") { e.preventDefault(); help.open(); }
   else if (VIEW_BY_KEY[key] && !e.shiftKey) shell.setView(VIEW_BY_KEY[key]);
   else if (/^[1-9]$/.test(e.key)) { const name = cameraOrder()[Number(e.key) - 1]; if (name) showCamera(name); }

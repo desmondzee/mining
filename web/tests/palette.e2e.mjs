@@ -139,3 +139,16 @@ test("ops layout keeps overview and map visible and swaps the primary truck", as
   await page.waitForFunction(() => document.querySelector(".feed.primary").dataset.camera === "truck-1");
   assert.equal(await page.evaluate(() => document.documentElement.dataset.view), "ops");
 });
+
+test("backslash opens the schedule and selecting a truck makes it primary", async () => {
+  await page.keyboard.press("m");
+  await page.waitForFunction(() => document.documentElement.dataset.view === "map");
+  await page.keyboard.press("\\");
+  await page.locator("#schedule.open").waitFor();
+  assert.equal(await page.locator('#schedule [role="option"]').count(), 4);
+  assert.match(await page.locator("#schedule .palette-option").first().textContent(), /truck-0 · to load/);
+  await page.keyboard.type("truck-2");
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.getElementById("schedule").hidden);
+  await page.waitForFunction(() => document.documentElement.dataset.view === "ops" && document.querySelector(".feed.primary")?.dataset.camera === "truck-2");
+});
