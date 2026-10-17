@@ -1,0 +1,22 @@
+name: mining
+
+services:
+  brain:
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    ports:
+      # Bound to localhost only: reach it from your laptop with `brev port-forward`.
+      - "127.0.0.1:8080:8080" # website + API
+      - "127.0.0.1:9000:9000" # sim connection (Unity player or editor)
+    restart: unless-stopped
+
+  # Stand-in for the Unity player. Start with: docker compose --profile fake up -d
+  fakesim:
+    profiles: ["fake"]
+    build:
+      context: .
+      dockerfile: brain/Dockerfile
+    command: ["fakesim", "--host", "brain", "--port", "9000", "--trucks", "3"]
+    depends_on: [brain]
+    restart: unless-stopped

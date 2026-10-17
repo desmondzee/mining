@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Quarry Control</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Quarry Control</h1>
+    <span id="sim-status" class="pill off">sim offline</span>
+  </header>
+  <main>
+    <section id="feeds" aria-label="Camera feeds"></section>
+    <aside>
+      <h2>Map</h2>
+      <p class="hint">Select a truck, then click the map to send it there.</p>
+      <canvas id="map" width="400" height="400"></canvas>
+      <ul id="trucks"></ul>
+    </aside>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
