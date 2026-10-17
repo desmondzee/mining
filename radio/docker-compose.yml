@@ -1,38 +1,42 @@
-# Radio + HTTPS tunnel for the phone. Run from the repo root:
-#   docker compose -f radio/docker-compose.yml up -d --build
-#   docker compose -f radio/docker-compose.yml logs tunnel | grep -o 'https://[a-z0-9-]*\.trycloudflare\.com'
-#
-# BRAIN_URL:
-#   - Des's laptop with `ssh -N -L 8080:127.0.0.1:8080 watson` running -> default (host.docker.internal:8080)
-#   - on watson next to the team's compose -> BRAIN_URL=http://host.docker.internal:8080 also works (brain publishes 127.0.0.1:8080)
 name: mining-radio
+
+x-hardened: &hardened
+  read_only: true
+  cap_drop: ["ALL"]
+  security_opt: ["no-new-privileges:true"]
+  tmpfs: ["/tmp:size=64m"]
+  restart: unless-stopped
 
 services:
   radio:
+    <<: *hardened
     build:
       context: ..
       dockerfile: radio/Dockerfile
     environment:
       BRAIN_URL: ${BRAIN_URL:-http://host.docker.internal:8080}
       RADIO_MOCK: ${RADIO_MOCK:-auto}
+      RADIO_PIN: ${RADIO_PIN:-}
       RADIO_WORLD: /app/data/worlds/${RADIO_WORLD_ID:-quarry}/world.json
-    extra_hosts:
-      - "host.docker.internal:host-gateway"   # Linux; Docker Desktop provides it already
     volumes:
       - ../data:/app/data:ro
-      - ../envgen/preview:/app/envgen/preview:ro   # aerial view at /view
+      - ../envgen/preview:/app/envgen/preview:ro
       - ../assets/models:/app/assets/models:ro
+      - ../unity/Assets/Models/Trucks:/app/unity/Assets/Models/Trucks:ro
       - ./secrets:/app/radio/secrets:ro
       - radio_cache:/app/radio/cache
     ports:
       - "127.0.0.1:8090:8090"
-    restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 128
 
   tunnel:
-    image: cloudflare/cloudflared:2026.10.1
-    command: tunnel --no-autoupdate --url http://radio:8090
+    <<: *hardened
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "--url", "http://radio:8090"]
     depends_on: [radio]
-    restart: unless-stopped
+    mem_limit: 256m
+    pids_limit: 64
 
 volumes:
   radio_cache:

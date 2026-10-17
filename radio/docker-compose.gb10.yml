@@ -1,0 +1,10 @@
+services:
+  radio:
+    environment:
+      BRAIN_URL: http://brain:8080
+    networks: [default, brain]
+
+networks:
+  brain:
+    name: mining_default
+    external: true
