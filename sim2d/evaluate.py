@@ -11,8 +11,7 @@ from typing import Callable, Dict
 
 import numpy as np
 
-from .env import DriveEnv
-from .world import load
+from .env import DEFAULT_WORLDS, DriveEnv, make_env
 
 Driver = Callable[[DriveEnv, Dict[str, np.ndarray]], int]
 
@@ -21,13 +20,12 @@ def expert_driver(env: DriveEnv, ob) -> int:
     return env.expert_action()
 
 
-def run(driver: Driver, episodes: int = 20, seed: int = 1000, world_id: str = "default") -> Dict[str, float]:
-    world = load(world_id)
+def run(driver: Driver, episodes: int = 20, seed: int = 1000, worlds: str = DEFAULT_WORLDS) -> Dict[str, float]:
     rows = []
     t0 = time.perf_counter()
     ticks = 0
     for ep in range(episodes):
-        env = DriveEnv(world, seed=seed + ep)
+        env = make_env(seed + ep, worlds)
         ob = env.reset()
         done, info = False, {}
         while not done:
@@ -51,6 +49,7 @@ def main() -> None:
     p = argparse.ArgumentParser()
     p.add_argument("--episodes", type=int, default=20)
     p.add_argument("--policy", default="expert")
+    p.add_argument("--worlds", default=DEFAULT_WORLDS)
     args = p.parse_args()
     if args.policy == "expert":
         driver = expert_driver
@@ -58,7 +57,7 @@ def main() -> None:
         from .model import load_driver
 
         driver = load_driver(args.policy)
-    for k, v in run(driver, args.episodes).items():
+    for k, v in run(driver, args.episodes, worlds=args.worlds).items():
         print("%-16s %s" % (k, "%.3f" % v if isinstance(v, float) else v))
 
 

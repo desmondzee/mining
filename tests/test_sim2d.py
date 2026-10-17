@@ -25,6 +25,17 @@ def test_observation_shapes(world):
     assert np.isfinite(ob["obs"]).all()
 
 
+def test_quarry_has_pedestrians_that_do_not_yield():
+    env = DriveEnv(load("quarry"), n_movers=(0, 0), n_peds=(4, 4), seed=3)
+    env.reset("parking", "ore_1")
+    peds = [m for m in env.movers if m.pedestrian]
+    assert peds and all(m.radius == 0.3 for m in peds)
+    before = [(m.x, m.z) for m in peds]
+    for _ in range(10):
+        env.step(env.expert_action())
+    assert any((m.x, m.z) != b for m, b in zip(peds, before))
+
+
 @pytest.mark.parametrize("start,goal", [("parking", "pit_floor"), ("crusher", "pit_south")])
 def test_expert_reaches_goal_without_collision(world, start, goal):
     env = DriveEnv(world, n_movers=(3, 3), seed=1)

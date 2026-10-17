@@ -50,13 +50,16 @@ class World:
     def cell_centre(self, r: int, c: int) -> Tuple[float, float]:
         return self.ox + (c + 0.5) * self.cell, self.oz + (r + 0.5) * self.cell
 
-    def astar(self, start: Tuple[float, float], goal: Tuple[float, float]) -> Optional[np.ndarray]:
-        """Cheapest 8-connected path on the inflated grid, as (k, 2) x/z points."""
+    def astar(self, start: Tuple[float, float], goal: Tuple[float, float], extra_blocked: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
+        """Cheapest 8-connected path on the inflated grid, as (k, 2) x/z points.
+
+        extra_blocked: optional (n, n) bool mask, for example cells around a parked vehicle.
+        """
         sr, sc = (int(v) for v in self.cell_of(*start))
         gr, gc = (int(v) for v in self.cell_of(*goal))
         n = self.n
         # Allow start and goal cells inside the inflated margin (sites sit next to walls).
-        passable = ~self.inflated
+        passable = ~self.inflated if extra_blocked is None else ~(self.inflated | extra_blocked)
         passable[sr, sc] = passable[gr, gc] = True
         g = {(sr, sc): 0.0}
         parent = {(sr, sc): None}

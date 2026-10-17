@@ -15,13 +15,12 @@ from multiprocessing import Pool
 
 import numpy as np
 
-from .env import DriveEnv
-from .world import load
+from .env import make_env
 
 
 def episode(args):
     seed, explore = args
-    env = DriveEnv(load("default"), seed=seed)
+    env = make_env(seed)
     rng = np.random.default_rng(seed + 1)
     ob = env.reset()
     obs, cands, masks, labels = [], [], [], []

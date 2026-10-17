@@ -14,11 +14,25 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+import os
+from typing import Dict, List, Optional, Sequence, Tuple, Union
 
 import numpy as np
 
-from .world import World, chaikin, resample
+from .world import World, chaikin, load, resample
+
+# Worlds used for training and evaluation, comma-separated; worker processes inherit it.
+DEFAULT_WORLDS = os.environ.get("SIM2D_WORLDS", "default,quarry")
+
+
+_WORLD_CACHE: Dict[str, World] = {}
+
+
+def make_env(seed: Optional[int] = None, worlds: str = DEFAULT_WORLDS) -> "DriveEnv":
+    for w in worlds.split(","):
+        if w not in _WORLD_CACHE:
+            _WORLD_CACHE[w] = load(w)
+    return DriveEnv([_WORLD_CACHE[w] for w in worlds.split(",")], seed=seed)
 
 MAX_V = 8.0
 MAX_STEER = math.radians(30.0)
@@ -28,7 +42,10 @@ DT = 0.1
 HORIZON = 3.0
 RDT = 0.2
 N_ROLL = int(round(HORIZON / RDT))
-CAR_R = 5.0  # truck + light vehicle combined radius
+TRUCK_R = 3.5
+VEHICLE_R = 1.5  # light vehicle; truck + vehicle = 5 m
+PED_R = 0.3  # spec.md pedestrian collider radius
+PED_SPEED = (1.2, 1.6)  # spec.md walking speed range, m/s
 STEERS = np.array([-1, -0.75, -0.5, -0.3, -0.15, 0, 0.15, 0.3, 0.5, 0.75, 1.0])
 SPEEDS = np.array([8.0, 5.0, 2.5, 0.0])
 CAND_STEER = np.repeat(STEERS, len(SPEEDS))
@@ -46,6 +63,8 @@ OBS_DIM = N_RAYS + 2 * ROUTE_POINTS + 3
 CAND_DIM = 2 * N_ROLL + 3  # path points, steer, target speed, predicted clearance
 
 ARRIVE_RADIUS = 5.0
+HIT_MARGIN = 0.5  # m of gap a candidate path must keep from a mover it closes in on
+REPLAN_AFTER = 4.0  # s of waiting before re-planning the route around movers
 MAX_TICKS = 1500
 
 
@@ -56,6 +75,8 @@ class Mover:
     direction: int
     speed: float
     static: bool = False
+    pedestrian: bool = False  # pedestrians never give way
+    radius: float = VEHICLE_R
     side: int = 0
     off: float = 0.0
     cool: float = 0.0
@@ -86,15 +107,25 @@ def ego(points: np.ndarray, x: float, z: float, yaw: float) -> np.ndarray:
 
 
 class DriveEnv:
-    def __init__(self, world: World, n_movers: Tuple[int, int] = (2, 5), seed: Optional[int] = None):
-        self.world = world
+    def __init__(
+        self,
+        worlds: Union[World, Sequence[World]],
+        n_movers: Tuple[int, int] = (1, 3),
+        n_peds: Tuple[int, int] = (2, 6),
+        seed: Optional[int] = None,
+    ):
+        """Each reset picks one of `worlds` at random."""
+        self.worlds = [worlds] if isinstance(worlds, World) else list(worlds)
         self.n_movers = n_movers
+        self.n_peds = n_peds
         self.rng = np.random.default_rng(seed)
-        self.road_pts = [resample(r, 1.0) for r in world.roads if len(r) > 1]
+        self._roads = {w.name: [resample(r, 1.0) for r in w.roads if len(r) > 1] for w in self.worlds}
+        self.world = self.worlds[0]
 
     # ---- episode ----
     def reset(self, start: Optional[str] = None, goal: Optional[str] = None, load: Optional[float] = None) -> Dict[str, np.ndarray]:
-        w = self.world
+        self.world = w = self.worlds[self.rng.integers(len(self.worlds))]
+        self.road_pts = self._roads[w.name]
         ids = list(w.sites)
         for _ in range(50):
             a = start or ids[self.rng.integers(len(ids))]
@@ -118,6 +149,7 @@ class DriveEnv:
         self.route_idx = 0
         self.min_clear = math.inf
         self.stops = 0
+        self.replans = 0
         self._was_moving = False
         self._plan()
         return self.observe()
@@ -129,15 +161,44 @@ class DriveEnv:
         for _ in range(k):
             pts = self.road_pts[self.rng.integers(len(self.road_pts))]
             m = Mover(pts=pts, s=float(self.rng.uniform(0, len(pts) - 1)), direction=int(self.rng.choice([-1, 1])), speed=float(self.rng.uniform(2.5, 5.0)))
+            movers.append(m)
+        lo, hi = self.n_peds
+        for _ in range(int(self.rng.integers(lo, hi + 1))):
+            m = self._pedestrian()
+            if m is not None:
+                movers.append(m)
+        for m in movers:
             self._place(m)
-            # Do not start a vehicle on top of the truck.
+            # Do not start a mover on top of the truck.
             for _ in range(40):
                 if math.hypot(m.x - self.truck.x, m.z - self.truck.z) >= 30:
                     break
-                m.s = (m.s + 7) % (len(pts) - 1)
+                m.s = (m.s + 7) % (len(m.pts) - 1)
                 self._place(m)
-            movers.append(m)
         return movers
+
+    def _pedestrian(self) -> Optional[Mover]:
+        """A walker that crosses a random road back and forth, as in the Unity scene."""
+        road = self.road_pts[self.rng.integers(len(self.road_pts))]
+        if len(road) < 4:
+            return None
+        i = int(self.rng.integers(1, len(road) - 1))
+        d = road[i + 1] - road[i - 1]
+        perp = np.array([d[1], -d[0]]) / (np.hypot(*d) or 1.0)
+        half = float(self.rng.uniform(12, 20))
+        line = road[i] + perp * np.arange(-half, half + 1.0)[:, None]
+        free = ~self.world.blocked_at(line[:, 0], line[:, 1])
+        mid = len(line) // 2
+        lo, hi = mid, mid
+        while lo > 0 and free[lo - 1]:
+            lo -= 1
+        while hi < len(line) - 1 and free[hi + 1]:
+            hi += 1
+        if hi - lo < 6:
+            return None
+        pts = line[lo : hi + 1]
+        return Mover(pts=pts, s=float(self.rng.uniform(0, len(pts) - 1)), direction=int(self.rng.choice([-1, 1])),
+                     speed=float(self.rng.uniform(*PED_SPEED)), pedestrian=True, radius=PED_R)
 
     def _place(self, m: Mover) -> Tuple[float, float]:
         L = len(m.pts) - 1
@@ -158,9 +219,19 @@ class DriveEnv:
                 continue
             px, pz = m.x, m.z
             L = len(m.pts) - 1
+            if m.pedestrian:
+                m.s += m.direction * m.speed * dt
+                if m.s >= L:
+                    m.s, m.direction = float(L), -1
+                elif m.s <= 0:
+                    m.s, m.direction = 0.0, 1
+                self._place(m)
+                m.vx, m.vz = (m.x - px) / dt, (m.z - pz) / dt
+                continue
             d_truck = math.hypot(m.x - tr.x, m.z - tr.z)
             perp = self._place(m)
             m.x, m.z = px, pz
+            s_before, off_before = m.s, m.off
             m.cool = max(0.0, m.cool - dt)
             # Light vehicles give way to haul trucks: pull off the road until the truck passes.
             if m.side and self.hold_time > 3.0:
@@ -187,6 +258,11 @@ class DriveEnv:
                 elif m.s <= 0:
                     m.s, m.direction = 0.0, 1
             self._place(m)
+            # A light vehicle never drives into the truck, forward or sideways; it waits instead.
+            gap = math.hypot(m.x - tr.x, m.z - tr.z) - TRUCK_R - m.radius
+            if gap < 1.0 and gap < d_truck - TRUCK_R - m.radius:
+                m.s, m.off = s_before, off_before
+                self._place(m)
             m.vx, m.vz = (m.x - px) / dt, (m.z - pz) / dt
 
     # ---- candidates and expert ----
@@ -214,10 +290,11 @@ class DriveEnv:
             mp = np.array([[m.x, m.z] for m in self.movers])
             mv = np.array([[m.vx, m.vz] for m in self.movers])
             fut = mp[:, None, :] + mv[:, None, :] * times[None, :, None]  # (M, T, 2)
-            d = np.linalg.norm(pts[:, None, :, :] - fut[None], axis=-1) - CAR_R  # (C, M, T)
-            d0 = np.linalg.norm(mp - [tr.x, tr.z], axis=1) - CAR_R
+            reach = TRUCK_R + np.array([m.radius for m in self.movers])
+            d = np.linalg.norm(pts[:, None, :, :] - fut[None], axis=-1) - reach[None, :, None]  # (C, M, T)
+            d0 = np.linalg.norm(mp - [tr.x, tr.z], axis=1) - reach
             # Too close and still closing in. Moving away from a near vehicle is allowed.
-            hit |= ((d < 1.5) & (d < d0[None, :, None] - 0.05)).any(axis=(1, 2))
+            hit |= ((d < HIT_MARGIN) & (d < d0[None, :, None] - 0.05)).any(axis=(1, 2))
             clear = d.min(axis=(1, 2))
         self.cand_pts, self.cand_hit, self.cand_clear = pts, hit, clear
 
@@ -233,6 +310,27 @@ class DriveEnv:
             - 1.2 * CAND_SPEED
             + 10 * np.maximum(0, 1 - clear / 10)
         )
+
+    def _replan_around(self) -> bool:
+        """The truck has waited too long: plan a new A* route that treats nearby movers as walls."""
+        w, tr = self.world, self.truck
+        self.hold_time = 0.0
+        yy, xx = np.mgrid[0 : w.n, 0 : w.n]
+        cx, cz = w.ox + (xx + 0.5) * w.cell, w.oz + (yy + 0.5) * w.cell
+        extra = np.zeros((w.n, w.n), dtype=bool)
+        for m in self.movers:
+            if math.hypot(m.x - tr.x, m.z - tr.z) < 40:
+                extra |= (cx - m.x) ** 2 + (cz - m.z) ** 2 < (TRUCK_R + m.radius) ** 2
+        tr_r, tr_c = w.cell_of(tr.x, tr.z)
+        extra[tr_r, tr_c] = False
+        path = w.astar((tr.x, tr.z), tuple(self.route[-1]), extra_blocked=extra)
+        if path is None or len(path) < 2:
+            return False
+        path[0] = (tr.x, tr.z)
+        self.route = resample(chaikin(path, 3), ROUTE_STEP)
+        self.route_idx = 0
+        self.replans += 1
+        return True
 
     def _nearest_idx(self) -> int:
         lo = max(0, self.route_idx - 5)
@@ -257,7 +355,9 @@ class DriveEnv:
         zs = tr.z + np.cos(ang)[:, None] * dist[None]
         hit = self.world.blocked_at(xs, zs)
         for m in self.movers:
-            hit |= (xs - m.x) ** 2 + (zs - m.z) ** 2 < (CAR_R * 0.6) ** 2
+            # Rays are 1 m samples, so a 0.3 m pedestrian needs a wider hit radius to be seen.
+            r = 0.8 if m.pedestrian else 2 * m.radius
+            hit |= (xs - m.x) ** 2 + (zs - m.z) ** 2 < r * r
         first = np.where(hit.any(axis=1), hit.argmax(axis=1), len(dist) - 1)
         return dist[first]
 
@@ -295,9 +395,11 @@ class DriveEnv:
             self._was_moving = False
         self.hold_time = self.hold_time + DT if tr.v < 0.3 else 0.0
 
-        clear = min((math.hypot(m.x - tr.x, m.z - tr.z) - CAR_R for m in self.movers), default=math.inf)
+        clear = min((math.hypot(m.x - tr.x, m.z - tr.z) - TRUCK_R - m.radius for m in self.movers), default=math.inf)
         self.min_clear = min(self.min_clear, clear)
         collided = clear < 0 or bool(self.world.blocked_at(tr.x, tr.z))
+        if self.hold_time >= REPLAN_AFTER and self._replan_around():
+            before = 0
         self._plan()
         progress = (self.route_idx - before) * ROUTE_STEP
         end = self.route[-1]

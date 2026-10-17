@@ -14,9 +14,8 @@ import numpy as np
 import torch
 from torch import nn
 
-from .env import HOLD_ACTION, OBS_DIM, DriveEnv
+from .env import HOLD_ACTION, OBS_DIM, make_env
 from .model import PathScorer, load_model, save
-from .world import load
 
 
 def _fix_mask(ob):
@@ -28,7 +27,7 @@ def _fix_mask(ob):
 
 
 def worker(conn, seed: int) -> None:
-    env = DriveEnv(load("default"), seed=seed)
+    env = make_env(seed)
     ob = _fix_mask(env.reset())
     ep_ret = 0.0
     while True:
