@@ -3,7 +3,7 @@
 // (Tools/Mining/Build Quarry Scene), or into any scene, WITHOUT touching the team's scripts:
 //   world import, flat Ground/Rocks disabled, BrainClient bounds/obstacles, trucks at their world.json spawn/slot poses +
 //   MineGroundFollow, excavators from "equipment", pedestrian paths moved onto the ground, overview camera framing,
-//   MineGoals (+ optional MineGoalCycler, disabled). Idempotent: re-running replaces what it created.
+//   MineGoals (passive goal data only; nothing drives the trucks except the team's policy). Idempotent: re-running replaces what it created.
 // The team's types (TruckAgent, BrainClient, SensorCamera, LidarSensor, PedestrianWalker) live in Assembly-CSharp, which an
 // asmdef cannot reference, so they are found by type name and edited through SerializedObject.
 using System;
@@ -54,7 +54,6 @@ namespace MineSim.EditorTools
             public PedestrianMode pedestrians = PedestrianMode.RoadCrossings;
             public bool frameOverviewCamera = true;
             public bool addGoals = true;
-            public bool addGoalCycler = true;
         }
 
         const string PrefKey = "MineSim.QuarryIntegration.Options";
@@ -243,9 +242,9 @@ namespace MineSim.EditorTools
                 // 7. overview camera
                 if (o.frameOverviewCamera) FrameOverview(world, bounds, log);
 
-                // 8. goals (+ cycler)
+                // 8. goals (passive data for the policy / RL code; we never post goals or send actions)
                 var integ = FindRoot(scene, IntegrationRootName);
-                if (o.addGoals || o.addGoalCycler)
+                if (o.addGoals)
                 {
                     if (integ == null)
                     {
@@ -259,16 +258,6 @@ namespace MineSim.EditorTools
                     EditorUtility.SetDirty(goals);
                     int lp = goals.sites.Count(s => s.hasLoadPoint), dp = goals.sites.Count(s => s.hasDumpPoint);
                     Line(log, true, $"MineGoals baked: {goals.sites.Count} sites ({lp} load_point, {dp} dump_point; others fall back to the site position), {goals.equipment.Count} equipment");
-                    if (o.addGoalCycler)
-                    {
-                        var cyc = integ.GetComponent<MineGoalCycler>();
-                        if (cyc == null)
-                        {
-                            cyc = Undo.AddComponent<MineGoalCycler>(integ);
-                            cyc.enabled = false;   // OFF by default
-                        }
-                        Line(log, true, "MineGoalCycler present (" + (cyc.enabled ? "ENABLED" : "disabled; tick it or run the player with -mine-haul") + ")");
-                    }
                 }
                 Object.DestroyImmediate(goalsTmp.gameObject);
 
@@ -890,7 +879,6 @@ namespace MineSim.EditorTools
             o.pedestrians = (MineQuarryIntegration.PedestrianMode)EditorGUILayout.EnumPopup("Pedestrians", o.pedestrians);
             o.frameOverviewCamera = EditorGUILayout.Toggle("Frame overview camera", o.frameOverviewCamera);
             o.addGoals = EditorGUILayout.Toggle("Bake MineGoals", o.addGoals);
-            o.addGoalCycler = EditorGUILayout.Toggle("Add MineGoalCycler (disabled)", o.addGoalCycler);
             EditorGUILayout.EndScrollView();
 
             EditorGUILayout.Space();

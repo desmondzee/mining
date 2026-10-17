@@ -111,7 +111,7 @@ Open the team's scene (`Assets/Scenes/Quarry.unity` from *Tools > Mining > Build
 5. moves every `TruckAgent` (`truckId` = `truck-N`) to its world.json `spawn` + `heading_deg` (or to the parking `slots[i]` when "Prefer parking slots" is on, or when the truck has no spawn), on the ground. It then adds **`MineGroundFollow`** (below).
 6. pedestrians, in one of these modes: `RoadCrossings` (default: each `Path_N` is rebuilt as a small loop across a haul road), `ProjectOntoGround` (keep x/z, drop onto the ground), `Disable`, or `Leave`. Waypoints are densified to at most 5 m on the ground, because `PedestrianWalker` only probes ±3 m around its current height. Paths off the world or with no ground under them are disabled, and `BrainClient` then doesn't report them.
 7. frames the overview camera (SensorCamera `overview`): top-down over the world bounds, with a far clip that covers the pit floor.
-8. bakes **`MineGoals`** and adds a **disabled** `MineGoalCycler` on the `MineIntegration` root.
+8. bakes **`MineGoals`** (passive goal coordinates) on the `MineIntegration` root.
 9. checks that every `LidarSensor.mask` / `SensorCamera.depthMask` includes the ground layer, and prints a checklist to the Console.
 
 ### MineGroundFollow (uneven ground for the team's kinematic trucks)
@@ -130,7 +130,6 @@ Where the goal coordinates come from:
 - Road-following routes: `MineWorldRoot.graph.GetRouteFrom(truckPos, siteId)`. Feed the points one at a time and advance before the 4 m arrive radius, or the policy will stop at each one.
 - From Python, read `data/worlds/<id>/world.json` directly. Same frame: contract (x, z) = Unity (x, z) = brain (x, z).
 
-`MineGoalCycler` (optional, **off by default**) is a demo of autonomous hauling driven by the team's policy. Enable the component, or start the player with `-mine-haul` / `MINE_HAUL=1`. For every TruckAgent it loops: ore `load_point` (round-robin over ore sites) → wait `dwellSeconds` → crusher `dump_point` → wait → repeat. By default it follows the road graph, posting one goal every ~20 m. Intermediate goals advance at 9 m (above the 4 m arrive radius, so the truck never stops between them). A leg ends at 4 m + 1 m slack. A goal is re-posted every 5 s, so a restarted brain picks it up again. A stuck truck skips a waypoint after 25 s without progress. The base URL defaults to `http://127.0.0.1:8080`; override it with the inspector, `-brain-api http://host:8080` or `BRAIN_API`. Transport: HTTP/1.1 over `TcpClient` on a worker thread, the same API BrainClient already uses under IL2CPP. This path ignores Unity's "Allow downloads over HTTP" setting. `useUnityWebRequest` switches to UnityWebRequest (compiled only when the `com.unity.modules.unitywebrequest` module is present, define `MINESIM_UWR`), which needs *Player Settings > Allow downloads over HTTP = Always allowed* for `http://`. Goals are DELETEd when the component is disabled.
 
 ## Files
 - `Assets/MineSim/Editor/MineWorldImporter.cs`: menu and builder. `MineImporterHooks.cs`: TMP/Splines hooks. `MineGlbMeshReader.cs`: GLB geometry reader for scan colliders
@@ -138,5 +137,10 @@ Where the goal coordinates come from:
 - `Assets/MineSim/Runtime/Look/`: `MineLookSettings`, `MineLookController`, `MineLookUtil` (+ `MineLookPost`), `MineOverviewCamera`, `MineCabCamera`, `MineDustTrail`, `MineAmbientDust`, `MineRoadGlow`, `MineMultiViewLabels`, `MineSplitScreenLayout`
 - `Assets/MineSim/Editor/Look/MineLookMenu.cs`: *Apply Cinematic Look* and helper menus
 - `Assets/MineSim/Editor/MineQuarryIntegration.cs`: *Integrate World Into Open Scene*, *Integration Options...*, *Copy Excavator Model Into Project*
-- `Assets/MineSim/Runtime/MineGroundFollow.cs`, `MineGoals.cs`, `MineGoalCycler.cs`: ground following for TruckAgent, goal coordinates, optional haul-cycle goal poster
+- `Assets/MineSim/Runtime/MineGroundFollow.cs`, `MineGoals.cs`: ground following for TruckAgent, goal coordinates (read-only data)
 - `Assets/MineSim/Runtime/`: `MineWorldData` (world.json model) + `MiniJson`, `MineWorldRoot`, `MineSiteMarker`, `MineJunction`, `MineRoad`, `MineRoadGraph`, `MineLabel`, `MineBillboard`, `MineLabelToggle`, `MineInput`, `MineDesignSpec`, `MineAssetNote`
+
+
+## Control ownership
+
+Nothing in MineSim drives the trucks. Throttle and steer come only from the team's brain/policy (or RL) over BrainClient. MineSim never posts goals or actions. `MineGroundFollow` only corrects the truck's height and tilt to the terrain, and `MineGoals` only exposes coordinates (load/dump points, slots) that the policy or RL code may read.
