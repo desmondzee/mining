@@ -8,7 +8,7 @@ from PIL import Image
 
 from . import policy
 from .hub import LatestHub
-from .protocol import ProtocolError, decode_frame, decode_lidar, encode, read_message
+from .protocol import ProtocolError, decode_frame, decode_lidar, encode, pack_points, read_message
 from .world import Scan, World
 
 log = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ def encode_jpeg(rgb: np.ndarray) -> bytes:
 def lidar_message(truck_id: str, scan: Scan) -> bytes:
     name = truck_id.encode()
     pose = POSE.pack(scan.pose["x"], scan.pose["z"], scan.pose["yaw"])
-    return struct.pack("B", len(name)) + name + pose + scan.points.tobytes()
+    return struct.pack("B", len(name)) + name + pose + pack_points(scan.points)
 
 
 class SimBridge:

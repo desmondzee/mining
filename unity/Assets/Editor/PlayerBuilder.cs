@@ -12,6 +12,7 @@ public static class PlayerBuilder
 
     static void Build(BuildTarget target, string path)
     {
+        PlayerSettings.productName = "Quarry";
         PlayerSettings.runInBackground = true;
         PlayerSettings.fullScreenMode = FullScreenMode.Windowed;
         PlayerSettings.defaultScreenWidth = 640;

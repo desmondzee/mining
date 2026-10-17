@@ -19,6 +19,14 @@
 | Ground colour | RGB (0.55, 0.47, 0.37), URP Lit |
 | Rock colour | RGB (0.36, 0.34, 0.33), URP Lit |
 
+## Bandwidth
+
+| Link | Measured | Load |
+|---|---|---|
+| Unity → brain, same host | localhost | 4 × ~10 KB JPEG × 15 fps + 3 × ~27 KB lidar × 10 Hz ≈ 1.4 MB/s |
+| Mac → watson (SSH via Brev) | 0.35–0.45 MB/s | too low for Unity on Mac with brain on watson; run brain locally |
+| watson → viewer (SSH via Brev) | 1.4–1.9 MB/s | ~0.6 MB/s video + ~0.27 MB/s lidar (selected truck) |
+
 ## Network
 
 | Item | Value | Source |
@@ -73,7 +81,9 @@
 | Resolution | 0.5° H × 1° V | |
 | Beam angles | cell centres: az = -h_fov/2 + (j + 0.5)·h_fov/columns, el = v_min + (i + 0.5)·(v_max - v_min)/channels | |
 | Max points per scan | 7200 | |
-| Point format | float32 x, y, z, little-endian, 12 bytes per point | |
+| Point format (sim → brain, brain → viewer) | int16 x, y, z in centimetres, little-endian, 6 bytes per point, header `format: int16cm` | |
+| Point format (HTTP API) | float32 x, y, z metres, 12 bytes per point | |
+| Precision / limit | 1 cm, ±327.67 m | |
 | Frame | sensor-local, Unity axes: x right, y up, z forward, metres | |
 | Mount | `LidarSensor` transform, unit scale | |
 | Misses | dropped | |
@@ -211,7 +221,7 @@
 | `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
-| `lidar` | sim → brain | `truck`, `points`, `pose{x,z,yaw}` | `points` × 3 float32 |
+| `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
 
 ## Web
@@ -223,7 +233,7 @@
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |
-| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 f32 points` | |
+| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 int16 cm points` | |
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Map | rocks, pedestrian paths, pedestrians, trucks, goals | |

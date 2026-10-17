@@ -72,8 +72,10 @@ def test_lidar_api_and_policy_input():
         return app, pts, truck_id, msg
 
     app, pts, truck_id, msg = asyncio.run(go())
-    assert truck_id == "truck-0" and msg.endswith(pts.tobytes())
+    from brain.protocol import pack_points
+
+    assert truck_id == "truck-0" and msg.endswith(pack_points(pts))
     r = TestClient(app).get("/api/trucks/truck-0/lidar")
     assert r.status_code == 200 and json.loads(r.headers["x-lidar"])["points"] == len(pts)
-    np.testing.assert_array_equal(np.frombuffer(r.content, "<f4").reshape(-1, 3), pts)
+    np.testing.assert_allclose(np.frombuffer(r.content, "<f4").reshape(-1, 3), pts, atol=0.006)
     assert TestClient(app).get("/api/trucks/nope/lidar").status_code == 404

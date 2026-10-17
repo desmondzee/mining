@@ -37,6 +37,7 @@ public static class BrainProtocol
         public string type = "lidar";
         public string truck;
         public int points;
+        public string format = "int16cm";
         public Pose pose;
     }
 

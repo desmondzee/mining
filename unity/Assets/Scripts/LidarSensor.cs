@@ -43,22 +43,24 @@ public class LidarSensor : MonoBehaviour
             commands[i] = new RaycastCommand(origin, transform.TransformDirection(directions[i]), query, range);
         RaycastCommand.ScheduleBatch(commands, hits, 64, 1).Complete();
 
-        var points = new float[n * 3];
+        var points = new short[n * 3];
         int count = 0;
         for (int i = 0; i < n; i++)
         {
             if (hits[i].collider == null) continue;
             var p = transform.InverseTransformPoint(hits[i].point);
-            points[count++] = p.x;
-            points[count++] = p.y;
-            points[count++] = p.z;
+            points[count++] = Centimetres(p.x);
+            points[count++] = Centimetres(p.y);
+            points[count++] = Centimetres(p.z);
         }
         commands.Dispose();
         hits.Dispose();
 
         var header = new BrainProtocol.LidarHeader { truck = truck.truckId, points = count / 3, pose = truck.Pose() };
-        var payload = new byte[count * 4];
+        var payload = new byte[count * 2];
         System.Buffer.BlockCopy(points, 0, payload, 0, payload.Length);
         client.Send(BrainProtocol.Encode(JsonUtility.ToJson(header), payload));
     }
+
+    static short Centimetres(float metres) => (short)Mathf.Clamp(Mathf.Round(metres * 100f), short.MinValue, short.MaxValue);
 }

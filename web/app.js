@@ -153,7 +153,8 @@ function drawMap() {
 
 function onLidar(ev) {
   const n = new Uint8Array(ev.data, 0, 1)[0];
-  lidarView.update(new Float32Array(ev.data.slice(1 + n + 12)));
+  const cm = new Int16Array(ev.data.slice(1 + n + 12));
+  lidarView.update(Float32Array.from(cm, (v) => v / 100));
 }
 
 function select(id) {

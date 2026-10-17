@@ -59,12 +59,20 @@ def test_rgba_and_empty_depth_as_sent_by_unity():
 def test_lidar_roundtrip():
     from brain.protocol import decode_lidar, encode_lidar
 
-    pts = np.arange(12, dtype=np.float32).reshape(4, 3)
+    pts = np.array([[0.0, -3.0, 12.345], [-1.234, 0.5, 99.99]], np.float32)
     header, payload = roundtrip(encode_lidar("truck-0", pts, {"x": 1, "z": 2, "yaw": 3}))
-    assert header["type"] == "lidar" and header["points"] == 4
-    np.testing.assert_array_equal(decode_lidar(header, payload), pts)
+    assert header["type"] == "lidar" and header["points"] == 2 and header["format"] == "int16cm"
+    assert len(payload) == 12
+    np.testing.assert_allclose(decode_lidar(header, payload), pts, atol=0.006)
     with pytest.raises(ProtocolError):
-        decode_lidar(header, payload[:-4])
+        decode_lidar(header, payload[:-2])
+
+
+def test_lidar_f32_still_accepted():
+    from brain.protocol import decode_lidar
+
+    pts = np.arange(6, dtype=np.float32).reshape(2, 3)
+    np.testing.assert_array_equal(decode_lidar({"points": 2}, pts.tobytes()), pts)
 
 
 def test_jpeg_frame_passes_through_with_depth():
