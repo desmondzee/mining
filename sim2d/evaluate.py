@@ -1,6 +1,6 @@
 """Run a driver on fixed scenarios and report the comparison metrics.
 
-Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt]
+Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz]
 """
 
 from __future__ import annotations
@@ -11,13 +11,31 @@ from typing import Callable, Dict
 
 import numpy as np
 
-from .env import DEFAULT_WORLDS, DriveEnv, make_env
+from .env import DEFAULT_WORLDS, HOLD_ACTION, DriveEnv, make_env
 
 Driver = Callable[[DriveEnv, Dict[str, np.ndarray]], int]
 
 
 def expert_driver(env: DriveEnv, ob) -> int:
     return env.expert_action()
+
+
+def npz_driver(path: str) -> Driver:
+    """The brain's numpy scorer (brain/brain/planning/scorer.py) on an exported checkpoint."""
+    import os
+    import sys
+
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain"))
+    from brain.planning.scorer import load_scorer
+
+    scorer = load_scorer(path)
+
+    def drive(env: DriveEnv, ob) -> int:
+        if not ob["mask"].any():
+            return HOLD_ACTION
+        return int(np.argmax(np.where(ob["mask"], scorer(ob["obs"], ob["cands"], ob["mask"]), -np.inf)))
+
+    return drive
 
 
 def run(driver: Driver, episodes: int = 20, seed: int = 1000, worlds: str = DEFAULT_WORLDS) -> Dict[str, float]:
@@ -53,6 +71,8 @@ def main() -> None:
     args = p.parse_args()
     if args.policy == "expert":
         driver = expert_driver
+    elif args.policy.endswith(".npz"):
+        driver = npz_driver(args.policy)
     else:
         from .model import load_driver
 

@@ -323,7 +323,7 @@
 | Planner max speed (m/s) | 8.0 | `brain/brain/planning/driver.py:MAX_V` |
 | Planner arrive radius (m) | 5.0 | `brain/brain/planning/driver.py:ARRIVE_RADIUS` |
 | Output | throttle = target speed / 8, steer = candidate steer | |
-| Chooser | hand-tuned score (baseline), or learned scorer from `PLANNER_CKPT` (needs torch) | |
+| Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CHECKPOINT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
@@ -342,10 +342,62 @@
 | Re-plan cooldown (s) | 1.0 | `brain/brain/planning/follow.py:REPLAN_COOLDOWN` |
 | Re-plan rejected | the new route starts more than 90° from the truck heading (no reverse) | |
 | Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
-| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
+| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates), `planner`, `choice`, `candidates`, `candidate_scores` | |
 | Route in state | `trucks[].route` = `path` | |
 | Goal resolution | `{site}` → hello `sites` ∪ `junctions` position (fallback `world.json` sites), then A* route | |
 | On arrival | `goal`, `goal_site`, `path`, `ghost_paths` cleared, status `arrived` then `idle` | |
+
+## Learned planner
+
+meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D sim on the same nav grid). It replaces only the rule-based choice among the 44 planner candidates; routes, safety mask, re-planning and holds are unchanged.
+
+| Item | Value | Source |
+|---|---|---|
+| Enable | `PLANNER_CHECKPOINT` = path to an exported `.npz` (a `.pt` is accepted if torch is installed or a sibling `.npz` exists; `PLANNER_CKPT` still read) | |
+| Default | unset: rules. Docker compose sets `/app/models/ppo.npz` with `./models` mounted read-only; missing or invalid file: warning log, rules | |
+| Runtime | numpy MLP forward, no torch in the brain image (`brain/brain/planning/scorer.py`) | |
+| Export | `cd brain && uv run --with torch python -m brain.planning.export_scorer ../models/ppo.pt` → `models/ppo.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
+| Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt`, ppo before bc) → `models/<name>.pt`, `models/<name>.npz`, copied to `models/ppo.npz` | |
+| Network | scene MLP (obs → 256 → 256), path MLP (candidate → 128 → 128), head (384 → 256 → 1), ReLU | |
+| Choice | argmax logit over safe candidates; no safe candidate → hold (target speed 0, steer 0) | |
+| Output | throttle = candidate target speed / 8, steer = candidate steer; same action semantics as sim2d (target speed, first-order response 1.5 /s, bicycle model) | |
+| Train | `uv run --with numpy --with torch --with scipy python -m sim2d.datagen --out data/bc.npz`, then `sim2d.train_bc --out runs/bc.pt`, then `sim2d.train_ppo --init runs/bc.pt --out runs/ppo.pt` | |
+| Evaluate | `python -m sim2d.evaluate --worlds quarry --policy expert\|runs/ppo.pt\|models/ppo.npz` | |
+| sim2d worlds | `data/worlds/<id>` (override `SIM2D_WORLDS_DIR`); worlds used `SIM2D_WORLDS`, default `default,quarry` | |
+| Tests | `uv run --with numpy --with torch --with scipy --with pytest pytest tests -q` (constants, candidates, grid and feature parity with `DriveEnv.observe()`, numpy vs torch logits within 1e-5) | |
+
+| Feature | Layout | Brain source |
+|---|---|---|
+| Observation | 79 floats = 60 lidar + 16 route + 3 state | `driver.features` |
+| Lidar | 60 rays over 120° ahead (left to right), min range per ray bin / 100; range = min(lidar points above the nav-grid ground, nav-grid ray march at 1 m steps), lidar range rounded up to 1 m as in sim2d | |
+| Route | 8 route points 5 m apart ahead of the nearest route index, ego frame (forward, right) / 40 | |
+| State | speed / 8, last steer command, load (brain sends 0; sim2d trains on 0..1) | |
+| Candidate | 33 floats = 15 rollout points ego / 30, steer, target speed / 8, min(clearance, 20) / 20 | |
+| Clearance | nearest dynamic lidar obstacle point minus 4 m (sim2d: mover centre minus 3.5 m truck radius minus mover radius) | |
+| Safety mask | brain rule checks (whole-width off-road, obstacle closing within hit margin) | |
+
+| Constant | Value | Source |
+|---|---|---|
+| Lidar rays | 60 | `sim2d/env.py:N_RAYS` |
+| Lidar range (m) | 100.0 | `sim2d/env.py:LIDAR_RANGE` |
+| Route points | 8 | `sim2d/env.py:ROUTE_POINTS` |
+| Route point spacing (m) | 5.0 | `sim2d/env.py:ROUTE_SPACING` |
+| Route resample step (m) | 2.0 | `brain/brain/planning/driver.py:ROUTE_STEP` |
+| Candidate horizon (s) | 3.0 | `sim2d/env.py:HORIZON` |
+| Candidate point step (s) | 0.2 | `sim2d/env.py:RDT` |
+| Speed response (1/s) | 1.5 | `brain/brain/planning/driver.py:ACCEL` |
+| Max speed (m/s) | 8.0 | `sim2d/env.py:MAX_V` |
+| Wheelbase (m) | 5.0 | `sim2d/env.py:WHEELBASE` |
+| Truck half width (m) | 2.12 | `brain/brain/planning/driver.py:TRUCK_HALF_W` |
+| Sim tick (s) | 0.1 | `sim2d/env.py:DT` |
+
+| HUD state (`trucks[]`) | Meaning |
+|---|---|
+| `planner` | `learned` or `rules` |
+| `choice` | index into `candidates` of the driven path, -1 when none |
+| `candidates` | all 44 rollouts `[[x, z], …]` (15 points, 0.2 s apart) |
+| `candidate_scores` | per candidate, higher = preferred (logit, or minus the rule cost); `null` = unsafe |
+| Map | chosen path bold, other safe candidates faint, in the truck colour |
 
 ## Sim protocol (TCP)
 

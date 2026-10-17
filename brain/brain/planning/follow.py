@@ -52,6 +52,11 @@ def follow(
         lidar_height,
     )
     truck.ghost_paths = np.round(decision.candidates[decision.safe], 1).tolist()
+    truck.planner, truck.choice = decision.planner, decision.choice
+    truck.candidates = np.round(decision.candidates, 1).tolist()
+    truck.candidate_scores = [
+        round(float(s), 3) if ok else None for s, ok in zip(decision.scores, decision.safe, strict=True)
+    ]
 
     static = driver.static_obstacles(_obstacle_seen.setdefault(truck.id, {}), decision.obstacles, now)
     if decision.throttle > 0 or truck.speed > 0.3:

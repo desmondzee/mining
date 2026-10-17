@@ -44,7 +44,7 @@ STATIC_CELL_M = 2.0
 STATIC_AFTER = 1.5
 ROUTE_CHECK_AHEAD = 30
 
-Scorer = Callable[[np.ndarray, np.ndarray, np.ndarray], int]
+Scorer = Callable[[np.ndarray, np.ndarray, np.ndarray], np.ndarray]
 
 
 @dataclass
@@ -56,6 +56,8 @@ class Decision:
     candidates: np.ndarray
     safe: np.ndarray
     obstacles: np.ndarray
+    scores: np.ndarray
+    planner: str
 
 
 def plan_route(
@@ -110,8 +112,42 @@ def lidar_ranges(local: np.ndarray) -> np.ndarray:
         bearing = np.arctan2(local[:, 0], local[:, 1])
         idx = np.floor((bearing + LIDAR_FOV / 2) / (LIDAR_FOV / N_RAYS)).astype(int)
         ok = (idx >= 0) & (idx < N_RAYS)
-        np.minimum.at(ranges, idx[ok], np.minimum(np.hypot(local[ok, 0], local[ok, 1]), LIDAR_RANGE))
-    return ranges
+        np.minimum.at(ranges, idx[ok], np.hypot(local[ok, 0], local[ok, 1]))
+    return np.clip(np.ceil(ranges), 1.0, LIDAR_RANGE)
+
+
+def grid_ranges(nav: NavMap, x: float, z: float, yaw: float) -> np.ndarray:
+    ang = yaw - LIDAR_FOV / 2 + (np.arange(N_RAYS) + 0.5) * LIDAR_FOV / N_RAYS
+    dist = np.arange(1.0, LIDAR_RANGE + 1.0)
+    hit = nav.blocked_at(x + np.sin(ang)[:, None] * dist[None], z + np.cos(ang)[:, None] * dist[None])
+    return dist[np.where(hit.any(axis=1), hit.argmax(axis=1), len(dist) - 1)]
+
+
+def features(
+    nav: NavMap,
+    route: np.ndarray,
+    ni: int,
+    x: float,
+    z: float,
+    yaw: float,
+    speed: float,
+    last_steer: float,
+    load: float,
+    local: np.ndarray,
+    pts: np.ndarray,
+    clear: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    step = int(ROUTE_SPACING / ROUTE_STEP)
+    idx = np.minimum(len(route) - 1, ni + step * np.arange(1, ROUTE_POINTS + 1))
+    rays = np.minimum(lidar_ranges(local), grid_ranges(nav, x, z, yaw))
+    obs = np.concatenate(
+        [rays / LIDAR_RANGE, ego(route[idx], x, z, yaw).ravel() / 40.0, [speed / MAX_V, last_steer, load]]
+    ).astype(np.float32)
+    shape = ego(pts, x, z, yaw).reshape(N_CAND, 2 * N_ROLL) / 30.0
+    cands = np.concatenate(
+        [shape, CAND_STEER[:, None], CAND_SPEED[:, None] / MAX_V, np.minimum(clear, 20.0)[:, None] / 20.0], axis=1
+    ).astype(np.float32)
+    return obs, cands
 
 
 def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
@@ -183,10 +219,12 @@ def drive(
     lidar_height: float = LIDAR_HEIGHT,
     load: float = 0.0,
 ) -> tuple[Decision, int]:
+    planner = "learned" if scorer is not None else "rules"
     ni = nearest_index(route, route_idx, x, z)
     end = route[-1]
     if math.hypot(end[0] - x, end[1] - z) < ARRIVE_RADIUS:
-        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, np.zeros((0, N_ROLL, 2)), np.zeros(0, bool), np.zeros((0, 2))), ni
+        none = np.zeros((0, N_ROLL, 2)), np.zeros(0, bool), np.zeros((0, 2)), np.zeros(0)
+        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, *none, planner), ni
 
     yaw = math.radians(yaw_deg)
     fine, pts, fine_yaw = rollout(x, z, yaw, speed)
@@ -205,36 +243,22 @@ def drive(
         clear = np.sqrt(d2.min(axis=(1, 2))) - OBSTACLE_RADIUS
     safe = ~hit
 
-    if not safe.any():
-        choice = HOLD_ACTION
-    elif scorer is not None:
-        step = int(ROUTE_SPACING / ROUTE_STEP)
-        idx = np.minimum(len(route) - 1, ni + step * np.arange(1, ROUTE_POINTS + 1))
-        obs = np.concatenate(
-            [
-                lidar_ranges(local) / LIDAR_RANGE,
-                ego(route[idx], x, z, yaw).ravel() / 40.0,
-                [speed / MAX_V, last_steer, load],
-            ]
-        ).astype(np.float32)
-        shape = ego(pts, x, z, yaw).reshape(N_CAND, 2 * N_ROLL) / 30.0
-        cands = np.concatenate(
-            [shape, CAND_STEER[:, None], CAND_SPEED[:, None] / MAX_V, np.minimum(clear, 20.0)[:, None] / 20.0], axis=1
-        ).astype(np.float32)
-        choice = scorer(obs, cands, safe)
+    if scorer is not None:
+        obs, cands = features(nav, route, ni, x, z, yaw, speed, last_steer, load, local, pts, clear)
+        scores = np.asarray(scorer(obs, cands, safe), dtype=float)
     else:
         tgt = route[min(len(route) - 1, ni + 12)]
         ends = pts[:, -1, :]
         window = route[ni : ni + 30]
         cross = np.linalg.norm(ends[:, None, :] - window[None], axis=-1).min(axis=1)
-        score = (
+        scores = -(
             np.linalg.norm(ends - tgt, axis=1)
             + 1.5 * cross
             + 4 * np.abs(CAND_STEER - last_steer)
             - 1.2 * CAND_SPEED
             + 10 * np.maximum(0, 1 - clear / 10)
         )
-        choice = int(np.argmin(np.where(safe, score, np.inf)))
+    choice = int(np.argmax(np.where(safe, scores, -np.inf))) if safe.any() else HOLD_ACTION
 
     if not safe[choice] or CAND_SPEED[choice] == 0:
         status = "holding"
@@ -242,5 +266,7 @@ def drive(
         status = "avoiding"
     else:
         status = "driving"
-    decision = Decision(float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe, obstacles)
+    decision = Decision(
+        float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe, obstacles, scores, planner
+    )
     return decision, ni

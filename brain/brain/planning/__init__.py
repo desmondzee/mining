@@ -26,12 +26,12 @@ __all__ = [
     "NavMap",
     "drive",
     "follow",
+    "learned_scorer",
     "lidar_height",
     "nav_map",
     "plan_route",
     "reset",
     "route_blocked",
-    "scorer",
     "static_obstacles",
 ]
 
@@ -46,14 +46,30 @@ def nav_map() -> NavMap | None:
 
 
 @cache
-def scorer() -> Scorer | None:
-    ckpt = os.environ.get("PLANNER_CKPT")
+def learned_scorer() -> Scorer | None:
+    ckpt = os.environ.get("PLANNER_CHECKPOINT") or os.environ.get("PLANNER_CKPT")
     if not ckpt:
+        return None
+    path = Path(ckpt)
+    if path.suffix == ".pt" and path.with_suffix(".npz").is_file():
+        path = path.with_suffix(".npz")
+    if not path.is_file():
+        log.warning("planner checkpoint %s not found; driving with the rule-based scorer", ckpt)
         return None
     from .scorer import load_scorer
 
-    log.info("driving with learned scorer %s", ckpt)
-    return load_scorer(ckpt)
+    try:
+        if path.suffix == ".pt":
+            from .export_scorer import export
+
+            export(path, path.with_suffix(".npz"))
+            path = path.with_suffix(".npz")
+        model = load_scorer(path)
+    except Exception as e:
+        log.warning("cannot load planner checkpoint %s (%s); driving with the rule-based scorer", path, e)
+        return None
+    log.info("driving with learned scorer %s %s", path, model.config)
+    return model
 
 
 def lidar_height() -> float:

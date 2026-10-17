@@ -212,6 +212,23 @@ function drawMap() {
       }
       ctx.beginPath(); ctx.arc(gx, gy, 7 * PX, 0, Math.PI * 2); ctx.stroke();
     }
+    const cands = t.candidates || [];
+    const scores = t.candidate_scores || [];
+    if (cands.length) {
+      ctx.save();
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 1 * PX;
+      ctx.globalAlpha = 0.18;
+      cands.forEach((c, i) => { if (scores[i] != null && i !== t.choice) { polyline([[t.x, t.z], ...c]); ctx.stroke(); } });
+      const chosen = cands[t.choice];
+      if (chosen) {
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 4 * PX;
+        polyline([[t.x, t.z], ...chosen]);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate((t.yaw * Math.PI) / 180);

@@ -39,6 +39,7 @@ def act(
     points: np.ndarray | None = None,
     now: float | None = None,
 ) -> Action:
+    truck.planner = "learned" if planning.learned_scorer() is not None else "rules"
     if truck.goal is None:
         return Action(0.0, 0.0, "idle")
 
@@ -48,7 +49,7 @@ def act(
 
     nav = planning.nav_map()
     if truck.path and nav is not None:
-        d = planning.follow(truck, nav, points, planning.scorer(), planning.lidar_height(), now)
+        d = planning.follow(truck, nav, points, planning.learned_scorer(), planning.lidar_height(), now)
         return Action(d.throttle, d.steer, d.status)
 
     steer = max(-1.0, min(1.0, heading_error(truck, gx, gz) / STEER_GAIN_DEG))

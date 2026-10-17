@@ -14,6 +14,11 @@ Unity player / fakesim ── TCP :9000 ──▶ brain ── HTTP/WS :8080 ─
 | `web/` | Camera grid and goal map |
 | `unity/` | Unity project |
 | `tools/fetch_rocketbox.py` | downloads Rocketbox people into the Unity project |
+| `tools/fetch_planner.py` | downloads the learned planner checkpoint (Hugging Face `pi-hack-mining`) into `models/` and exports it |
+| `sim2d/` | 2D driving sim, BC + PPO training and evaluation for the learned planner (meiru-cam) |
+| `planner/`, `risk_monitor/`, `docs/planner.html` | grid A* benchmark, PoNR risk monitor, planner explainer (meiru-cam) |
+| `tests/` | tests for `sim2d`, `risk_monitor` and brain/sim2d feature parity |
+| `models/` | learned planner checkpoints (gitignored): `ppo.pt` → exported `ppo.npz` |
 | `unity/Assets/MineSim/` | world importer, road graph, ground follow, cinematic look ([README](unity/Assets/MineSim/README.md)) |
 | `data/worlds/` | generated worlds: `quarry` (drone scan), `default` (procedural) |
 | `envgen/` | offline world generator and browser preview ([README](envgen/README.md)) |
@@ -50,6 +55,17 @@ uv run brain
 uv run fakesim
 ```
 
+## Learned planner
+
+Trucks use the rule-based candidate chooser unless `models/ppo.npz` exists ([spec](spec.md#learned-planner)). Install a checkpoint:
+
+```bash
+uv run --with torch --with numpy tools/fetch_planner.py                                      # from Hugging Face pi-hack-mining
+cd brain && uv run --with torch python -m brain.planning.export_scorer ../models/ppo.pt     # or a local ppo.pt
+docker compose up -d brain                                                                   # mounts ./models read-only
+PLANNER_CHECKPOINT=../models/ppo.npz uv run brain                                            # local
+```
+
 ## Status
 
 | Area | State |
@@ -57,5 +73,5 @@ uv run fakesim
 | Brain, policy, streaming, website with fakesim | working, tested |
 | Unity scripts | written, not compiled |
 | Unity ARM64 player on GB10 | not verified |
-| Policy | straight line to goal + depth avoidance, no path planning, no RGB detector |
+| Policy | route planner + candidate paths; chooser = rules, or the learned scorer when `models/ppo.npz` exists |
 | Video | per-camera JPEG over WebSocket |

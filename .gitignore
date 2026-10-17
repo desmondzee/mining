@@ -38,4 +38,5 @@ unity/Assets/MineSim/Generated.meta
 !.env.example
 data/*.npz
 runs/
-models/
+models/*
+!models/.gitkeep
