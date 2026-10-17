@@ -82,7 +82,7 @@ class IsaacRenderer:
         self.tune_scan(config.get("scan", {}))
         surround = world.asset("surround")
         if surround and surround.exists():
-            self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4)))
+            self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4), config.get("surround", {}).get("tint")))
         self.lights(world, config)
 
         ex_matrix, _ = W.model_box(W.REPO / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)

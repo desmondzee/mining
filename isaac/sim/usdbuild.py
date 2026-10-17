@@ -123,12 +123,19 @@ def write_mesh_usd(glb: Glb, out: Path, name: str) -> Path:
     return out
 
 
-def convert(src: Path, cache: Path, name: str, matrix: np.ndarray) -> Path:
+def convert(src: Path, cache: Path, name: str, matrix: np.ndarray, tint: list[float] | None = None) -> Path:
     full = TO_ISAAC @ matrix
-    out = cache / f"{name}_{cache_key(src, full)}.usdc"
+    key = cache_key(src, full if tint is None else np.vstack([full, [list(tint) + [0.0] * (4 - len(tint))]]))
+    out = cache / f"{name}_{key}.usdc"
     if out.exists():
         return out
     tmp = out.with_suffix(".tmp.usdc")
-    write_mesh_usd(transform(read_glb(src), full), tmp, name)
+    glb = transform(read_glb(src), full)
+    if tint is not None:
+        for p in glb.primitives:
+            if p.colors is not None:
+                p.colors = p.colors.copy()
+                p.colors[:, :3] *= np.asarray(tint[:3], np.float32)
+    write_mesh_usd(glb, tmp, name)
     tmp.replace(out)
     return out
