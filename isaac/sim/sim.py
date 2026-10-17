@@ -25,7 +25,7 @@ CAB_HFOV = 75.0
 
 class Sim:
     def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, lidar_level: bool = True,
-                 extra_excavators: list[dict] | None = None, excavator_cameras: bool = False) -> None:
+                 extra_excavators: list[dict] | None = None, excavator_cameras: bool | list[str] = False) -> None:
         self.lidar_level = lidar_level
         self.views = [View.from_dict(v) for v in views or []]
         self.world = W.load_world(world_dir)
@@ -55,7 +55,8 @@ class Sim:
         self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
-        self.cab_cameras = [b.id for b in self.excavators] if excavator_cameras else []
+        wanted = excavator_cameras if isinstance(excavator_cameras, list) else [b.id for b in self.excavators] if excavator_cameras else []
+        self.cab_cameras = [b.id for b in self.excavators if b.id in wanted]
         self.view_hfov = {v.name: v.hfov for v in self.views} | dict.fromkeys(self.cab_cameras, CAB_HFOV)
         radio = os.environ.get("RADIO_URL")
         self.radio = RadioPoller(radio, self.rigs).start() if radio else None
