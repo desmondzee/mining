@@ -9,7 +9,7 @@ from fastapi.testclient import TestClient
 from brain.app import create_app
 from brain.fakesim import FakeQuarry
 from brain.protocol import compress_points, decompress_points, pack_points
-from brain.video import GOP_FRAMES, VIEWER_QUEUE, AccessUnit, VideoHub, pack_au, unpack_au
+from brain.video import GOP_FRAMES, OVERVIEW_KBPS, VIEWER_QUEUE, AccessUnit, VideoHub, pack_au, scaled_bitrate, unpack_au
 
 
 def nal_types(au: bytes) -> set[int]:
@@ -106,3 +106,10 @@ def test_lidar_compression_roundtrip(seed):
     assert len(blob) < len(pack_points(pts)) / 2
     np.testing.assert_allclose(decompress_points(blob), pts, atol=0.006)
     assert len(zlib.decompress(blob)) == len(pts) * 6
+
+
+def test_bitrate_scales_with_resolution():
+    base = OVERVIEW_KBPS * 1000
+    assert scaled_bitrate(base, 640, 360) == base
+    assert scaled_bitrate(base, 1280, 720) == 4 * base
+    assert scaled_bitrate(base, 3840, 2160) == 4_000_000

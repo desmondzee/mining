@@ -1,0 +1,20 @@
+mdl 1.6;
+
+import ::df::*;
+import ::scene::*;
+
+export material vertex_colour(
+    float roughness = 0.9,
+    float gain = 1.0
+) = let {
+    color base = color(::scene::data_lookup_float3("displayColor", float3(0.5)) * gain);
+    float r2 = roughness * roughness;
+} in material(
+    surface: material_surface(
+        scattering: ::df::weighted_layer(
+            weight: 0.04,
+            layer: ::df::simple_glossy_bsdf(roughness_u: r2, mode: ::df::scatter_reflect),
+            base: ::df::diffuse_reflection_bsdf(tint: base)
+        )
+    )
+);

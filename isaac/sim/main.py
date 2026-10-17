@@ -25,7 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--cache", default=str(ROOT / "downloads/isaac/cache"))
     p.add_argument("--renderer", default="")
     p.add_argument("--fps", type=float, default=0.0)
-    p.add_argument("--fx", choices=["off", "low", "high"], default="low")
+    p.add_argument("--fx", choices=["off", "low", "high"], default="off")
     p.add_argument("--no-views", action="store_true")
     p.add_argument("--save-dir", default="")
     p.add_argument("--save-every", type=int, default=0)
@@ -56,16 +56,20 @@ def raycast_enabled(mode: str) -> bool:
 
 
 class DryRenderer:
-    def __init__(self, sim) -> None:
+    def __init__(self, sim, config: dict) -> None:
         import numpy as np
 
         from isaac.sim.sensors import CAM_H, CAM_W, OVERVIEW_HFOV
         from isaac.sim.zoom import OverviewZoom
 
-        self.zoom = OverviewZoom(np.eye(4), OVERVIEW_HFOV, CAM_W / CAM_H)
-        self.frames = {name: np.zeros((CAM_H, CAM_W, 3), np.uint8) for name in ["overview", *(t.id for t in sim.trucks)]}
+        ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        self.zoom = OverviewZoom(np.eye(4), OVERVIEW_HFOV, ow / oh)
+        self.frames = {t.id: np.zeros((CAM_H, CAM_W, 3), np.uint8) for t in sim.trucks}
+        self.frames["overview"] = np.zeros((oh, ow, 3), np.uint8)
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
+        self.frames.update({c: np.zeros((CAM_H, CAM_W, 3), np.uint8) for c in sim.cab_cameras})
         self.view_poses = {}
+        self.loads = {}
 
     def update(self, sim, dt: float) -> None:
         self.zoom.step(dt)
@@ -90,10 +94,11 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HFOV, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), extra_excavators=config.get("extra_excavators", []),
+              excavator_cameras=config.get("excavator_cameras", False), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
-        renderer = DryRenderer(sim)
+        renderer = DryRenderer(sim, config)
     else:
         from isaac.sim.scene import IsaacRenderer
 
@@ -112,7 +117,7 @@ def run(args: argparse.Namespace) -> None:
     save = Path(args.save_dir) if args.save_dir else None
     if save:
         save.mkdir(parents=True, exist_ok=True)
-    hfov = {v.name: v.hfov for v in sim.views}
+    hfov = sim.view_hfov
 
     def jpeg(rgb):
         if noise > 0:
@@ -123,7 +128,7 @@ def run(args: argparse.Namespace) -> None:
     last_sig: dict[str, bytes] = {}
     fresh: dict[str, int] = {}
 
-    def publish(images, depths, poses, cams, views, overview, frame):
+    def publish(images, depths, poses, cams, views, loads, overview, frame):
         new = {}
         for name, img in images.items():
             sig = img[::17, ::23].tobytes()
@@ -136,7 +141,8 @@ def run(args: argparse.Namespace) -> None:
             for name, (data, w, h) in encoded.items():
                 if name in poses:
                     i, pose, speed = poses[name]
-                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name]))
+                    extra = {"load": loads[name]} if name in loads else {}
+                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name], **extra))
                 elif name in views:
                     bridge.send(encode_frame(name, data, w, h, cam=views[name]))
                 elif name == "overview":
@@ -186,7 +192,7 @@ def run(args: argparse.Namespace) -> None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        meta = (depths, poses, cams, views, renderer.zoom.meta())
+        meta = (depths, poses, cams, views, dict(renderer.loads), renderer.zoom.meta())
         if lag:
             meta, previous = (previous or meta), meta
         pending = publisher.submit(publish, images, *meta, frames)

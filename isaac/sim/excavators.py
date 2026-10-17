@@ -30,14 +30,16 @@ def smoother(t: float) -> float:
     return t * t * t * (t * (t * 6 - 15) + 10)
 
 
-def cycle_pose(phase: float) -> list[float]:
+def cycle_pose(phase: float, dump_yaw: float = TRUCK_SIDE_YAW, lift_deg: float = 0.0) -> list[float]:
     i = 0
     while i < len(KEYS) - 2 and phase > KEYS[i + 1][0]:
         i += 1
     a, b = KEYS[i], KEYS[i + 1]
     u = smoother((phase - a[0]) / (b[0] - a[0]))
     pose = [a[j] + (b[j] - a[j]) * u for j in range(1, 5)]
-    pose[0] *= TRUCK_SIDE_YAW
+    pose[1] -= lift_deg * pose[0]
+    pose[3] += lift_deg * pose[0]
+    pose[0] *= dump_yaw
     return pose
 
 
@@ -47,12 +49,14 @@ class DigRig:
         self.digging = digging
         self.phase = (zlib.crc32(excavator_id.encode()) % 1000) / 1000.0
         self.pose = [0.0, 0.0, 0.0, 0.0]
+        self.dump_yaw = TRUCK_SIDE_YAW
+        self.lift_deg = 0.0
 
     def step(self, dt: float) -> None:
         goal = [0.0, 0.0, 0.0, 0.0]
         if self.digging:
             self.phase = (self.phase + dt / max(1.0, CYCLE_PERIOD)) % 1.0
-            goal = cycle_pose(self.phase)
+            goal = cycle_pose(self.phase, self.dump_yaw, self.lift_deg)
         k = 1 - math.exp(-dt * (TRACK_RATE if self.digging else REST_RATE))
         self.pose = [p + (g - p) * k for p, g in zip(self.pose, goal)]
 

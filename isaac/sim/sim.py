@@ -1,3 +1,4 @@
+import math
 import os
 from pathlib import Path
 
@@ -9,13 +10,22 @@ from .kinematics import GroundFollow, Truck, yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
 from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
 from .views import View, view_pose
-from .excavators import JOINTS, DigRig, RadioPoller
+from .excavators import JOINTS, TRUCK_SIDE_YAW, DigRig, RadioPoller, rot_x
 
 PEDESTRIAN_PROBE = 30.0
+LOAD_REACH = 16.0
+LOAD_SPEED = 0.5
+AIM_RANGE = (40.0, 160.0)
+DUMP_PROBE = (4.0, 8.0, 12.0, 16.0)
+SIDE_MARGIN = 0.5
+CAB = np.array([-1.6, 3.2, -0.35])
+CAB_PITCH = 15.0
+CAB_HFOV = 75.0
 
 
 class Sim:
-    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, lidar_level: bool = True) -> None:
+    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, lidar_level: bool = True,
+                 extra_excavators: list[dict] | None = None, excavator_cameras: bool | list[str] = False) -> None:
         self.lidar_level = lidar_level
         self.views = [View.from_dict(v) for v in views or []]
         self.world = W.load_world(world_dir)
@@ -36,11 +46,18 @@ class Sim:
             height = hm
             self.probe = lambda xs, zs, tops, lengths: np.array([hm(x, z) for x, z in zip(xs, zs)])
         self.height = height
-        self.excavators = W.excavators(self.world, height, repo)
-        self.rigs = {b.id: DigRig(b.id) for b in self.excavators}
+        self.excavators = W.excavators(self.world, height, repo, extra_excavators or [])
+        idle = {e["id"] for e in extra_excavators or []}
+        self.rigs = {b.id: DigRig(b.id, digging=b.id in idle) for b in self.excavators}
+        self.dump_side = {b.id: self.open_side(b, height) for b in self.excavators}
+        for b in self.excavators:
+            self.rigs[b.id].dump_yaw = self.dump_side[b.id]
         self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
+        wanted = excavator_cameras if isinstance(excavator_cameras, list) else [b.id for b in self.excavators] if excavator_cameras else []
+        self.cab_cameras = [b.id for b in self.excavators if b.id in wanted]
+        self.view_hfov = {v.name: v.hfov for v in self.views} | dict.fromkeys(self.cab_cameras, CAB_HFOV)
         radio = os.environ.get("RADIO_URL")
         self.radio = RadioPoller(radio, self.rigs).start() if radio else None
         self.areas, self.walkers = make_walkers(*W.walker_network(self.world))
@@ -56,11 +73,19 @@ class Sim:
 
     def hello(self) -> dict:
         h = W.hello(self.world, [t.id for t in self.trucks], self.paths, [b.circle() for b in self.excavators] + W.prop_obstacles(self.world))
-        h["cameras"] += [v.name for v in self.views]
+        h["cameras"] += [v.name for v in self.views] + self.cab_cameras
         return h
 
     def view_poses(self, dt: float) -> dict[str, tuple[np.ndarray, np.ndarray]]:
-        return {v.name: view_pose(v, self, dt) for v in self.views}
+        poses = {v.name: view_pose(v, self, dt) for v in self.views}
+        for b in self.excavators:
+            if b.id in self.cab_cameras:
+                poses[b.id] = self.cab_pose(b)
+        return poses
+
+    def cab_pose(self, box) -> tuple[np.ndarray, np.ndarray]:
+        p, r = self.joint_frames(box)["house"]
+        return p + r @ (CAB - self.rig_origins["house"]), r @ rot_x(np.radians(CAB_PITCH))
 
     def command(self, truck_id: str, throttle: float, steer: float, now: float) -> None:
         for t in self.trucks:
@@ -87,6 +112,35 @@ class Sim:
             h = self.probe(np.array([w.x for w in self.walkers]), np.array([w.z for w in self.walkers]), ys + PEDESTRIAN_PROBE, np.full(len(ys), PEDESTRIAN_PROBE * 2))
             for w, y in zip(self.walkers, np.where(np.isfinite(h), h, ys)):
                 w.y = float(y)
+
+    def loading(self) -> dict[str, str]:
+        out = {}
+        for t in self.trucks:
+            if abs(t.speed) > LOAD_SPEED or not self.excavators:
+                continue
+            d, b = min((math.hypot(t.x - b.x, t.z - b.z), b.id) for b in self.excavators)
+            if d < LOAD_REACH:
+                out[t.id] = b
+        return out
+
+    def aim(self, targets: dict[str, tuple[float, float]]) -> None:
+        for b in self.excavators:
+            rig, target = self.rigs[b.id], targets.get(b.id)
+            rig.dump_yaw = self.dump_side[b.id]
+            if target is None:
+                continue
+            local = yaw_matrix(self.excavator_yaw(b)).T @ np.array([target[0] - b.x, 0.0, target[1] - b.z])
+            yaw = math.degrees(math.atan2(local[0], local[2]))
+            if AIM_RANGE[0] <= abs(yaw) <= AIM_RANGE[1]:
+                rig.dump_yaw = yaw
+
+    @staticmethod
+    def open_side(box, height) -> float:
+        def ground(yaw: float) -> float:
+            d = yaw_matrix(box.yaw + yaw) @ np.array([0.0, 0.0, 1.0])
+            return max(float(height(box.x + d[0] * r, box.z + d[2] * r)) for r in DUMP_PROBE)
+
+        return TRUCK_SIDE_YAW if ground(TRUCK_SIDE_YAW) <= ground(-TRUCK_SIDE_YAW) + SIDE_MARGIN else -TRUCK_SIDE_YAW
 
     def excavator_yaw(self, box) -> float:
         return self.radio.headings.get(box.id, box.yaw) if self.radio else box.yaw
@@ -115,9 +169,6 @@ class Sim:
                 "bucket": None if bucket is None else {"position": bucket[0].tolist(), "rotation": bucket[1].tolist()},
             })
         return out
-
-    def fx_state(self) -> list[tuple]:
-        return [(t.id, (t.x, t.y, t.z), t.yaw, t.speed, [tuple(map(float, c)) for c in self.follow[t.id].contacts]) for t in self.trucks]
 
     def rotation(self, t: Truck) -> np.ndarray:
         return self.follow[t.id].rotation(t.yaw)

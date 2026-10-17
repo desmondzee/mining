@@ -223,6 +223,39 @@
 | Overview JPEG size (KB) | 29 |
 | Player size (MB) | 982 |
 
+## Quarry props
+
+| Item | Value | Source |
+|---|---|---|
+| Placement file | `data/worlds/quarry/props.json`, regenerate with `uv run --with numpy --with scipy --with trimesh --with rtree --with usd-core --with pillow python isaac/props/generate.py` | `isaac/props/generate.py` |
+| Assets | `isaac/assets/props/`: `procedural/` and `generated/` committed, `polyhaven/` from `isaac/props/fetch_assets.py` (gitignored, falls back to procedural rocks) | `isaac/assets/props/CREDITS.md` |
+| Loader | `isaac/props/load.py: add_props(stage, props_json, assets_dir, root="/World/Props", lod="lod0", instanceable=True, berms=True)`, pxr only | |
+| Raycast mesh | `load.prop_triangles(props_json, assets_dir)` → (V, F) in world.json frame (collision LOD + berms) | |
+| Hello obstacles | every prop with `obstacle` non-null → `{x, z, r}` | |
+| Prop entry | `{id, kind, asset, fallback, fallback_scale, pos:[x,y,z], rot_deg:[rx,ry,rz], scale:[sx,sy,sz], obstacle:{x,z,r}\|null, collision}` | |
+| Kinds | boulder, debris, rock_pile, fuel_tank, drum, generator, barrier, light_vehicle, cone, sign | |
+| Frame | world.json (Y up, x east, z north, m); R = Ry(ry)·Rx(rx)·Rz(rz), ry = heading | |
+| Asset frame | USD Z up, m, origin at base centre, forward +Y; rocks normalised to 1 m max horizontal extent | |
+| Isaac transform | S·R·diag(scale)·S, translation S·pos, S swaps y and z (`isaac/sim/usdbuild.py` `TO_ISAAC`) | `isaac/props/load.py` `isaac_matrix` |
+| Berm entry | `{id, road, side, asset, prim, length_m, height_m, base_m, line:[[x,z],..]}`; one USD with all berms already in Isaac Z-up | |
+| Asset layout | `/<name>/render` (variant set `lod`: lod0, lod1), `/<name>/collision` (purpose guide, `PhysicsCollisionAPI`, convex hull / decomposition); berms triangle-mesh collision | |
+| Seed | 20261017 | `isaac/props/generate.py:SEED` |
+| Counts | 150 boulders (70 bench toe, 35 berm outside, 30 spoil, 15 isolated 1.5–3 m), 8 rock piles + 45 boulders, 400 debris | `generate.py` config |
+| Boulder size / debris size (m) | 0.6–1.5 / 0.12–0.45 | |
+| Burial | 15–40 % of height, tilted 60 % toward the local slope | |
+| Obstacle | boulders r ≥ 0.5 m, rock piles, fuel tank, barriers, light vehicle | |
+| Road corridor exclusion | max(width_m, 10)/2 + 2 m + prop radius | |
+| Pad exclusion (m) | 12 + radius around sites, load/dump points, parking slots | |
+| Crossing exclusion (m) | 2.5 + radius from the 4 crossing segments (fakesim rule) | |
+| Equipment exclusion (m) | 10 | |
+| Placement area | ≤ 60 m from a road centreline, ground y < -30, slope ≤ 32° (debris 40°) | |
+| Berms | trapezoid 1.5 m × 4 m base × 1 m crest, inner toe 0.5 m outside the corridor, only where the ground drops ≥ 3 m within 20 m outward, on a road-level shoulder with a fill slope; gaps 25 m at junctions, 26 m at pads, 5 m at crossings | `generate.py` BERM_* |
+| Connectivity | navgrid with obstacles and berms stamped blocked: `envgen.common.navgrid_check`, site pairs 21/21, nav point pairs 105/105 | `props.json` `navgrid_check` |
+| Tests | `uv run --with numpy --with scipy --with trimesh --with rtree --with usd-core --with pillow --with pytest pytest isaac/props/tests -q` | |
+| Poly Haven fetch (watson) | mesh stage: `uv run --no-project --with trimesh --with numpy --with fast-simplification --with rtree --with scipy --with pillow --with requests python isaac/props/fetch_assets.py --stage mesh`; USD stage in the Isaac image (`/isaac-sim/python.sh` with `PYTHONPATH`/`LD_LIBRARY_PATH` = `omni.usd.libs` ext) `--stage usd` | |
+| Decimation | fast-simplification, LOD0 ≤ 20k tris (props 3k–14k), LOD1 ≤ 3k, UVs re-projected from the source mesh, textures ≤ 2K | |
+| Renders | `isaac/props/render.py` in `nvcr.io/nvidia/isaac-sim:6.2.0` (container `mining-isaac-props`) | |
+
 ## Fake sim
 
 | Item | Value | Source |
@@ -467,6 +500,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Keyframe interval (frames) | 15 | `brain/brain/video.py:GOP_FRAMES` |
 | Truck camera bitrate (kbps) | 600 | `brain/brain/video.py:TRUCK_KBPS` |
 | Overview bitrate (kbps) | 400 | `brain/brain/video.py:OVERVIEW_KBPS` |
+| Bitrate scaling | × pixels / 640×360 (never below 1), capped | |
+| Bitrate cap (kbps) | 4000 | `brain/brain/video.py:MAX_KBPS` |
 | Video join | new viewer gets the current GOP (latest keyframe + following AUs), then live AUs | |
 | Viewer queue (AUs per camera) | 30 | `brain/brain/video.py:VIEWER_QUEUE` |
 | Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
@@ -625,6 +660,102 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `toggleGroundTruth()`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
 | Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
 | Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
+
+## Bucket material
+
+| Item | Value | Source |
+|---|---|---|
+| Code | `isaac/material/` (`model.py` numpy core, `stage.py` stage writer, `rig.py` dig cycle, `geometry.py` bucket/bed shapes) | |
+| API | `BucketMaterial(stage, excavators_cfg, trucks_cfg, config, sites)`, `update(dt, excavators=[(id, bucket_4x4, phase, phase_t)], trucks=[(id, truck_4x4, under_excavator_id)])`, `empty_truck(id)`, `load(id)`, `tonnes(id)`, `meshes()`, `aim_points()` | |
+| Bucket matrix | rigged GLB `bucket` node frame (pin origin, glTF axes) → Isaac world, column vectors (Gf row-major accepted) | |
+| Truck matrix | truck prim world matrix (`isaac_matrix(rotation, position)`), local X lateral, Y forward, Z up | |
+| Dig cycle | same keys and smootherstep as `envgen/preview/index.html` `EXC_KEYS`, `MineExcavatorRig.RigKeys` | `isaac/material/rig.py` `KEYS` |
+| Cycle period (s) | 8 | `isaac/material/rig.py:CYCLE_S` |
+| Dump yaw (rad, toward cab side) | 1.7 | `isaac/material/rig.py:DUMP_YAW` |
+| Joint tracking / rest rate (1/s) | 8 / 2.5 | `isaac/material/rig.py:TRACK_RATE`, `REST_RATE` |
+| Phases (cycle fraction) | reach 0, dig 0.12, lift 0.30, swing 0.42, dump 0.60, return 0.78; `hold` when not digging | `isaac/material/rig.py` `PHASES` |
+| Optional boom raise at the truck side (deg, compensated by bucket curl) | 0 (25 in the demo) | `isaac/material/rig.py` `pose` |
+| Truck payload (t) | 55 | `isaac/material/model.py:Config.payload_t` |
+| Passes to full | 4 | `isaac/material/model.py:Config.passes` |
+| Loose density (t/m³) | 1.8 | `isaac/material/model.py:Config.density` |
+| Angle of repose (deg) | 37 | `isaac/material/model.py:Config.repose_deg` |
+| Bucket fill factor per pass | 0.92–1.06 | `isaac/material/model.py:Config.fill_lo`, `fill_hi` |
+| Breakout spill (fraction) | 0.02 | `isaac/material/model.py:Config.breakout` |
+| Pour time (s) | 0.9 | `isaac/material/model.py:Config.pour_s` |
+| Cohesion before flow (fraction of full) | 0.3 | `isaac/material/model.py:Config.cohesion` |
+| Particles per tonne | 14 | `isaac/material/model.py:Config.particles_per_t` |
+| Particle pool | 768 | `isaac/material/model.py:Config.max_particles` |
+| Face pile cap (passes) | 3 | `isaac/material/model.py:Config.pile_passes` |
+| Truck empty slide (s) | 2.5 | `isaac/material/model.py:Config.empty_s` |
+| Auto empty: site radius (m) / stop speed (m/s) / stopped for (s) | 30 / 0.3 / 1.5 | `isaac/material/model.py` `Config` |
+| Bucket heap grid | 9 × 24 | `isaac/material/geometry.py:BUCKET_NX`, `BUCKET_NZ` |
+| Bed grid cell (m) | 0.2 | `isaac/material/geometry.py:BED_CELL` |
+| Bed heap above rim (m) | 0.9 | `isaac/material/geometry.py:BED_HEAP` |
+| Chunks riding per bucket / per bed | 8 / 14 | `isaac/material/model.py:CHUNKS_BUCKET`, `CHUNKS_BED` |
+| Bucket capacity | level plane (world up, or bucket up while digging) clipped to the cavity columns, heap dome when upright | |
+| Bed load | height field over the HD465 body floor (derived from the GLB dump body), 3 × 3 deposit kernel, repose relaxation, child prim of the truck | |
+| No truck under the bucket | material lands at the face pile; the next dig takes from the pile first | |
+| Colour | per excavator `colour`, or `face_colour(world_dir, x, z)` from `minimap.png` | |
+| Dust puffs (off by default) | 0 | `isaac/material/model.py:Config.max_dust` |
+
+## Truck FX
+
+| Item | Value | Source |
+|---|---|---|
+| Dust renderer | Omni Flow (`omni.flowusd` 110.0.4, aarch64), RTX volumetric | |
+| Gravel renderer | `UsdGeom.PointInstancer`, 3 shapes × 3 tones, 20-triangle rocks | `isaac/fx/fx.py` `ROCK_SHAPES` |
+| Ground map cell (m) | 1 | `isaac/fx/ground.py:CELL` |
+| Ground map samples per triangle | 4 | `isaac/fx/ground.py` `BARYCENTRIC` |
+| Road corridor dust floor | 0.55 | `isaac/fx/ground.py:ROAD_DUST` |
+| Road corridor gravel | 0.85 | `isaac/fx/ground.py:ROAD_GRAVEL` |
+| Rock-face slope band (deg) | 15–35 | `isaac/fx/ground.py` `SLOPE_ROCK` |
+| Dust start speed (m/s) | 1 | `isaac/fx/presets.py:DEFAULTS.min_speed` |
+| Dust full speed (m/s) | 8 | `isaac/fx/presets.py:DEFAULTS.full_speed` |
+| Surface smoothing (s) | 0.5 | `isaac/fx/dust.py:SMOOTH_TIME` |
+| Slip gain on dust | 0.6 | `isaac/fx/dust.py:SLIP_GAIN` |
+| Slip yaw rate scale (deg/s) | 30 | `isaac/fx/dust.py:SLIP_YAW_RATE` |
+| Slip accel scale (m/s²) | 2 | `isaac/fx/dust.py:SLIP_ACCEL` |
+| Dust fade (1/s) | 0.2 | `isaac/fx/fx.py:SMOKE_FADE` |
+| Wind default (m/s, Isaac x y z) | 1.5 0.5 0 | `isaac/fx/presets.py:DEFAULTS.wind` |
+| Own-camera cut: tail wind / speed | 0.3–0.6 | `isaac/fx/dust.py` `AHEAD_LIMIT` |
+| Rear axle from truck centre (m) | -2.425 | `isaac/fx/presets.py` `REAR_AXLE_FROM_REAR` |
+| Rear half track (m) | 1.5 | `isaac/fx/presets.py:REAR_HALF_TRACK` |
+| Tyre radius (m) | 1.1 | `isaac/fx/presets.py:TYRE_RADIUS` |
+| Gravel size (m) | 0.04–0.16 | `isaac/fx/gravel.py` `SIZE` |
+| Gravel launch elevation (deg) | 15–60 | `isaac/fx/gravel.py` `ELEVATION` |
+| Gravel launch speed (× truck speed) | 0.35–1.0 | `isaac/fx/gravel.py` `SPEED_FRACTION` |
+| Gravel restitution | 0.3 | `isaac/fx/gravel.py:RESTITUTION` |
+| Gravel rest then shrink (s) | 0.4 + 0.25 | `isaac/fx/gravel.py` `REST_TIME` |
+| Hits Warp depth/lidar | no | |
+| Hits PhysX | no | |
+
+| Preset | Flow cell (m) | Emitters per truck | Max stones per truck | Stones/s per m/s | Source |
+|---|---|---|---|---|---|
+| off | | 0 | 0 | 0 | `isaac/fx/presets.py:PRESETS` |
+| low | 0.5 | 2 | 60 | 6 | `isaac/fx/presets.py:PRESETS` |
+| high | 0.3 | 3 | 150 | 15 | `isaac/fx/presets.py:PRESETS` |
+
+## Isaac look
+
+| Item | Value | Source |
+|---|---|---|
+| Code | `isaac/look/`, presets `isaac/look/presets.json` | |
+| Hook | `apply_look(stage, preset, world_dir=, cache=, **overrides)` once after the stage is built | `isaac/look/look.py` `apply_look` |
+| Presets | `day`, `morning`, `golden_hour`, `overcast`, `dusty` | `isaac/look/presets.json` |
+| Sun | `/World/Sun` `DistantLight`, angle 0.53 deg, ShadowAPI shadows | |
+| Sun direction | azimuth compass from Isaac +Y toward +X; `"pano"` = brightest pano region (elev 56.1) at `sky.pano_azimuth` 220 | |
+| Sky | `/World/Sky` latlong dome, `sky_pano.jpg`, rotateZ so the pano sun sits on the sun direction | |
+| Latlong mapping | azimuth = 93 + 360·u − rotateZ | `presets.json:sky.latlong_offset` |
+| Derived sky textures | sun removed / desaturated / tinted PNG in `<cache>/look/` | `isaac/look/look.py` `sky_variant` |
+| Clouds | from the pano (no volumetric clouds in RealTimePathTracing 6.2) | |
+| Haze | `/rtx/fog/*` distance fog, Z-up, day density 0.04 from 200 m | |
+| Exposure | fixed, `filmIso = 100 · 2^ev`, shutter 50, f/5; day EV -1.3; histogram auto-exposure optional | |
+| Tonemap | ACES (`/rtx/post/tonemap/op` 6), colour correction saturation 1.05 | |
+| Scan material | texture scale (0.66, 0.58, 0.46), roughness 0.92, specular 0.02 | |
+| Surround material | `isaac/look/vertex_colour.mdl` reading `displayColor`, gain 0.3, roughness 0.9 | |
+| Truck material | body paint roughness 0.38 clearcoat 0.3, glass 0.08, frame metallic 0.2 | |
+| Dome denoiser | `/rtx/directLighting/domeLight/denoisingTechnique` 0 (GB10, IsaacSim#584) | |
+| Bench | `isaac/look/bench.py`: stills (road, pit, horizon) + fresh fps of 4 tiled 640 × 360 truck cameras per preset | |
 
 ## Detector
 

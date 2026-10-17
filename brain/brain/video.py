@@ -16,6 +16,8 @@ FPS = 15
 GOP_FRAMES = 15
 TRUCK_KBPS = 600
 OVERVIEW_KBPS = 400
+BASE_PIXELS = 640 * 360
+MAX_KBPS = 4000
 VIEWER_QUEUE = 30
 PRESET = "veryfast"
 PROFILE = "baseline"
@@ -45,6 +47,10 @@ def unpack_au(msg: bytes) -> tuple[str, bool, int, bytes, bytes]:
 
 def bitrate_for(camera: str) -> int:
     return (OVERVIEW_KBPS if camera == "overview" else TRUCK_KBPS) * 1000
+
+
+def scaled_bitrate(bitrate: int, width: int, height: int) -> int:
+    return int(min(bitrate * max(1.0, width * height / BASE_PIXELS), MAX_KBPS * 1000))
 
 
 def open_encoder(width: int, height: int, bitrate: int) -> av.CodecContext:
@@ -109,7 +115,7 @@ class CameraEncoder:
             try:
                 start = time.perf_counter()
                 if ctx is None or (ctx.width, ctx.height) != (w, h):
-                    ctx = open_encoder(w, h, self.bitrate)
+                    ctx = open_encoder(w, h, scaled_bitrate(self.bitrate, w, h))
                 frame = av.VideoFrame.from_ndarray(np.ascontiguousarray(rgb[:h, :w]), format="rgb24").reformat(format="yuv420p")
                 pts = max(int((time.monotonic() - self._t0) * 1000), last_pts + 1)
                 frame.pts = last_pts = pts

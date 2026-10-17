@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 
@@ -8,6 +10,10 @@ from isaac.sim.views import View, view_pose
 class FakeSim:
     time = 0.0
     trucks = [Truck("truck-0", 10.0, 20.0, 90.0, y=5.0)]
+    excavators = [SimpleNamespace(id="exc-0", x=0.0, y=2.0, z=0.0)]
+
+    def excavator_yaw(self, box):
+        return 90.0
 
     def height(self, x, z):
         return 1.0
@@ -29,3 +35,10 @@ def test_fixed_and_orbit():
     o = View.from_dict({"name": "b", "mode": "orbit", "center": [5, 5], "radius": 100, "position": [0, 50, 0]})
     p, _ = view_pose(o, FakeSim(), 0.1)
     np.testing.assert_allclose(p, [5, 51, 105])
+
+
+def test_excavator_view_offset_from_heading():
+    v = View.from_dict({"name": "e", "mode": "excavator", "excavator": "exc-0", "distance": 20, "elevation": 0, "azimuth": 90, "target_height": 0})
+    p, r = view_pose(v, FakeSim(), 0.1)
+    np.testing.assert_allclose(p, [0, 2, -20], atol=1e-9)
+    np.testing.assert_allclose(r[:, 2], [0, 0, 1], atol=1e-9)
