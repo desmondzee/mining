@@ -50,3 +50,4 @@ data/audio/
 deploy/secrets/*
 !deploy/secrets/README.md
 .venv*/
+unity/_stale_unreadable/
