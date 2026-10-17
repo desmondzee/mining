@@ -28,6 +28,26 @@ const WORLD = new URLSearchParams(location.search).get('world') || 'quarry';
 const base = `../../data/worlds/${WORLD}/`;
 const status = document.getElementById('status');
 const world = await (await fetch(base + 'world.json', { cache: 'no-store' })).json();
+// LIVE mode: when served by the radio server (or ?live=1), trucks follow the real truck state instead of the script
+let LIVE = new URLSearchParams(location.search).get('live');
+if (LIVE === null) { try { LIVE = (await fetch('/api/radio/state', { cache: 'no-store' })).ok ? '1' : '0'; } catch { LIVE = '0'; } }
+LIVE = LIVE === '1';
+const liveState = {};
+if (LIVE) setInterval(async () => {
+  try { const d = await (await fetch('/api/radio/state', { cache: 'no-store' })).json(); for (const t of d.trucks || []) liveState[t.id] = t; } catch {}
+}, 200);
+let groundY = () => 0;
+{
+  const meta = await (await fetch(base + 'heightmap_meta.json', { cache: 'no-store' })).json();
+  const hm = new Uint16Array(await (await fetch(base + 'heightmap.raw', { cache: 'no-store' })).arrayBuffer());
+  const N = meta.resolution, [ox, oz] = meta.origin, [sx, sz] = meta.size_m;
+  groundY = (x, z) => {
+    const c = (x - ox) / sx * (N - 1), r = (z - oz) / sz * (N - 1);
+    const c0 = Math.max(0, Math.min(N - 2, Math.floor(c))), r0 = Math.max(0, Math.min(N - 2, Math.floor(r))), fc = c - c0, fr = r - r0;
+    const v = (i, j) => meta.min_height_m + hm[j * N + i] / 65535 * meta.height_range_m;
+    return v(c0, r0) * (1 - fc) * (1 - fr) + v(c0 + 1, r0) * fc * (1 - fr) + v(c0, r0 + 1) * (1 - fc) * fr + v(c0 + 1, r0 + 1) * fc * fr;
+  };
+}
 
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -225,6 +245,18 @@ const trucks = world.trucks.map((t, i) => {
 });
 
 function place(t, dt) {
+  if (LIVE) {
+    const L = liveState[t.id];
+    if (!L) return;
+    const target = new THREE.Vector3(L.x, groundY(L.x, L.z), L.z);
+    if (!t.liveInit) { t.g.position.copy(target); t.g.rotation.y = THREE.MathUtils.degToRad(L.yaw || 0); t.liveInit = true; }
+    t.g.position.lerp(target, Math.min(1, dt * 6));
+    const yaw = THREE.MathUtils.degToRad(L.yaw || 0);
+    t.g.rotation.y += ((yaw - t.g.rotation.y + Math.PI * 3) % (Math.PI * 2) - Math.PI) * Math.min(1, dt * 5);
+    t.v = L.speed || 0; t.phase = (L.phase || L.status || 'idle'); t.face = L.target || L.task || '';
+    t.grade = 0;
+    return;
+  }
   if (t.phase === 'loading' || t.phase === 'dumping') {
     t.v = 0; t.timer += dt;
     const need = (t.phase === 'loading' ? HD465.loadS : HD465.dumpS) * HD465.dwellScale;
@@ -309,6 +341,7 @@ renderer.setAnimationLoop(() => {
     renderer.render(scene, tr.cam);
     Object.assign(tags[i + 1].style, { left: `${half + 12}px`, top: `${i * ch + 12}px` });
     const load = tr.phase === 'haul' || tr.phase === 'dumping' ? HD465.payload_t : 0;
+    if (LIVE) { const L = liveState[tr.id] || {}; tags[i + 1].innerHTML = `${L.callsign || tr.id} · ${String(tr.phase).toUpperCase()}<small>Komatsu HD465-7 · ${(tr.v * 3.6).toFixed(0)} km/h · ${L.task || ''}${L.remaining_m ? ' · ' + Math.round(L.remaining_m) + ' m to go' : ''}</small>`; return; }
     tags[i + 1].innerHTML = `${tr.id} · ${tr.phase.toUpperCase()}<small>Komatsu HD465-7 · ${(tr.v * 3.6).toFixed(0)} km/h · grade ${tr.grade.toFixed(1)}% · ${load} t · ${tr.face}${tr.phase === 'loading' || tr.phase === 'dumping' ? ' · time-lapse ×10' : ''}</small>`;
   });
 });

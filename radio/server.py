@@ -1119,6 +1119,19 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Haul truck radio", lifespan=lifespan)
 
+# Aerial 3D view for the laptop/projector: /view -> envgen/preview (live mode follows this radio's truck state)
+from fastapi.responses import RedirectResponse  # noqa: E402
+from fastapi.staticfiles import StaticFiles  # noqa: E402
+
+for _url, _dir in (("/envgen/preview", REPO / "envgen" / "preview"), ("/data", REPO / "data"), ("/assets", REPO / "assets")):
+    if _dir.is_dir():
+        app.mount(_url, StaticFiles(directory=_dir), name=_url.strip("/").replace("/", "_"))
+
+
+@app.get("/view")
+def view():
+    return RedirectResponse("/envgen/preview/index.html?live=1")
+
 
 class Command(BaseModel):
     text: str
