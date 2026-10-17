@@ -235,8 +235,10 @@ def drive(
     clear = np.full(N_CAND, np.inf)
     if len(obstacles):
         obs = obstacles.astype(np.float32)
-        diff = pts.astype(np.float32)[:, :, None, :] - obs[None, None]
-        d2 = np.einsum("ctmk,ctmk->ctm", diff, diff)
+        flat = pts.astype(np.float32).reshape(-1, 2)
+        dx = flat[:, 0, None] - obs[None, :, 0]
+        dz = flat[:, 1, None] - obs[None, :, 1]
+        d2 = (dx * dx + dz * dz).reshape(N_CAND, N_ROLL, len(obs))
         d0 = np.hypot(obs[:, 0] - x, obs[:, 1] - z) - OBSTACLE_RADIUS
         limit = OBSTACLE_RADIUS + np.minimum(HIT_MARGIN, d0 - 0.05)
         hit |= (d2 < np.square(np.maximum(limit, 0.0))[None, None, :]).any(axis=(1, 2))

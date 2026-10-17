@@ -14,6 +14,7 @@ services:
       NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
       DETECTOR_DEVICE: ${DETECTOR_DEVICE:-auto}
       VIDEO_ENCODER: ${VIDEO_ENCODER:-auto}
+      PLANNER_DEVICE: ${PLANNER_DEVICE:-auto}
       WORLD_DIR: /app/data/worlds/quarry
       PLANNER_CKPT: ${PLANNER_CKPT-/app/models/ppo_v3.npz}
       RADIO_URL: ${RADIO_URL:-http://radio:8090}

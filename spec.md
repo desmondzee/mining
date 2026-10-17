@@ -368,6 +368,9 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Enable | `PLANNER_CKPT` = path to an exported `.npz` (a `.pt` is accepted if a sibling `.npz` exists or torch is installed; `PLANNER_CHECKPOINT` also read) | |
 | Default | unset: rules. Docker compose sets `/app/models/ppo_v3.npz` (meiru-cam's PPO v3) with `./models` mounted read-only; missing or invalid file: warning log, rules | |
 | Runtime | numpy MLP forward, no torch in the brain image (`brain/brain/planning/learned.py`) | |
+| Device | `PLANNER_DEVICE` `auto` (default) / `cuda`: weights rebuilt as an in-memory ONNX graph (`onnx` + onnxruntime CUDA EP, TF32 off) when CUDA is available, else numpy; `cpu` keeps numpy; logits match numpy within 1e-4 | `brain/brain/planning/learned.py` |
+| Per-call latency (ppo_v3, watson, Isaac running) | scorer: numpy 0.24 ms, CUDA 0.10 ms; whole `drive` 3.6 ms (8.0 ms before the per-axis obstacle distance rewrite, synthetic 920 obstacles) | |
+| Batching | one scorer call per truck frame: decisions are event-driven per truck camera frame on the bridge, so the three trucks never share a tick to batch; the ONNX graph takes `(B, OBS_DIM)`, `(B, C, CAND_DIM)` | |
 | Export | `cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo_v3.pt` → `models/ppo_v3.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
 | Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt` whose repo or file name contains `--want`, default `ppo_v3`; `HF_TOKEN` for a private repo) → `models/ppo_v3.pt`, `models/ppo_v3.npz` | |
 | Network | scene MLP (obs → 256 → 256), path MLP (candidate → 128 → 128), head (384 → 256 → 1), ReLU | |

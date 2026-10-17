@@ -8,14 +8,14 @@ import pytest
 from brain import planning
 from brain.planning.driver import CAND_DIM, N_CAND, OBS_DIM, drive
 from brain.planning.navmap import load
-from brain.planning.learned import LAYERS, CheckpointError, NumpyScorer, load_scorer
+from brain.planning.learned import LAYERS, CheckpointError, NumpyScorer, OnnxScorer, load_scorer
 from brain.policy import act
 from brain.world import Truck
 
 WORLDS = Path(__file__).resolve().parents[2] / "data" / "worlds"
 
 
-def random_weights(width: int = 16, obs_dim: int = OBS_DIM, seed: int = 0) -> dict[str, np.ndarray]:
+def random_weights(width: int = 16, obs_dim: int = OBS_DIM, seed: int = 0, std: float | None = 0.3) -> dict[str, np.ndarray]:
     rng = np.random.default_rng(seed)
     shapes = {
         "scene.0": (width, obs_dim),
@@ -27,7 +27,7 @@ def random_weights(width: int = 16, obs_dim: int = OBS_DIM, seed: int = 0) -> di
     }
     w = {}
     for k in LAYERS:
-        w[f"{k}.weight"] = rng.normal(0, 0.3, shapes[k]).astype(np.float32)
+        w[f"{k}.weight"] = rng.normal(0, std or shapes[k][1] ** -0.5, shapes[k]).astype(np.float32)
         w[f"{k}.bias"] = rng.normal(0, 0.1, shapes[k][0]).astype(np.float32)
     return w
 
@@ -67,8 +67,27 @@ def test_rejects_wrong_feature_size():
         NumpyScorer(w)
 
 
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_onnx_scorer_matches_numpy(device):
+    pytest.importorskip("onnxruntime")
+    pytest.importorskip("onnx")
+    base = NumpyScorer(random_weights(width=512, std=None))
+    onnx_scorer = OnnxScorer(base, device)
+    if device == "cuda" and onnx_scorer.device != "cuda":
+        pytest.skip("CUDA unavailable")
+    rng = np.random.default_rng(2)
+    obs, cands = rng.normal(size=(3, OBS_DIM)), rng.normal(size=(3, N_CAND, CAND_DIM))
+    np.testing.assert_allclose(onnx_scorer.logits(obs, cands), base.logits(obs, cands), atol=1e-4, rtol=1e-5)
+    np.testing.assert_allclose(onnx_scorer(obs[0], cands[0], None), base(obs[0], cands[0], None), atol=1e-4, rtol=1e-5)
+
+
+def test_cpu_device_keeps_numpy(npz):
+    assert isinstance(load_scorer(npz[0], device="cpu"), NumpyScorer)
+
+
 def test_env_selects_scorer_and_falls_back(npz, monkeypatch, tmp_path):
     planning.scorer.cache_clear()
+    monkeypatch.setenv("PLANNER_DEVICE", "cpu")
     monkeypatch.delenv("PLANNER_CHECKPOINT", raising=False)
     monkeypatch.setenv("PLANNER_CKPT", str(tmp_path / "missing.npz"))
     assert planning.scorer() is None

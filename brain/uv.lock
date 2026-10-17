@@ -87,6 +87,7 @@ detector = [
     { name = "onnxruntime" },
 ]
 gpu = [
+    { name = "onnx" },
     { name = "onnxruntime-gpu", extra = ["cuda", "cudnn"], marker = "(sys_platform == 'linux' and extra == 'extra-5-brain-gpu') or (extra == 'extra-5-brain-detector' and extra == 'extra-5-brain-gpu')" },
 ]
 model = [
@@ -106,6 +107,7 @@ requires-dist = [
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "numpy", specifier = ">=2.0" },
+    { name = "onnx", marker = "extra == 'gpu'", specifier = ">=1.16" },
     { name = "onnxruntime", marker = "extra == 'detector'", specifier = ">=1.20" },
     { name = "onnxruntime-gpu", extras = ["cuda", "cudnn"], marker = "sys_platform == 'linux' and extra == 'gpu'", specifier = ">=1.31" },
     { name = "pillow", specifier = ">=10.4" },
