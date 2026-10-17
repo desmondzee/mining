@@ -8,7 +8,12 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9000:9000"
+    devices:
+      - nvidia.com/gpu=all
     environment:
+      NVIDIA_DRIVER_CAPABILITIES: compute,utility,video
+      DETECTOR_DEVICE: ${DETECTOR_DEVICE:-auto}
+      VIDEO_ENCODER: ${VIDEO_ENCODER:-auto}
       WORLD_DIR: /app/data/worlds/quarry
       PLANNER_CKPT: ${PLANNER_CKPT-/app/models/ppo_v3.npz}
       RADIO_URL: ${RADIO_URL:-http://radio:8090}

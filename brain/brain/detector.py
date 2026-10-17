@@ -19,6 +19,9 @@ IOU = 0.5
 MAX_DET = 50
 THREADS = 2
 WORKERS = 2
+DEVICE = "auto"
+CUDA = "CUDAExecutionProvider"
+CPU = "CPUExecutionProvider"
 MAX_AGE_S = 1.0
 DEPTH_PERCENTILE = 20
 DEPTH_BAND = 0.2
@@ -127,16 +130,37 @@ def class_names(meta: dict, nc: int) -> list[str]:
     return [str(names.get(i, i)) for i in range(nc)]
 
 
+def providers_for(device: str, available: list[str]) -> list[str]:
+    if device != "cpu" and CUDA in available:
+        return [CUDA, CPU]
+    if device == "cuda":
+        log.warning("detector: %s unavailable, using CPU", CUDA)
+    return [CPU]
+
+
+def open_session(path: str, threads: int, device: str):
+    import onnxruntime as ort
+
+    opts = ort.SessionOptions()
+    opts.intra_op_num_threads = threads
+    opts.inter_op_num_threads = 1
+    opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
+    providers = providers_for(device, ort.get_available_providers())
+    if CUDA in providers:
+        try:
+            if hasattr(ort, "preload_dlls"):
+                ort.preload_dlls()
+            return ort.InferenceSession(path, opts, providers=providers)
+        except Exception:
+            log.exception("detector: CUDA session failed, using CPU")
+    return ort.InferenceSession(path, opts, providers=[CPU])
+
+
 class Detector:
     def __init__(self, path: str, conf: float = CONF, iou: float = IOU, threads: int = THREADS, classes: set[str] | None = None,
-                 providers: list[str] | None = None) -> None:
-        import onnxruntime as ort
-
-        opts = ort.SessionOptions()
-        opts.intra_op_num_threads = threads
-        opts.inter_op_num_threads = 1
-        opts.add_session_config_entry("session.intra_op.allow_spinning", "0")
-        self.session = ort.InferenceSession(path, opts, providers=providers or ort.get_available_providers())
+                 device: str = DEVICE) -> None:
+        self.session = open_session(path, threads, device)
+        self.device = "cuda" if self.session.get_providers()[0] == CUDA else "cpu"
         inp = self.session.get_inputs()[0]
         self.input = inp.name
         hh, ww = inp.shape[2:4]
@@ -149,6 +173,8 @@ class Detector:
         self.classes = classes or (COCO_KEEP if len(self.names) == 80 and "giraffe" in self.names else None)
         self.conf, self.iou = conf, iou
         self.path = path
+        if self.device == "cuda":
+            self.session.run(None, {self.input: np.zeros((1, 3, *self.size), np.float32)})
 
     def __call__(self, rgb: np.ndarray) -> list[dict]:
         h, w = rgb.shape[:2]
@@ -268,10 +294,10 @@ def from_env() -> DetectorWorker | None:
             conf=float(os.environ.get("DETECTOR_CONF", CONF)),
             threads=int(os.environ.get("DETECTOR_THREADS", THREADS)),
             classes=classes,
-            providers=[p.strip() for p in os.environ.get("DETECTOR_PROVIDERS", "").split(",") if p.strip()] or None,
+            device=os.environ.get("DETECTOR_DEVICE", DEVICE).strip().lower(),
         )
     except ImportError:
         log.warning("onnxruntime not installed (uv sync --extra detector); detector off")
         return None
-    log.info("detector %s input %s classes %d providers %s", path, det.size, len(det.names), det.session.get_providers())
+    log.info("detector %s input %s classes %d device %s", path, det.size, len(det.names), det.device)
     return DetectorWorker(det, workers=int(os.environ.get("DETECTOR_WORKERS", WORKERS)))
