@@ -155,9 +155,6 @@ class Sim:
             })
         return out
 
-    def fx_state(self) -> list[tuple]:
-        return [(t.id, (t.x, t.y, t.z), t.yaw, t.speed, [tuple(map(float, c)) for c in self.follow[t.id].contacts]) for t in self.trucks]
-
     def rotation(self, t: Truck) -> np.ndarray:
         return self.follow[t.id].rotation(t.yaw)
 

@@ -16,7 +16,7 @@ from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS
 from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, OVERVIEW_HFOV
 from .excavators import JOINTS
 from .kinematics import quat_from_matrix
-from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix
+from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix, to_isaac
 
 APERTURE = 20.955
 PERSON_COLOUR = (1.0, 0.47, 0.08)
@@ -109,7 +109,7 @@ class IsaacRenderer:
             cam.AddTransformOp().Set(gf(local))
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
         self.look = self.make_look(world, cache, config)
-        self.fx = self.make_fx(sim, args.fx)
+        self.fx = self.make_fx(world, sim, cache, args.fx, config.get("fx", {}))
         self.material = self.make_material(world, sim, config.get("material", {}))
         self.loads = {}
 
@@ -230,16 +230,17 @@ class IsaacRenderer:
             sim.caster.set_props(*tris)
         print(f"props: {added['props']} props, {added['berm_files']} berm files, missing {added['missing']}, {len(tris[1])} triangles for raycasts", flush=True)
 
-    def make_fx(self, sim, preset: str):
+    def make_fx(self, world, sim, cache: Path, preset: str, overrides: dict):
         if preset == "off":
             return None
         try:
             from isaac.fx import TruckFx
+            from isaac.fx.ground import load_or_bake
         except ImportError:
             return None
-        trucks = [{"id": t.id, "prim": f"/World/Trucks/{t.id.replace('-', '_')}", "size": list(sim.truck_size)} for t in sim.trucks]
-        print(f"fx: isaac.fx TruckFx preset {preset}", flush=True)
-        return TruckFx(self.stage, {"preset": preset, "trucks": trucks})
+        self.ground = load_or_bake(world.dir, cache)
+        print(f"fx: isaac.fx TruckFx preset {preset} {overrides}", flush=True)
+        return TruckFx(self.stage, [t.id for t in sim.trucks], preset, self.ground, **overrides)
 
     def make_material(self, world, sim, cfg: dict):
         if not cfg.get("enabled", True) or not sim.excavators:
@@ -276,9 +277,9 @@ class IsaacRenderer:
     def update(self, sim, dt: float) -> None:
         if self.look is not None:
             self.look.update(dt)
+        if self.fx is not None and dt > 0:
+            self.fx.update(dt, [(t.id, to_isaac(sim.position(t)), t.yaw, t.speed, None) for t in sim.trucks], self.ground.height_at)
         with Sdf.ChangeBlock():
-            if self.fx is not None:
-                self.fx.update(dt, sim.fx_state())
             mats = {}
             for op, t in zip(self.trucks, sim.trucks):
                 mats[t.id] = isaac_matrix(sim.rotation(t), sim.position(t))
