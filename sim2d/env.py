@@ -262,7 +262,9 @@ class DriveEnv:
                 m.side = 0
             want = m.side * pull
             m.off += max(-3 * dt, min(3 * dt, want - m.off))
-            if not m.side and abs(m.off) < 0.5:
+            # After the deadlock breaker, drive along the road while coming back to the centre:
+            # a straight move back to the centre can go nearer the truck, which the check below stops.
+            if not m.side and (abs(m.off) < 0.5 or m.cool > 0):
                 m.s += m.direction * m.speed * dt
                 if m.s >= L:
                     m.s, m.direction = float(L), -1
