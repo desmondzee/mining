@@ -50,7 +50,7 @@ def scorer() -> Scorer | None:
     ckpt = os.environ.get("PLANNER_CKPT")
     if not ckpt:
         return None
-    from .scorer import load_scorer
+    from .learned import load_scorer
 
     log.info("driving with learned scorer %s", ckpt)
     return load_scorer(ckpt)

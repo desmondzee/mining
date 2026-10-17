@@ -13,6 +13,10 @@ dependencies = [
     "websockets>=13",
 ]
 
+[project.optional-dependencies]
+# Learned path scorer (PLANNER_CKPT). Optional so the default image stays small.
+model = ["torch>=2.2"]
+
 [project.scripts]
 brain = "brain.app:main"
 fakesim = "brain.fakesim:main"
