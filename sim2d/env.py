@@ -43,6 +43,8 @@ HORIZON = 3.0
 RDT = 0.2
 N_ROLL = int(round(HORIZON / RDT))
 TRUCK_R = 3.5
+TRUCK_HALF_W = 2.12  # Komatsu HD465-7, 4.24 m wide
+EDGE_MARGIN = 0.5  # extra room a candidate path must keep to a road edge, m
 VEHICLE_R = 1.5  # light vehicle; truck + vehicle = 5 m
 PED_R = 0.3  # spec.md pedestrian collider radius
 PED_SPEED = (1.2, 1.6)  # spec.md walking speed range, m/s
@@ -234,11 +236,12 @@ class DriveEnv:
             s_before, off_before = m.s, m.off
             m.cool = max(0.0, m.cool - dt)
             # Light vehicles give way to haul trucks: pull off the road until the truck passes.
+            ahead = m.pts[max(0, min(L, int(round(m.s + 5))))]
+            away_dir = 1 if math.hypot(ahead[0] - tr.x, ahead[1] - tr.z) > d_truck else -1
             if m.side and self.hold_time > 3.0:
                 # Deadlock breaker: the truck has waited 3 s, so drive away along the road.
                 m.side, m.cool = 0, 10.0
-                ahead = m.pts[max(0, min(L, int(round(m.s + 5))))]
-                m.direction = 1 if math.hypot(ahead[0] - tr.x, ahead[1] - tr.z) > d_truck else -1
+                m.direction = away_dir
             if d_truck < 22 and not m.side and not m.cool:
                 base = np.array([m.x - perp[0] * m.off, m.z - perp[1] * m.off])
                 pv = np.array(perp)
@@ -246,7 +249,8 @@ class DriveEnv:
                 ok = [s for s in (away, -away) if not w.blocked_at(*(base + pv * 12 * s))]
                 m.side = ok[0] if ok else 0
                 if not ok:
-                    m.direction = -m.direction
+                    # No room to pull off (narrow road): back away from the truck once and keep going.
+                    m.direction, m.cool = away_dir, 5.0
             elif d_truck > 28:
                 m.side = 0
             want = m.side * 12.0
@@ -275,6 +279,7 @@ class DriveEnv:
         # Integrate at DT so thin walls cannot fall between samples; keep every RDT for features.
         sub = int(round(RDT / DT))
         fine = np.empty((N_CAND, N_ROLL * sub, 2))
+        fine_yaw = np.empty((N_CAND, N_ROLL * sub))
         tan = np.tan(CAND_STEER * MAX_STEER)
         for k in range(N_ROLL * sub):
             v = v + (CAND_SPEED - v) * min(1.0, ACCEL * DT)
@@ -282,8 +287,11 @@ class DriveEnv:
             x = x + v * np.sin(yaw) * DT
             z = z + v * np.cos(yaw) * DT
             fine[:, k, 0], fine[:, k, 1] = x, z
+            fine_yaw[:, k] = yaw
         pts = fine[:, sub - 1 :: sub]
-        hit = self.world.blocked_at(fine[..., 0], fine[..., 1]).any(axis=1)
+        # The whole body must stay on the road: on a narrow road a swerve that puts a side
+        # over the edge is unsafe, so the only safe choice left is to stop.
+        hit = self._off_road(fine[..., 0], fine[..., 1], fine_yaw, TRUCK_HALF_W + EDGE_MARGIN).any(axis=1)
         clear = np.full(N_CAND, np.inf)
         if self.movers:
             times = RDT * np.arange(1, N_ROLL + 1)
@@ -331,6 +339,12 @@ class DriveEnv:
         self.route_idx = 0
         self.replans += 1
         return True
+
+    def _off_road(self, x, z, yaw, half_w: float) -> np.ndarray:
+        """True where the centre or either side of the truck at (x, z, yaw) is on a blocked cell."""
+        rx, rz = np.cos(yaw) * half_w, -np.sin(yaw) * half_w
+        w = self.world
+        return w.blocked_at(x, z) | w.blocked_at(x + rx, z + rz) | w.blocked_at(x - rx, z - rz)
 
     def _nearest_idx(self) -> int:
         lo = max(0, self.route_idx - 5)
@@ -397,7 +411,8 @@ class DriveEnv:
 
         clear = min((math.hypot(m.x - tr.x, m.z - tr.z) - TRUCK_R - m.radius for m in self.movers), default=math.inf)
         self.min_clear = min(self.min_clear, clear)
-        collided = clear < 0 or bool(self.world.blocked_at(tr.x, tr.z))
+        off_road = bool(self._off_road(tr.x, tr.z, tr.yaw, TRUCK_HALF_W))
+        collided = clear < 0 or off_road
         if self.hold_time >= REPLAN_AFTER and self._replan_around():
             before = 0
         self._plan()
@@ -413,5 +428,5 @@ class DriveEnv:
         if arrived:
             reward += 10.0
         done = collided or arrived or self.ticks >= MAX_TICKS
-        info = {"collided": collided, "arrived": arrived, "clear": clear, "stops": self.stops, "t": self.t}
+        info = {"collided": collided, "off_road": off_road, "arrived": arrived, "clear": clear, "stops": self.stops, "t": self.t}
         return self.observe(), reward, done, info

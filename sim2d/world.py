@@ -14,8 +14,11 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+from scipy.ndimage import distance_transform_edt
 
 WORLDS_DIR = os.path.join(os.path.dirname(__file__), "worlds")
+SAFE_CLEARANCE = 6.0  # m from a cell centre to the nearest blocked cell; A* pays extra below this
+EDGE_COST = 2.0  # extra step cost at zero clearance, falls linearly to 0 at SAFE_CLEARANCE
 
 
 @dataclass
@@ -28,6 +31,7 @@ class World:
     cost: np.ndarray  # (n, n) float, row = z
     blocked: np.ndarray  # (n, n) bool
     inflated: np.ndarray  # (n, n) bool, blocked grown by one cell
+    clearance: np.ndarray  # (n, n) float, m from cell centre to the nearest blocked cell edge or map edge
     sites: Dict[str, Tuple[float, float]]
     site_types: Dict[str, str]
     roads: List[np.ndarray]  # each (k, 2) x/z centreline
@@ -61,6 +65,8 @@ class World:
         # Allow start and goal cells inside the inflated margin (sites sit next to walls).
         passable = ~self.inflated if extra_blocked is None else ~(self.inflated | extra_blocked)
         passable[sr, sc] = passable[gr, gc] = True
+        # Keep the route near the middle of narrow roads so the truck body has room on both sides.
+        cost = self.cost + EDGE_COST * np.clip(1.0 - self.clearance / SAFE_CLEARANCE, 0.0, 1.0)
         g = {(sr, sc): 0.0}
         parent = {(sr, sc): None}
         heap = [(0.0, 0.0, (sr, sc))]
@@ -80,7 +86,7 @@ class World:
                     rr, cc = r + dr, c + dc
                     if not (0 <= rr < n and 0 <= cc < n) or not passable[rr, cc] or (rr, cc) in done:
                         continue
-                    step = (1.4142 if dr and dc else 1.0) * 0.5 * (self.cost[r, c] + self.cost[rr, cc])
+                    step = (1.4142 if dr and dc else 1.0) * 0.5 * (cost[r, c] + cost[rr, cc])
                     ng = gcur + step
                     if ng < g.get((rr, cc), math.inf):
                         g[(rr, cc)] = ng
@@ -112,6 +118,8 @@ def load(world_id: str = "default", worlds_dir: str = WORLDS_DIR) -> World:
     for dr in (-1, 0, 1):
         for dc in (-1, 0, 1):
             inflated |= padded[1 + dr : 1 + dr + n, 1 + dc : 1 + dc + n]
+    open_cells = np.pad(~blocked, 1, constant_values=False)
+    clearance = distance_transform_edt(open_cells)[1:-1, 1:-1] * float(nav["cell_m"]) - float(nav["cell_m"]) / 2
     roads = [np.array([[p[0], p[2]] for p in r["points"]]) for r in meta.get("roads", [])]
     return World(
         name=meta.get("name", world_id),
@@ -122,6 +130,7 @@ def load(world_id: str = "default", worlds_dir: str = WORLDS_DIR) -> World:
         cost=cost,
         blocked=blocked,
         inflated=inflated,
+        clearance=clearance,
         sites={s["id"]: tuple(s["pos"]) for s in meta["sites"]},
         site_types={s["id"]: s["type"] for s in meta["sites"]},
         roads=roads,
