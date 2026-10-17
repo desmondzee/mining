@@ -3,19 +3,18 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <style>
-/* Layout: a working console. Live map + model view on top, the contract and plans below, one column on phones. */
+/* Layout: a working console. Overview, then the live map with the truck's own view, then contract, plans and references. */
 :root {
   --bg: #eef0ec;
   --panel: #f9faf7;
   --ink: #1b2124;
   --muted: #5b6569;
   --line: #d3d8d2;
-  --accent: #a87400;        /* hi-vis amber, darkened for text on light */
+  --accent: #a87400;
   --accent-fill: #f2b51d;
   --path: #0f7c8c;
   --bad: #c2362b;
   --good: #2f7d32;
-  --map-ink: #1b2124;
   --display: "IBM Plex Sans Condensed", "Arial Narrow", sans-serif;
   --body: "IBM Plex Sans", system-ui, sans-serif;
   --mono: "IBM Plex Mono", ui-monospace, Menlo, monospace;
@@ -23,13 +22,13 @@
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --bg: #15191b; --panel: #1d2326; --ink: #e5e8e3; --muted: #9aa4a6; --line: #2f383b;
-    --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070; --map-ink: #e5e8e3;
+    --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070;
     color-scheme: dark;
   }
 }
 :root[data-theme="dark"] {
   --bg: #15191b; --panel: #1d2326; --ink: #e5e8e3; --muted: #9aa4a6; --line: #2f383b;
-  --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070; --map-ink: #e5e8e3;
+  --accent: #f2b51d; --accent-fill: #f2b51d; --path: #3cc3d3; --bad: #ef6b5f; --good: #6cc070;
   color-scheme: dark;
 }
 * { box-sizing: border-box; }
@@ -43,42 +42,45 @@ h1, h2, h3 { font-family: var(--display); line-height: 1.15; text-wrap: balance;
 h1 { font-size: clamp(30px, 5vw, 44px); font-weight: 700; letter-spacing: -0.01em; }
 h2 { font-size: 24px; font-weight: 600; }
 h3 { font-size: 17px; font-weight: 600; }
-p { margin: 0; max-width: 68ch; }
+p { margin: 0; max-width: 70ch; }
 .eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); }
 header { display: grid; gap: 12px; }
 .chips { display: flex; flex-wrap: wrap; gap: 8px; }
 .chip { font-family: var(--mono); font-size: 12px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 999px; color: var(--muted); }
 .chip.hot { border-color: var(--accent-fill); color: var(--accent); }
 section { display: grid; gap: 16px; }
-.console { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 20px; }
+.console { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 20px; }
 @media (max-width: 860px) { .console { grid-template-columns: 1fr; } }
-.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0; }
-canvas { display: block; width: 100%; height: auto; image-rendering: pixelated; border-radius: 3px; touch-action: manipulation; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 16px; display: grid; gap: 12px; min-width: 0; align-content: start; }
+canvas { display: block; width: 100%; height: auto; border-radius: 3px; touch-action: manipulation; }
 #map { cursor: crosshair; }
-.controls { display: flex; flex-wrap: wrap; gap: 8px; }
-button {
+.controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button, select {
   font-family: var(--body); font-size: 13px; font-weight: 500; padding: 7px 12px; border-radius: 4px; cursor: pointer;
   border: 1px solid var(--line); background: var(--bg); color: var(--ink);
 }
-button:hover { border-color: var(--accent-fill); }
-button:focus-visible, label:focus-within { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
+button:hover, select:hover { border-color: var(--accent-fill); }
+button:focus-visible, select:focus-visible { outline: 2px solid var(--accent-fill); outline-offset: 2px; }
 button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: #1b2124; }
-label.toggle { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.ctl-label { font-size: 12px; color: var(--muted); font-family: var(--mono); }
 .hint { font-size: 13px; color: var(--muted); }
-.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; }
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(118px, 1fr)); gap: 10px; }
 .stat { display: grid; gap: 2px; }
 .stat .k { font-size: 11px; font-family: var(--mono); color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
-.stat .v { font-family: var(--mono); font-size: 17px; font-variant-numeric: tabular-nums; }
+.stat .v { font-family: var(--mono); font-size: 16px; font-variant-numeric: tabular-nums; }
 .pill { display: inline-block; font-family: var(--mono); font-size: 12px; padding: 2px 8px; border-radius: 3px; }
 .pill.ok { background: color-mix(in srgb, var(--good) 18%, transparent); color: var(--good); }
 .pill.no { background: color-mix(in srgb, var(--bad) 18%, transparent); color: var(--bad); }
-.channels { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
-.channels figure { margin: 0; display: grid; gap: 4px; }
-.channels figcaption { font-family: var(--mono); font-size: 11px; color: var(--muted); }
+.pill.warn { background: color-mix(in srgb, var(--accent-fill) 22%, transparent); color: var(--accent); }
+.bars { display: grid; gap: 6px; }
+.bar { display: grid; grid-template-columns: 64px 1fr 52px; gap: 8px; align-items: center; font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.bar .track { position: relative; height: 8px; border-radius: 4px; background: color-mix(in srgb, var(--ink) 10%, transparent); overflow: hidden; }
+.bar .fill { position: absolute; top: 0; bottom: 0; background: var(--accent-fill); border-radius: 4px; }
+.bar .val { text-align: right; font-variant-numeric: tabular-nums; color: var(--ink); }
 .legend { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--muted); }
 .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; margin-right: 5px; vertical-align: -1px; border-radius: 2px; background: var(--c); }
 .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); }
-table { border-collapse: collapse; width: 100%; min-width: 620px; font-size: 14px; }
+table { border-collapse: collapse; width: 100%; min-width: 640px; font-size: 14px; }
 th, td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
 th { font-family: var(--mono); font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); font-weight: 500; }
 tr:last-child td { border-bottom: 0; }
@@ -86,12 +88,14 @@ td code, p code, li code { font-family: var(--mono); font-size: 13px; }
 .group td { font-family: var(--display); font-weight: 600; background: color-mix(in srgb, var(--accent-fill) 10%, transparent); }
 .plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; }
 .plans ol { margin: 0; padding-left: 20px; display: grid; gap: 6px; }
+.panel.main { border-color: var(--accent-fill); border-width: 2px; }
 .repos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 12px; }
-.repo { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); min-width: 0; }
+.repo { display: grid; gap: 6px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); min-width: 0; align-content: start; }
 .repo a { font-family: var(--mono); font-size: 13px; color: var(--path); text-decoration: none; overflow-wrap: anywhere; }
 .repo a:hover { text-decoration: underline; }
 .repo .tag { font-family: var(--mono); font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
 .repo p { font-size: 14px; color: var(--muted); }
+ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 74ch; }
 .flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) auto minmax(0, 1fr); grid-template-rows: repeat(3, auto); gap: 10px 12px; align-items: center; }
 .flow .node { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); min-width: 0; }
 .flow .node:nth-child(-n+3) { grid-column: 1; }
@@ -104,119 +108,121 @@ td code, p code, li code { font-family: var(--mono); font-size: 13px; }
   .flow .node, .flow .key, .flow .node:last-child, .flow .node:nth-child(-n+3) { grid-column: 1; grid-row: auto; }
   .flow .arrow { grid-row: auto; transform: rotate(90deg); justify-self: center; }
 }
-ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72ch; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
 
 <div class="wrap">
   <header>
-    <div class="eyebrow">Physical AI Hack · Mining fleet · Path finding + task assignment</div>
+    <div class="eyebrow">Physical AI Hack · Copper Ridge Pit · Path finding + task assignment</div>
     <h1>Haul Path Planner</h1>
-    <p>The planner takes the map around one truck and the truck state. It returns 16 waypoints for the next 8 seconds. A* solves this today (Plan A). A small network learns to copy A* (Plan B). This page runs A* live, so you can see the input and output.</p>
+    <p>Each truck gets a route from the road graph. A learned driving policy follows that route and steers around moving vehicles, ten times per second, as FSD does. A* with a rule-based local planner is the baseline that the model must beat. The map below is the real <code>default</code> world from <code>vato/environment</code>.</p>
     <div class="chips">
       <span class="chip hot">Feature freeze 15:30</span>
       <span class="chip hot">Submit before 16:00</span>
-      <span class="chip">Sim: Unity</span>
-      <span class="chip">Deploy: M5 / GB10</span>
-      <span class="chip">Train: Cambridge 2×3090</span>
+      <span class="chip">Truck: 8 m/s, 30° steer, 5 m wheelbase</span>
+      <span class="chip">Lidar: 120°, 100 m, 10 Hz</span>
+      <span class="chip">Deploy: GB10 (watson)</span>
     </div>
   </header>
 
   <section aria-labelledby="flow">
     <h2 id="flow">How the parts connect</h2>
     <div class="flow">
-      <div class="node"><span class="eyebrow">Unity</span><b>Top-down radar</b><span>64×64 px, 2 m/px, rotates with the truck</span></div>
-      <div class="node"><span class="eyebrow">Unity</span><b>Truck state</b><span>x, y, heading, v, loaded</span></div>
-      <div class="node"><span class="eyebrow">CV teammate</span><b>Boxes + distance</b><span>from the truck camera</span></div>
+      <div class="node"><span class="eyebrow">Unity</span><b>Forward lidar</b><span>120°, 100 m, 10 Hz, points relative to the truck</span></div>
+      <div class="node"><span class="eyebrow">Unity</span><b>Truck state</b><span>x, z, yaw, speed, load</span></div>
+      <div class="node"><span class="eyebrow">Road graph + dispatcher</span><b>Route to the goal</b><span>Dijkstra on roads; the LLM picks the goal site</span></div>
       <div class="arrow" aria-hidden="true">→</div>
-      <div class="node key"><span class="eyebrow">Planner (us)</span><b>BEV grid → A* or CNN</b><span>radar colours become channels; CV obstacles are added as disks</span></div>
+      <div class="node key"><span class="eyebrow">Our model</span><b>Learned driving policy</b><span>lidar ranges + next route points + speed in; throttle and steer out. Baseline: A* + rule-based local planner.</span></div>
       <div class="arrow" aria-hidden="true">→</div>
-      <div class="node"><span class="eyebrow">Back to Unity</span><b>16 waypoints</b><span>one every 0.5 s; Unity drives along them</span></div>
+      <div class="node"><span class="eyebrow">Back to the sim</span><b>throttle, steer, path</b><span><code>path</code> = chosen 3 s plan, <code>ghost_paths</code> = other candidates</span></div>
     </div>
-    <p class="hint">The LLM dispatcher sits above the planner. It picks the goal (which pit or dump) for each truck. The risk monitor reads the front radar distance and the truck speed, and it warns before the point of no return.</p>
   </section>
 
   <section aria-labelledby="live">
-    <h2 id="live">Live A* on a procedural mine</h2>
+    <h2 id="live">Baseline driving on the real map</h2>
+    <p class="hint">This animation runs the baseline: an A* route, then a local planner that tries 44 short paths every 0.1 s and drives the best one. Grey lines are the candidate paths (<code>ghost_paths</code>). Purple dots are other vehicles that move along the roads. The learned policy replaces the local planner and must do the same job with fewer stops and no collisions.</p>
     <div class="console">
       <div class="panel">
-        <canvas id="map" width="600" height="600" aria-label="Mine map. Click to set the start, click again to set the goal."></canvas>
+        <canvas id="map" width="520" height="520" aria-label="Copper Ridge Pit map. Click to set the truck start, click again to set the goal."></canvas>
         <div class="legend">
-          <span style="--c:#c9a15a">haul road</span>
-          <span style="--c:#3b3f41">blocked (rock or slope over 15%)</span>
-          <span style="--c:#7a4fb3">pit / crusher</span>
-          <span style="--c:var(--path)">path</span>
-          <span style="--c:var(--bad)">turn tighter than 15 m radius</span>
+          <span style="--c:#9b8a6a">haul road</span>
+          <span style="--c:#30363a">impassable</span>
+          <span style="--c:var(--path)">A* route</span>
+          <span style="--c:var(--accent-fill)">chosen 3 s path</span>
+          <span style="--c:#8a5cc7">moving vehicle</span>
         </div>
         <div class="controls">
-          <button class="primary" id="btn-random">New query</button>
-          <button id="btn-map">New map</button>
-          <button id="btn-rock">Drop obstacle on path</button>
-          <label class="toggle"><input type="checkbox" id="opt-smooth" checked> Smooth path</label>
+          <span class="ctl-label">from</span><select id="from"></select>
+          <span class="ctl-label">to</span><select id="to"></select>
+          <button class="primary" id="btn-play">Pause</button>
+          <button id="btn-reset">Restart</button>
+          <button id="btn-rock">Drop obstacle ahead</button>
         </div>
-        <p class="hint">Click the map to set the start. Click again to set the goal. "Drop obstacle on path" acts like a new CV detection, and A* plans again.</p>
+        <p class="hint">Or click the map to set a start, then click again to set a goal.</p>
       </div>
       <div class="panel">
-        <h3>What the model sees and returns</h3>
-        <p class="hint">A 128 m × 128 m window around the truck, rotated so that the truck faces up. The truck sits 32 m from the bottom edge. Cells are 2 m, so each channel is 64 × 64.</p>
-        <div class="channels" id="channels"></div>
+        <h3>The truck's view: model input and output</h3>
+        <canvas id="ego" width="320" height="300" aria-label="Truck-centred view with lidar rays, route points and the chosen path."></canvas>
+        <p class="hint">Truck at the bottom, facing up. Rays: 60 lidar ranges over 120°, out to 100 m. Teal dots: the next route points. Yellow: the chosen path.</p>
+        <div class="bars" id="bars"></div>
         <div class="stats" id="stats"></div>
       </div>
     </div>
   </section>
 
   <section aria-labelledby="io">
-    <h2 id="io">Input / output contract (proposal)</h2>
-    <p>The planner team owns this contract. Unity, the CV teammate and the risk monitor read and write these fields. All positions are in metres, in the truck frame: +x forward, +y left.</p>
+    <h2 id="io">Model input and output (proposal)</h2>
+    <p>It plugs into <code>brain/brain/policy.py: act(truck, rgb, depth, points)</code> on <code>main</code>, which already returns throttle and steer. Positions are in metres in the truck frame.</p>
     <div class="table-wrap">
       <table>
-        <thead><tr><th>Field</th><th>Shape</th><th>Source</th><th>Notes</th></tr></thead>
+        <thead><tr><th>Field</th><th>Size</th><th>Source</th><th>How we get it</th></tr></thead>
         <tbody>
-          <tr class="group"><td colspan="4">Input: BEV raster, 6 × 64 × 64, 2 m cells</td></tr>
-          <tr><td>road</td><td><code>64×64</code></td><td>terrain teammate</td><td>1 on graded haul road, 0 elsewhere</td></tr>
-          <tr><td>slope</td><td><code>64×64</code></td><td>terrain heightmap</td><td>rise over run, divided by 0.15 and clipped to 1</td></tr>
-          <tr><td>static obstacles</td><td><code>64×64</code></td><td>map</td><td>rocks, berms, pit edges</td></tr>
-          <tr><td>CV obstacles</td><td><code>64×64</code></td><td>CV teammate</td><td>obstacle mask from the truck camera, projected to the ground</td></tr>
-          <tr><td>other vehicles</td><td><code>64×64</code></td><td>Unity</td><td>footprints of the other fleet vehicles</td></tr>
-          <tr><td>route / goal</td><td><code>64×64</code></td><td>dispatcher</td><td>Gaussian at the goal, or the goal direction at the window edge</td></tr>
-          <tr class="group"><td colspan="4">Input: vector state, 7 values</td></tr>
-          <tr><td>v, loaded, a_brake</td><td><code>3</code></td><td>Unity</td><td>the same values that the risk monitor uses</td></tr>
-          <tr><td>goal dx, dy, dyaw</td><td><code>3</code></td><td>dispatcher</td><td>goal pose in the truck frame</td></tr>
-          <tr><td>vehicle type</td><td><code>1</code></td><td>Unity</td><td>0 haul truck, 1 excavator, 2 drill, 3 dozer</td></tr>
+          <tr class="group"><td colspan="4">Input: 79 numbers</td></tr>
+          <tr><td>lidar ranges</td><td><code>60</code></td><td>Unity lidar</td><td>Keep points more than 0.5 m above the ground. Split 120° into 60 bins of 2°. Take the nearest point in each bin. Divide by 100 m.</td></tr>
+          <tr><td>route points</td><td><code>8 × 2</code></td><td>road graph</td><td>The next 8 route points, 5 m apart, in the truck frame</td></tr>
+          <tr><td>speed, last steer, load</td><td><code>3</code></td><td>Unity</td><td>speed / 8, steer, load / capacity</td></tr>
           <tr class="group"><td colspan="4">Output</td></tr>
-          <tr><td>waypoints</td><td><code>16×2</code></td><td>planner</td><td>(x, y) every 0.5 s for 8 s; the spacing gives the speed profile</td></tr>
-          <tr><td>assignments</td><td><code>JSON</code></td><td>LLM dispatcher</td><td><code>{"truck_id", "site_id", "reason"}</code> per truck, made again when a site or truck changes</td></tr>
+          <tr><td>throttle, steer</td><td><code>2</code></td><td>model</td><td>throttle 0..1, steer −1..1 (positive = right), as in the <code>main</code> spec</td></tr>
+          <tr><td>path, ghost_paths</td><td><code>15 × 2</code> each</td><td>bicycle model</td><td>Roll the model forward 3 s for the website. Sample other actions for the ghost paths.</td></tr>
         </tbody>
       </table>
     </div>
+    <p class="hint">Why lidar ranges and not a camera image: the ranges show moving vehicles directly, they are the same in our 2D training sim and in Unity, and a small network learns from them in minutes.</p>
   </section>
 
   <section aria-labelledby="plans">
-    <h2 id="plans">Two plans</h2>
+    <h2 id="plans">Learned model and baseline</h2>
     <div class="plans">
-      <div class="panel">
-        <div class="eyebrow">Plan A · no training · demo fallback</div>
-        <h3>A* + smoothing + path follower</h3>
+      <div class="panel main">
+        <div class="eyebrow">Main · trained · 0.3–5M parameters</div>
+        <h3>Learned driving policy</h3>
         <ol>
-          <li>Build the cost grid from road, slope and obstacles.</li>
-          <li>Run A* from the truck to the goal.</li>
-          <li>Smooth the path and check the 15 m turning radius.</li>
-          <li>Send 16 waypoints to Unity. Unity follows them.</li>
-          <li>Plan again when CV reports a new obstacle.</li>
+          <li>Build a fast 2D training sim in Python: the real nav grid, the bicycle model from the spec, simulated lidar, and moving vehicles on the roads.</li>
+          <li>Warm start: copy the baseline for about 20,000 steps (imitation learning). About 10 minutes on a 3090.</li>
+          <li>Train with PPO: reward progress along the route, penalise collisions, near misses, and hard steering. About 30–60 minutes, with 64 sims running in parallel on the GPU.</li>
+          <li>Export to ONNX. Run it inside <code>act()</code> on the GB10.</li>
         </ol>
-        <p class="hint">Grid A* gives sharp 45° steps. Smoothing removes most of them. Hybrid A* (A* that plans with the turning radius) removes all of them, but it costs more time.</p>
       </div>
       <div class="panel">
-        <div class="eyebrow">Plan B · imitation of A* · 1–5M parameters</div>
-        <h3>Small CNN that copies A*</h3>
+        <div class="eyebrow">Baseline · no training · always works</div>
+        <h3>A* + rule-based local planner</h3>
         <ol>
-          <li>Generate 1,000 maps with random start and goal on the Cambridge machine.</li>
-          <li>Run A* on each map. Cut each path into samples, one every 0.5 s: about 50 per path, about 50,000 samples in total.</li>
-          <li>Train the CNN: BEV + state in, A* waypoints out. Loss = mean distance error. About 10 min on one 3090.</li>
-          <li>Export to ONNX. Run with Core ML on the M5, or TensorRT on the GB10.</li>
-          <li>Show the model path and the A* path together in the demo.</li>
+          <li>A* on the nav grid, or Dijkstra on the road graph, gives the route.</li>
+          <li>Every 0.1 s: try 11 steer values × 4 speeds for 3 s.</li>
+          <li>Reject paths that hit the terrain or a predicted vehicle position.</li>
+          <li>Drive the path that stays nearest the route and goes fastest.</li>
         </ol>
-        <p class="hint">Online RL (Unity ML-Agents, PPO) can tune the model later. It needs millions of steps, so it is not in scope before 15:30.</p>
+        <p class="hint">This is what the animation above shows. If training fails, the demo uses this.</p>
+      </div>
+      <div class="panel">
+        <div class="eyebrow">How we compare them</div>
+        <h3>Same scenarios, same seeds</h3>
+        <ol>
+          <li>Success: reached the goal in time.</li>
+          <li>Collisions and near misses (under 4 m).</li>
+          <li>Time to goal and number of full stops.</li>
+          <li>Warning lead time before the point of no return (risk monitor).</li>
+        </ol>
       </div>
     </div>
   </section>
@@ -224,342 +230,390 @@ ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72c
   <section aria-labelledby="repos">
     <h2 id="repos">Open-source projects to look at</h2>
     <div class="repos">
-      <div class="repo"><span class="tag">See it · animations</span><a href="https://github.com/AtsushiSakai/PythonRobotics" target="_blank" rel="noopener">AtsushiSakai/PythonRobotics</a><p>A*, Hybrid A*, path smoothing and path following, each with a GIF. Look at "HybridAStar" for the turning-radius problem.</p></div>
-      <div class="repo"><span class="tag">See it · animations</span><a href="https://github.com/zhm-real/PathPlanning" target="_blank" rel="noopener">zhm-real/PathPlanning</a><p>Side-by-side animations of A*, D* Lite, RRT and others. D* Lite plans again quickly when an obstacle appears.</p></div>
-      <div class="repo"><span class="tag">Plan B · closest match</span><a href="https://github.com/omron-sinicx/neural-astar" target="_blank" rel="noopener">omron-sinicx/neural-astar</a><p>A network learns from map images to guide A*. It trains on A* paths, as in Plan B.</p></div>
-      <div class="repo"><span class="tag">Plan B · learned heuristic</span><a href="https://github.com/AIRI-Institute/TransPath" target="_blank" rel="noopener">AIRI-Institute/TransPath</a><p>A transformer predicts a cost map for grid path finding. A* then uses it.</p></div>
-      <div class="repo"><span class="tag">Driving · object-level planner</span><a href="https://github.com/autonomousvision/plant" target="_blank" rel="noopener">autonomousvision/plant</a><p>PlanT: a small transformer plans waypoints from a list of objects in CARLA. Same output as our planner.</p></div>
-      <div class="repo"><span class="tag">Driving · BEV → waypoints</span><a href="https://arxiv.org/abs/1812.03079" target="_blank" rel="noopener">ChauffeurNet (Waymo, paper)</a><p>Imitation learning from a top-down raster to future waypoints. Our input and output follow this design.</p></div>
-      <div class="repo"><span class="tag">Unity · RL later</span><a href="https://github.com/Unity-Technologies/ml-agents" target="_blank" rel="noopener">Unity-Technologies/ml-agents</a><p>PPO and imitation in Unity. Use it only if there is time after Plan B works.</p></div>
-      <div class="repo"><span class="tag">Driving · camera → path</span><a href="https://github.com/commaai/openpilot" target="_blank" rel="noopener">commaai/openpilot</a><p>Its model outputs a planned path from the camera. It is road-specific and larger, so use it as a reference only.</p></div>
+      <div class="repo"><span class="tag">See it · baseline</span><a href="https://github.com/AtsushiSakai/PythonRobotics" target="_blank" rel="noopener">AtsushiSakai/PythonRobotics</a><p>GIFs of A*, Hybrid A* and the Dynamic Window Approach. The DWA animation looks like our local planner.</p></div>
+      <div class="repo"><span class="tag">Train it · PPO</span><a href="https://github.com/vwxyzjn/cleanrl" target="_blank" rel="noopener">vwxyzjn/cleanrl</a><p>PPO in one readable Python file. The fastest path to our own training loop.</p></div>
+      <div class="repo"><span class="tag">Train it · PPO</span><a href="https://github.com/DLR-RM/stable-baselines3" target="_blank" rel="noopener">DLR-RM/stable-baselines3</a><p>Tested PPO and imitation tools. Use it if we wrap our 2D sim as a Gym environment.</p></div>
+      <div class="repo"><span class="tag">Driving · planner</span><a href="https://github.com/autonomousvision/plant" target="_blank" rel="noopener">autonomousvision/plant</a><p>PlanT: a small transformer that plans from a list of nearby objects in CARLA.</p></div>
+      <div class="repo"><span class="tag">Driving · imitation</span><a href="https://arxiv.org/abs/1812.03079" target="_blank" rel="noopener">ChauffeurNet (Waymo, paper)</a><p>Imitation learning for driving, and why it needs perturbed examples to recover from mistakes.</p></div>
+      <div class="repo"><span class="tag">Unity · RL</span><a href="https://github.com/Unity-Technologies/ml-agents" target="_blank" rel="noopener">Unity-Technologies/ml-agents</a><p>PPO inside Unity. Slower than a 2D Python sim, so use it only to fine-tune later.</p></div>
     </div>
   </section>
 
   <section aria-labelledby="open">
-    <h2 id="open">Open questions</h2>
+    <h2 id="open">Open questions for the team</h2>
     <ul class="open">
-      <li>How large is the Unity map in metres? It sets the grid size and the A* time.</li>
-      <li>How does Unity send state to Python: WebSocket, ZeroMQ, or ML-Agents?</li>
-      <li>Does CV give a ground mask, or boxes with distances?</li>
+      <li><code>main</code> uses <code>brain/</code> on port 8080 with throttle and steer. <code>vato/environment</code> describes <code>server/</code> on port 8000 with paths. Which one do we integrate into?</li>
+      <li>Who spawns the moving vehicles in Unity, and do they follow the roads?</li>
+      <li>Does the lidar see the ground? We need the ground height to remove ground points.</li>
       <li>"0.5B → frame rate → GB10, 3 times": a 3× speed target, or 3 trucks at the same time?</li>
     </ul>
   </section>
 </div>
 
 <script>
+const WORLD = {"n":130,"cell":2.0,"origin":[-130.0,-130.0],"name":"Copper Ridge Pit","cost":"EBERDw8RExUWFhUUExIREhIRERESExMTExISERERERAQDw8QERISEhMSEA4ODg4ODw8PEBAPDw8PDw8QEA8PDw4ODg8QEBAPDg4PDw8QEREQEBAQDg4PERQWFhQSEBAQDw8QERISEhMTEhEQDxESExQUFBQTExUWFxUTEA8OEBEREBESDxATFRYWFRQTEhEQEBAREBARExMTExMTEhISERAPDw4OEBESEhMTEhAODg0ODg4PDxAQEBAQERERERAQDw8ODg4ODw8QERAQEBAPEBEQEBAQEA8ODhEUFhYUEhEREA8PDxASEhITFBMREA8QEhITFBQTEhIUFhgYGBYSDhESEQ8RDxAUFhYWFBEPDg4ODg4PEBESExQUFBMTExISERAPDg4ODhASExMTEhEPDg4ODg4ODw8QEBAQERISEhEREBAPDg4PDw8PEBESEREQEBAQEBAQEBAPDg4RFBUWFBMSEREQDw8QERISFBQUEhEQERISFBUUEhAPEBMVGBoaGBMQEhEPDxAUFxcVEQ4KCgoKCgoKDg8RExQWFhQTExISEhEPDg4ODg4RExQTEhAPDw8ODg4ODw8QEBAQERESEhERERAQDw8PDw8PDxAREREREBAPDg8QEBAPDw8QERITFBQTEhISERAPDw8QEhMUFBMSERESFhcWFBIPDg4PERQXGhsZExIRDxAUFhgVEAoKCgoKCgoKCgoOEBMWGBgVEhISEREQDg4NDg4OERQUExAPDg8PDw8PDw8QEBAQEBEREREREBAQEBAQEBAQEBAQEBAQEBAPDw4ODxAQDw8QEBEREhMUExISEhIREA8PDxETFBQTEhISFhkYFhIPDgoKCgoKERYaGxcSEQ8SFRcVEAoKCgoKCgoKCgoKCgoRFRgaGBMREREQDw4ODg4ODxEUFBIQDw8PDw8QEBAQEBARERESERAQEBAQEBAQEBAQEBAQDw8PDxAQDw8PDw8QDw8PEBAQERESExMSEhISERAPDg8REhMTEhISFRoaGBMOCgoKCgoKCgoPFRoZFBAPEhUVEQoKCgoKCgoKCgoKCgoKEBQXGhoWExQUFBMSEA8PDg8RExUWFxcXFxcWFhUVFBQVFRYWFRQTEhIRERISExMTExISERERERESEhMTFBQUFBQUFBQUFBQUFBQTExIREREQDw8QEhMTExISExocGxgUCgoKCgoKCgoKCg8VGBYRDhQVEw4KCgoKCgoKCgoKCgoKCgodGxYWGx0dHh4eHh0cGxoaGhsdHh4eHh4eHh4eHh4eHh4eHR0cHBwcHBscHBwcHRwcHBsbGxsbHBwcHR4eHh4eHh4fHx8eHh0cGxoYFxYXFxgaGxsbGhgXFhUVGh4gCgoKCgoKCgoKCgoKEBYXFA8UFBEKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoTFxYRFBMPCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKEBUXFBMSDgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCg8UFhUSEA4KCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoPEhQVEA8OCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKDxETFA8ODgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoK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AAAAAA0NDQ0NDQ4PEBAREhITExQXHh0VCgoKCgoKCgoKChIXFhIREhISEhEPEBAQEBAQEBAPDw4ODQ0ODg4PDw4ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAAAAAAACgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKAAAACgoAAAANDQ0NDQ0NDg8QEBESEhMUFh8fGBIKCgoKCgoKCgoSFhUREBESEREQDg8PDw8PEBAQDw8ODg0ODg8PDw8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAAAAAAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKAAAKGQAAAA0NDQ0NDQ0ODxARERITExUeIRsXCgoKCgoKCgoPEhUVERAQERAQDw4PDw8PDxAQDw8PDw4ODg8PDw8PDg4NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAAAAAAAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKAAAAAAAADQ0NDQ0NDQ4PEBESEhMUGyIfGgoKCgoKCgoKEBIUFBIQDxEQEA8ODw8PDw8QDw4PDw8ODg4PDw8PDg4ODQ0NDQ0NDQ0NDQ0NDQAAAAAAAA4AAAoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAAAAA0NDQ0NDQ0ODhAQERISExYfIh0KCgoKCgoKHg8RExMSERARERAPDg8PDg4PDw4ODw8PDw4PDw8PDw4ODQ0NDQ0NDQ0NDQ0NDgAAAAAAAAAAAAAKCgoKCgoKCgoKCgoKCgoKCgAAAAAACgoKCgoKCgoKCgoKCgoKCgoKCgoKCgAAAAAADQ0NDQ0NDQ4PEBAREhITGCAiCgoKCgoKCiAQERITEhISEhEQEA8PDw4ODg4ODg8PDw8PDw8PDw4ODQ0NDQ0NDQ0NDQ0NAAAAAAAADQAAAAAKCgoKCgoKCgoKCgoKAAAAAAAAAAAAAAAAAAAAAAoKCgoKCgoKCgoKCgoKCgoKAAAAAA4NDQ0NDQ0NDg8QERESExMYKAoKCgoKCgogEhISEhISEhEREBAQDw8ODg4ODQ4ODw8PEBAPDw8ODg0NDQ0NDQ0NDQ0NAAAAAAANDgAAAAAKCgoKCgoKCgoKCgoAAAAAAAAAAAAAAAAAAAAAAAAAAAAKCgoKCgoKCgoKCgoKCgoKAAAADQ0NDQ0NDQ0ODxAREhISFikKCgoKCgoKHxMSEhISEREQEBAREBAQDw4ODg4PDw8QEBAQDw8ODg0NDQ0NDQ0NDQ0AAAAAAAANAAAAAAAKCgoKCgoKCgoKCgAAAAAAIBgWFhYXFxYWFR8oAAAAAAAAAAAACgoKCgoKCgoKCgoKCgoAAAANDQ0NDQ0NDQ4PEBESEhcoCgoKCgoKCh0TExMSERAQEBAREREREA8ODQ4PDxAQEBAQEA8PDg0NDQ0NDQ0NDQ0AAAAAAA0NAAAAAAAKCgoKCgoKCgoKAAAAAAAYFxcXFxcXFxcXFQ0NDQAAAAAAAAAAAAAACgoKCgoKCgoKCgoKCgAAAA0NDQ0NDQ0ODxAQEREZJgoKCgoKCgocExQUExIRERAQEREREREQDw4ODxAQEBAQEA8PDg4NDQ0NDQ0NDQ0AAAAAAA0NAAAAAAAACgoKCgoKCgoKAAAAABgXFxcXFxcXFxcXFxMNDQ0NDQ0RAAAAAAAAAAAKCgoKCgoKCgoKCgoKAAAADQ0NDQ0NDQ4PEBERHCMKCgoKCgoKGRMUFBQTEhEQEBERERESEQ8ODw8QEBAQEA8PDg4NDQ0NDQ0NDQ0AAAAAAA0OAAAAAAAACgoKCgoKCgoKAAAAABcXFxcXFxgYGBgcAAAAAAATDQ0NDQ0OAAAAAAAAAAAKCgoKCgoKCgoKCgoAAAANDQ0NDQ0NDg8QER4gCgoKCgoKChYSExQUExISERAREREREhIQDw8PDw8PDw8PDg4NDQ0NDQ0NDQ0AAAAADQ0QAAAAGgAACgoKCgoKCgoKAAAAGRcXFxcYGBgYAAAAAAAAAAAAAAAAAA0NDQ0AAAAAAAAAAAAKCgoKCgoKCgoKCgAADQ0NDQ0NDQ4PEBEgCgoKCgoKCgoVEhMUFBMSEhERERERERISERAQEA8PDw8PDw4ODQ0NDQ0NDQ0AAAAADQ0PAAAAGAAACgoKCgoKCgoKAAAAGBcXGBgYGBgAAAAAAAAAAAAAAAAAAAAAAA0NDQ0AAAAZAAAAAAoKCgoKCgoKCgoKAAANDQ0NDQ0NDg8QIgoKCgoKCgoKExISExMTEhIQEBESERERERERERAQEA8PDw4ODQ0NDQ0NDQ0QAAAADg0NAAAAChoAAAoKCgoKCgoKAAAAGBcXGBgYGAAAAAAAAAANDQ0NDQ0AAAAAAAAAAA0NDQAAABcAAAAACgoKCgoKCgoKCgAAAA0NDQ0NDQ4PECQKCgoKCgoKChISEhMTEhISEBAREhIREBEREhEQEBAPDw8ODg0NDQ0NDQ0NAAAAAA0NAAAAAAoAAAoKCgoKCgoKCgAAGhcYGBgYGAAAAAAADQ0NDQ0NDQ0NDQ0NAAAAAAAADg0NDgAAAAAAAAAKCgoKCgoKCgoKAAAADQ0NDQ0NDg8mCgoKCgoKCgoSERITEhIREQ4PERISEREREhIRERAQDw8ODg0NDQ0NDQ0NAAAAAA0NAAAAAAoKAAAKCgoKCgoKCgAAABcYGBgYGQAAAAANDQ0NDgAAAAAAAA0NDQ0NAAAAAAAADQ0NAAAAGAAAAAoKCgoKCgoKCgoAAA0NDQ0NDQ4PJgoKCgoKCgoREREREhIRERAODxESEhESEhISERAQEA8PDg4NDQ0NDQ0NDQAAAA0NAAAAAAoKAAAKCgoKCgoKCgAAABcYGBgYGAAAAA0NDQ4AAAAAAAAAAAAAAAANDQ0NAAAAAAANDQ0AAAAXAAAACgoKCgoKCgoKCgAADQ0NDQ0NDiYKCgoKCgoKEREQERIRERAQDg8REhISEhISERAQEA8PDg4NDQ0NDQ0NDQAAAAANDQAAAAoKCgAACgoKCgoKCgoAABkYGBgYGQAAAA0NDQAAAAAAAAAAAAAAAAAAAAANDQ0AAAAAAA0NDQAAGBYAAAAKCgoKCgoKCgoAABANDQ0NDQ4mCgoKCgoKChERERISEhEREQ8PERISEhISEhEQEBAPDw4ODQ0NDQ0NDQ0AAAANDQAAAAAKCgAACgoKCgoKCgoAAAAXGBgYGQAAAA0NAAAAAAAAAA0NDQ0NEQAAAAAAAA0NDQAAAAAADQ0AAAAWFgAAAAoKCgoKCgoKCgAADQ0NDQ0NJgoKCgoKCgoRERESExISEhEPDxESEhISEhIREBAQDw8ODg0NDQ0NDQ0AAAAADQ0AAAAKCgoAAAoKCgoKCgoKAAAZGBgYGQAAAA0NAAAAAAANDQ0NDQ0NDQ0NDQAAAAAAAA0NDwAAAAANDQAAABYXAAAACgoKCgoKCgoKAAANDQ0NDSQKCgoKCgoKERESEhISEhERDw8QERISExISEREQEA8PDg0NDQ0NDQ0NAAAADQ0AAAAACgoKAAAKCgoKCgoKCgAAFxgYGRkAAA0NAAAAAAANDQ0NDQ0NDQ0NDQ0NDQAAAAAADQ0QAAAAEA0NAAAAFhkAAAAKCgoKCgoKCgAADQ0NDQ0iCgoKCgoKChERERISEhERERAPDxARExMTEhEREBAPDg4NDQ0NDQ0NDQAAAA0NAAAACgoKAAAKCgoKCgoKCgAAABgYGRkAAAANDgAAAA8NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAANDQAAAAANDQ4AABcWAAAACgoKCgoKCgoKAA4NDQ0NIQoKCgoKCgoREREREhERERAQEA8QEhMTExISERAQDw4ODQ0NDQ0NDRMAAAANDQAAAAoKCgAACgoKCgoKCgoAABcYGBkZAAANDQAAABANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAA0NAAAAAA0NAAAAFhYAAAAKCgoKCgoKCgAADQ0NDh8KCgoKCgoKERAQEREREBAPERERERITExMSEhEQEA8ODQ0NDQ0NDQ0AAAANDQAAAAoKCgoAAAoKCgoKCgoKAAAYGBgZAAAODQAAAAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAAANDQ0AAAAODQ0AABgWGQAACgoKCgoKCgoAAA0NDQ8dCgoKCgoKChEQEBERERAQDhISEhITExISEhIREA8PDg0NDQ0NDQ0NAAAADQ0AAAAKCgoKAAoKCgoKCgoKCgAAGBgZGQAADQ0AAAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAA0NAAAAAA0NAAAAFxYAAAAKCgoKCgoKCgAADQ0QCgoKCgoKCgoREBAREREREA4SEhMUExISEhISERAPDg4NDQ0NDQ0NDQAAAA0NAAAACgoKCgAKCgoKCgoKCgAAIBgYGRoAAA0AAAAQDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAADQ0AAAAODQ0AABcWGAAACgoKCgoKCgoAAA0NEAoKCgoKCgoKEBARERESERAOEhMUFBMSEhISEhEQDw4ODQ0NDQ0NDQ0AAAANDQAAAAoKCgoACgoKCgoKCgoAABsYGRkAAA0NAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAA0NDwAAAA0NAAAAFhYAAAAKCgoKCgoKCgANDRIKCgoKCgoKChAREREREhEQDhITFBQTEhISEhIREA8ODg0NDQ0NDQ0NAAAADQ0AAAAKCgoKCgoKCgoKCgoKAAAYGBkZAAANDQAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAADQ0AAAANDQAAABcWGgAACgoKCgoKCgoADQ0TCgoKCgoKCgoREREREhEREA4TExQUExIRERIRERAPDg4NDQ0NDQ0NDQAAAA0NAAAACgoKCgoKCgoKCgoKCgAAGBgZGgAADQ0AAA4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAA0NAAAAAA0NAAAaFhYAAAoKCgoKCgoKAAANFQoKCgoKCgoKERERERIREQ8PExQVFBMSERESEREQDw4NDQ0NDQ0NDQ0AAAANDQAAAAoKCgoKCgoKCgoKCgoAABgYGRoAAA0AAAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAADQ0AAAANDQAAABcWAAAACgoKCgoKCgAADRYKCgoKCgoKEhERERERERAPDxMTFBQUEhESEhIREA8ODQ0NDQ0NDQ0NAAAADQ0AAAAKCgoKCgoKCgoKCgoKAAAZGBkaAA0NAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAA0NAAAADQ0AAAAXFhwAAAoKCgoKCgoKAA0XCgoKCgoKChIREREREREQDw8TExQUFBMSEhISERAPDg0NDQ0NDQ0NDQAAAA0NAAAACgoKCgoKCgoKCgoKCgAAHBgZGgANDQAAAA0NDQ0NDQ0NDQoKCgoKCg0NDQ0NDQ0NDQ0NDQ0AAAANDQAAAA0NEgAAFxYWAAAKCgoKCgoKCgANFwoKCgoKCgoSEBESEhEREBAPExITExMTEhISEhEQDw4NDQ0NDQ0NDQ0AAAANDQAAAAoKCgoKCgoKCgoKCgoAACAYGRoADQ0AAAANDQ0NDQ0NDQoKCgoKCgoKCgoKDQ0NDQ0NDQ0NAAAADQ0QAAAADQ0AABoWFgAACgoKCgoKCgoADRcKCgoKCgoKEhAREhIRERAQDxISExMUExMSEhIREA8ODQ0NDQ0NDQ0NAAAADQ0AAAAKCgoKCgoKCgoKCgoKCgAAGBkaAA0NAAAADQ0NDQ0NDQ0KCgoKCgoKCgoKCgoKCg0NDQ0NDQ8AAAANDQAAAA0NAAAAFhYrGAoKCgoKCgoKAA0WCgoKCgoKChMQERISEhEREBASEhITFBQTExMSERAPDg0NDQ0NDQ0NDQAAAA0NAAAACgoKCgoKCgoKCgoKCgoAABgZGgANDQAAAA0NDQ0NDQ0NCgoKCgoKCgoKCgoKCgoKCgoKDQ0NAAAADQ0AAAANDQAAABcWJBEhCgoKCgoKCgoNFgoKCgoKCgoSEBESEhISEREQEhESExQUFBQTEhEQDw4NDQ0NDQ0NDQ0AAAANDQAAAAoKCgoKCgoKCgoKCgoKAAAZGR4ADQ0AAAANDQ0NDQ0NDQoKCgoKCgoKCgoKCgoKCgoKCgoKDQAAAA0NAAAADQ0AAAAXFh4QGAoKCgoKCgoKDRYKCgoKCgoKERAQERESEhISEBIRERIUFRUUExIREA8ODQ0NDQ0NDQ0NEgAAEQ0OAAAACgoKCgoKCgoKCgoKCgAAABgcEg0NAAAADQ0NDQ0NDQ0KCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAANDQAAAA0NAAAAFxYYDxEKCgoKCgoKCg4WCgoKCgoKChAQEBARERITEhASERESFBUVFBMSERAPDg0NDQ0NDQ0NDQ0AAAANDQAAAAoKCgoKCgoKCgoKCgoKAAAYGRYXGAAAAA0NDQ0NDQ0NDQ0KCgoKCgoKCgoKCgoKCgoKCgoKAAAADQ0AAAANDQAAAA4ODg0QCgoKCgoKCgoTFgoKCgoKCgoREBAQEBESExIQEhISEhQUFBQTEhEQDw4NDQ0NDQ0NDQ0NAAAADQ0AAAAKCgoKCgoKCgoKCgoKCgAAABkZGhsAAAANDQ0NDQ0NDQ0NDQ0NCgoKCgoKCgoKCgoKCgoKCgAAAA0NAAAADQ0AAAANDQ0NEAoKCgoKCgoKCgoKCgoKCgoKEBAQEBAREhMSEBISEhMUFBQUExIREA8ODQ0NDQ0NDQ0NDQAAAA0NAAAACgoKCgoKCgoKCgoKCgoAAAAYGRobAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQoKAAoKCgoKCgoKCgoAAAANDQAAAA0NAAAADQ0NDRAKCgoKCgoKCgoKCgoKCgoKCg8QEBAQERISEhASExMUFBQTExMSEhAPDg0NDQ0NDQ0NDQ0AAAANDQAAAAAKCgoKCgoKCgoKCgoKCgAAABkZGgAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAKCgoKCgoKCgoKAAAADQ0AAAANDQAAAA0NDQ0PCgoKCgoKCgoKCgoKCgoKCgoPDxAQEBESEhIQExMUFBQUExMTEhIQDw4NDQ0NDQ0NDQ0NDgAAAA0NAAAACgoKCgoKCgoKCgoKCgoKAAAAGRobAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQAACgoKCgoKCgoKAAAADg0AAAARDQ0AAAANDQ0NDQoKCgoKCgoKCgoKCgoKCgoKDw8QEBAREhISERMUFRUUExMTExIREA8ODQ0NDQ0NDQ0NDQ0AAAANDQAAAAoKCgoKCgoKCgoKCgoKCgAAABwZGgAAAA8NDQ0NDQ0NDQ0NDQ0NDQ0AAAoKCgoKCgoKCgAAAA0NAAAADQ0AAAAPDQ0NDQ0SCgoKCgoKCgoKCgoKCgoKEg8PEBAQEBEREhITFRYWFRMTExMSERAQDg0NDQ0NDQ0NDQ0NAAAADQ0AAAAACgoKCgoKCgoKCgoKCgoKAAAAABkaAAAADQ0NDQ0NDQ0NDQ0NDQ0AAAoKCgoKCgoKCgoAAAANDQAAAA0NAAAADQ0NDQ0NDRIKCgoKCgoKCgoKCgoKChMPDw8PEBAQEBEREhUXFxUUExMTEhEREA8ODQ0NDQ0NDQ0NDRAAAAANDQAAAAoKCgoKCgoKCgoKCgoKCgoAAAAAGRoAAAANDQ0NDQ0NDQ0NDQ0AAAAACgoKCgoKCgoKAAAADQ8AAAANDQAAAA0NDQ0NDQ0NDRIUCgoKCgoKCgoKCgoTDw8PDw8QDw8PEBMVFhYVFBMTExIRERAPDg0NDQ0NDQ0NDQ0NAAAADQ0AAAAACgoKCgoKCgoKCgoKCgoKCgAAAAAAGQAAAAANDQ0NDQ0NDQAAAAAACgoKCgoKCgoKAAAADQ0AAAANDQ8AAAANDQ0NDQ0NDQ0NDRAUCgoKCgoKCgoKEg8PDw8PEA8PDw8UFRUVFRQUExMSEhEQDw4NDQ0NDQ0NDQ0NDQAAAAANDQAAAAoKCgoKAAoKCgoKCgoKCgoKCgAAAAAAAAAAAAAAEA4AAAAAAAAAAAoKCgoKCgoKCgAAAA0NAAAADQ0AAAAODQ0NDQ0NDQ0NDQ0NDQ4VCgoKCgoKCgoPDw8PDxAPDw8PFRQTFBQUFBQTExIREA8ODQ0NDQ0NDQ0NDQ0NAAAADQ0AAAAACgoKCgAACgoKCgoKCgoKCgoKCgAAAAAAAAAAAAAAAAAAAAAAAAoKCgoKCgoKCgAAAA0NAAAAAA0NAAAADQ0NDQ0NDQ0NDQ0NDQ0NEAoKCgoKCgoKDw8PDw8QEBAQEBQTExMUFBQUFBMSERAPDg0NDQ0NDQ0NDQ0NDQAAAAANDQAAAAAKCgoKAAAKCgoKCgoKCgoKCgoKCgAAAAAAAAAAAAAAAAAACgoKCgoKCgoKCgoAAAANDQAAAA0NAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ8KCgoKCgoKCg8PDw8PEBAQEBAUEhITFBUVFRQUEhEQDw4NDQ0NDQ0NDQ0NDQ0NAAAADQ0QAAAACgoKCgoAAAoKCgoKCgoKCgoKCgoKCgoAAAAAAAAAAAAKCgoKCgoKCgoKCgoAAAANDQAAAAANDQAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NCgoKCgoKCgoQDw8PDxARERERExISExQWFhUVFBMSEA8ODg0NDQ0NDQ0NDQ0NDQAAAAANDQAAAAAKCgoKCgAACgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAAQDQAAAAANDQAAAAANDQ0NDQ0NDQ0NDQ0NDQ0NDRcKCgoKCgoKEA8PEBAQERISERMSERIUFhYWFRQTEhEQDw4NDQ0NDQ0NDQ0NDQ0NAAAAAA0NAAAAAAAKCgoKAAAACgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAAADQ4AAAANDQ0AAAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0YCgoKCgoKChAPEBAQEBESEhETEhESFBUWFhUUExIREA8ODQ0NDQ0NDQ0NDQ0NDQ0AAAAADQ0AAAAAAAAKCgoKAAAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAAADQ0AAAAADQ0AAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NGAoKCgoKCgoRDxAQEBAREhIQExISEhQVFhYVFBMSERAPDg0NDQ0NDQ0NDQ0NDQ0NAAAAAAANDQAAAAAAAAAKCgoAAAAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoAAAAADQ0AAAAADQ0AAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDRgKCgoKCgoKEhAQEBAQEREREBMTExMUFRYWFRQTEhEQDw4ODQ0NDQ0NDQ0NDQ0NDQ0AAAAAAA0NDQAAAAAAAAAAGxsAAAAKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgAAAAAADQ0AAAAADQ0NAAAADw0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ZCgoKCgoKChEQEBAQEBARERATExQUFBUWFhUUExISERAPDg0NDQ0NDQ0NDQ0NDQ0NDQAAAAAADQ0NDwAAAAAAAAAAAAAAACUKCgoKCgoKCgoKCgoKCgoKCgoKCgAAAAAQDRAAAAAADQ0NAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NGgoKCgoKCgoQEBAPEBAQEBEQExMUFRUVFhYWFBMSEhEQDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQAAAAAADQ0NDwAAAAAAAAAAAAAAAAAACgoKCgoKCgoKCgoKCgoAAAAAAAANDQAAAAAADQ0NAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDRoKCgoKCgoKDxAPDw8QEBERERMUFRUVFRYXFhUUExIREA8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAAADQ0NDQAAAAAAAAAAAAAAAAAAAAAACgoKCgoAAAAAAAAAAA0NEAAAAAAADQ0NAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0aCgoKCgoKCg8PDw8PEBEREhESExUVFRUWFhYVFBMSEhEQDw4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0QAAAAAAAADQ0NDQ4AAAAAAAAAABEAAAAAAAAAAAAAAAAAAAAADQ0AAAAAAAAADQ0NAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NGgoKCgoKCgoPDw8PDxASEhIQEBIUFRUVFhYWFRQTEhIREA8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAAAADQ0NDQ0PAAAAAAAAAAAPDQAAAAAAAAAADQ0NDgAAAAAAAAANDQ0OAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDRkKCgoKCgoKDw8PDxAREhIREBASExQUFRYWFhUUExISERAPDw4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAAAAAA0NDQ0NAAAAAAAAAAAAAAAAFBQYAAAAAAAAAAAAAA4NDQ0AAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4YCgoKCgoKCgoQEBAQERISEQ8PERITFBUWFhYVFBMSEhEQEA8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0AAAAAAAAAAA8NDQ0NDQAAAAAAAAAAAAAAAAAAAAAAAAAADQ0NDQ4AAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0OFgoKCgoKCgoKEREQEBERERAQDxAREhMVFhcWFRQUExIRERAPDg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0OAAAAAAAAAAANDQ0NDQ0AAAAAAAAAAAAAAAAAAA4NDQ0NDQAAAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDhQKCgoKCgoKChIREBARERAPDw4QERISFBYXFhUVFBMSEhEREA8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAAAAAAPDQ0NDQ0NDQ0NDg4NDQ0NDQ0NDQ0PAAAAAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4TCgoKCgoKCgoTEBESEhIREA8ODxAREhQWFhYWFhUUFBMSERAQDw4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAAAAAAAADw0NDQ0NDQ0NDQ0NDQ0NDgAAAAAAAAAADQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4OEh0KCgoKCgoKExAREhMSEQ8ODg4QERITFBUWFhYWFRQTEhIREA8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQAAAAAAAAAAAAAAABENDRAXAAAAAAAAAAAAAAANDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODhEfCgoKCgoKChMSEhMSERAPDg4OEBESEhMUFRUVFRUUFBMSERAQDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4AAAAAAAAAAAAAAAAAAAAAAAAAAAAADg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4QIQoKCgoKCgoTExMTERAQEA4QEBAQERISExQUFBQUFBQTEhEQEA8PDg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NAAAAAAAAAAAAAAAAAAAAAA0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODyIKCgoKCgoKFBQTEhAPEBAPEhMSEREREhITExQUFBQUExIRERAQDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDREVFRINDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg8jCgoKCgoKChYTEhEPDg8QEBMUExIREhISEhISExQVFBMSEhEQEA8PDg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg8QJAoKCgoKCgoXEhEQDw4ODxASEhISERISERERERIUFRUUExIRERAQDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4PECUKCgoKCgoKFxAPDw8PDg4PERAQEREREBAQEBESFBUVFBMSEhEREBAPDg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4OEBEmCgoKCgoKChYQDw8PDw8ODxAPDxAQEA8PDw8QEhQVFRQTExISEREQEA8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg4ODhARJgoKCgoKCgoVEBAQEBAPDxAPDw8PEA8ODg4PEBEUFRYVFBMTEhIRERAQDw8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODg4ODg8QEScKCgoKCgoKFBERERAQDxAQDw8PDg4ODg4ODw8RExUWFRQTExMSEhEREBAPDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4ODg4ODg4PEBEnCgoKCgoKCgoSERAPDw8QEQ4ODg0ODg4PDw8PEBIUFRQUFBQTExISEhEQEA8PDg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4ODg4ODg4ODxARJwoKCgoKCgoKEREPDg4PEBEODg4ODw8PDw8PDg8RExQUFBQUFBMTEhISERAQDw8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4ODg4ODg4ODg8QESYKCgoKCgoKChEQDw4PEBAQDQ4ODw8PDw8PDg4PEBITExMUFBQUExMTEhIREBAPDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg4PDw8ODg4ODg8PEBEmCgoKCgoKCgoREA8PEBAQEA4ODxAPDw4ODg4ODhAREhISExQUFBQUExMSEhEREA8PDg4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg4PDw8PDg4ODg8PEBESJh8KCgoKCgoKEhEQEBAQDw8PEBAQDw8ODg4PDw8PEBEREhMUFBQUFBQTExISEREQEA8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODg8PDw8PDw4ODg4PDxAREiUhCgoKCgoKChIREA8PDg8PDw8PDg4ODw8QEBAQDw8PEBESExQUFBQUFBMTEhISERAQDw8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODg8PDw8PDw8ODg4ODw8QERIjJAoKCgoKCgoUERAPDg4ODw8ODg4ODxAQEBAQDw8ODg8QERITFBQUFBQUExMTEhIRERAQDw8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4ODw8PDw8QEA8PDw4ODg8QERITIicKCgoKCgoKGBIQEA8ODg8RERERERISEhEQEBAPDw4ODxAQERITFBQUFBMTExMSEhEREBAQDw8ODg0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg8PDw8PDw8PEA8PDw8PDg8QEBEUHSMmCgoKCgoKChoSERAQEBEREhISExQUFBMSEhISEhEQDw4PDxAREhMUFBQTExMTEhISEREREBAQDw8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODw8PDxAQEA8PDw8PDg4PDw8QERIUHyUlHgoKCgoKCgobEBAQERITExISExQUFBQTEhITExMTEhEODg8PEBASExQUExMTExISEhISEhERERAQEA8PDg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ4ODg8PDw8QEBAQEBAPDw8PDw4ODg8PERIUHiYmIR0KCgoKCgoKGg8PDxASExQSEhITExMTEhISEhMTFBQTEA8PDw4PEBITExMTExMTExMTExMSEhIREREQEBAPDw4ODQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0ODg4PDw8QEBAQEBAQEBAQEA8QEA8PDg4PEBIUGyUnIhkaCgoKCgoKCgoNDg4PERISEhISEhERERERERERERMUFBEQDw4ODg8REhMSEhMUFBQUFBQUExMTEhISEhEREBAQDw8ODg4NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDg4ODw8QEBAQERERERERERAQEBAQEBAPDg8PEBETFiInJBsQCgoKCgoKCgoKCgoODxERERERERAQEBAQEBAQDxASExQSEA8ODg4OEBISEhESExQVFRUUFBQUFBMTExMSEhIREREQEBAPDw4ODg4NDQ0NDQ0NDQ0NDQ0NDQ0ODg4ODw8QEBAQEBERERISEREREREREBAREREQDw8PDxASFBsmJh8TCgoKCgoKCgoKCgoKDQ8REhEQEBAQDw8PDw8PDw8QERITEhAPDw4ODg8REhERERMUFRUVFRUVFRQUFBQUFBMTExMSEhIREREQEBAPDw8ODg4ODg4ODg4ODw8PDxAQEBARERESEhISEhISEhISEhERERAREREREBAQDxARExYgJiMaCgoKCgoKCgoKCgoKCgoPERISDw8PDw8PDw8PDxAQEBESEhIREA8PDw4PERISEhITFBQVFRUVFRUVFRUVFRUVFBQUFBQTExMTEhIREREQEBAQEBAQEBAQEBAREREREhISEhMTExMTExMTExMSEhISEREREREQEBARERAQERQXIiYgFgoKCgoKCgoKCgoKCgoKDxETFA8QEA8PDxAQEBAQERESExMTEhEQEBAPDg8REhMUFBQUFRYWFhYXFxYWFhYWFhYWFhUVFRUUFBQUExMTEhISEhISEhISEhISEhISExMTFBQUFBQUFBQUFBQTExMTExISEhEQEBARERERERIVGCMlHhMKCgoKCgoKCgoKCgoKCg8SFBUPEBAPDw8QEBAQEBESEhMUFBMSERAQDw4OEBIUFBQUFBUWFxcXGBgYFxcXFxcYGBcXFhYWFhUVFRUVFRQUFBQUFBQUFBQUFBQUFBQUFBQVFRUVFBQUFBQUFBQUFBQTExISERAQERISEhITFRchJB4TCgoKCgoKCgoKCgoKCgoPFBYVDg8PDw8PEBAQEBAQERESExMTEhEQEBAPDxASExMTExQVFhcXGBgYGBgXFxcYGBgYGBcXFxcXFhcXFxYWFhYWFhYWFhYVFRUVFRUVFRUWFhYWFhUVFRUVFBQUFBQUFBQTExIRERISExMTFBQWHyMeFAoKCgoKCgoKCgoKCgoKEBYXFQ4ODg4PDxAQDg4ODg8QERESEhIREBAQDxASEhEREhMUFRYWFxcXFxcXFxcXFxgYGBgYGBgYGBgYGBgYGBcXFxcXFxcXFxcXFxcXFxcXFxcXFxYWFRUVFRQUFBQUFBQUFBQTExITExQTExMUFBwiHxYKCgoKCgoKCgoKCgoKChMYGBIPDw4PEBAPDg4ODg4OEBAREhISERAQDxAREhIRERIUFRUVFRUVFRYWFhYWFhYWFxgYGRkZGRkZGRkZGRkZGBgYGBgYGBgYGBgYGBgYFxgYGBcXFhYVFBQTEhISExMUFBQUFBQUFRUUExMTExMZIiEaEAoKCgoKCgoKCgoKCg8WGRYQEBAQEBAQDw4ODw4ODhAREhITExIREA8QERISERITFBUVFBQUFBQUFRUVFRUVFhYXGBoaGhoZGRoaGhoaGRkZGBgYGBgZGRkZGRkZGBgYGBgYFxYWFRQTEhISEhISExMUFBQVFhYWFRQTEhISFR8jHhUOCgoKCgoKCgoKCgoUGRgSDxAQEREQDg4ODg8PDg4QERISExMSEA8OEBESEhISExQTExMTExQUFBQUFRUVFhYWFxgZGhoaGRkaGhoaGhoaGRkYGBkZGRkZGRkZGRgYGBgYGBcWFhUUExMSEhISEhISEhITFRYXFhUUExISEhIaIiIbEgoKCgoKCgoKCgoUGRoVDxAQERISERAQDw4ODw4PEBISEhMTEhAODg8REhISExQUEhESEhMTFBQVFRYWFhcXFxgYGBkZGhoaGhoaGhoaGRkaGhoaGRkZGRkZGRkZGRgYGBcXFhYVFRUVFBMTEhIRERISExQWFxcVFBMSEhERFB0iHhcRDgoKCgoKCg8UGRoXEREQERESExMSEQ8ODg8PDxESEhISEhISEA8QERISEhQUFBIRERESEhMTFBYXFxgYGBgYFxcYGRobGxsaGhoaGRkZGhoaGhoZGRoaGhoaGhoZGBgXFxcWFhYXFxYVExIRERESEhMVFhcXFRQUExIRERIWHh8bFRAODg4PEBIUFxgWERESEREREhMTExIQDg4ODxAREhIREBASEhEQERISEhIUFRQSEBAQEBESEhQVFxgYGBgYFxcXFxgaGxsbGhoaGhkYGRoaGhoZGRkaGhoaGhoaGRgXFhcWFhYWFxgXFRMREA8QERIUFRYXFhUVFBQTEhISFBcbGxgUEQ8QERMUFRUUEhIUExIQEBERERESERAPDw8QEREREA4OEBERERISExMTFBUUEhAODw8PEBITFRYXFxcXFxcXFxcYGRoaGhoaGhoZGBgZGRkZGRgZGRkZGRkZGBgXFhYWFhUVFhYWFhUTEQ8ODxITFBQVFhYVFRUVFBISExQVFhgYFxQREBESEhEQERMTExMSDw8PDw8QEREQDxAQEREREBAODhAREhITFBQUFBQVExEPDg8PDxASFBUWFhcWFhYWFhcXGBcXGBgYGBkZGhkZGBgYGBgYGBgXFxcXFxYWFRQUFRUUFBQUFBUWFBIPDxESExMTFBUWFhYWFhQTExMUFBQUFRUVFBMSERAQERISEhISEQ==","h":"6//q/+r/6f/q/+r/6//s/+z/7f/u/+7/7v/v/+//8P/x//L/8v/z//T/9f/2//j/+f/6//v//P/9//7/////////////////AAABAAIABAAFAAYABwAHAAcABwAHAAgACAAIAAgACQAKAAoACgAJAAkACQAJAAgACAAIAAgABwAHAAcABgAGAAYABgAHAAcABwAHAAcABgAGAAYABAAEAAMAAgACAAEAAQABAAEAAAD///3/+v/5//f/9v/2//X/9P/0//T/8//y//H/8P/v/+3/7P/r/+r/6v/p/+j/5//l/+T/4v/h/9//3v/d/9z/2v/Z/9j/1//W/9b/1//Y/9j/2f/q/+n/6f/q/+v/7P/t/+7/7v/v/+//7//v//D/8P/w//H/8v/z//T/9f/2//f/+P/5//r//P/9//7//v///wAA////////AAAAAAEAAgAEAAUABgAHAAcABwAHAAcABwAIAAgACAAJAAkACQAJAAkACAAIAAgACAAIAAcABwAHAAcABgAGAAYABgAGAAYABwAHAAcABgAGAAYABQAEAAQAAwACAAIAAQABAAEAAQAAAP///f/7//n/+P/3//b/9f/1//T/9P/z//L/8f/w/+//7v/s/+v/6v/q/+n/6P/n/+b/5P/j/+H/4P/f/97/3f/c/9v/2f/Y/9b/1v/X/9j/2f/Z/+n/6f/p/+r/7P/t/+//7//w//D/8P/w//D/8P/w//D/8f/x//L/9P/1//f/+P/5//r/+//8//3//v//////AAAAAP////8AAAEAAgADAAQABgAGAAcABwAHAAcABwAHAAcACAAIAAgACAAIAAgACAAIAAcABwAHAAcABwAHAAcABgAGAAYABgAFAAUABQAGAAYABgAGAAUABQAFAAQABAADAAMAAgACAAEAAQABAAAA///9//v/+v/4//f/9v/2//X/9P/0//T/8//y//H/8P/u/+3/7P/r/+r/6f/o/+f/5v/k/+L/4f/g/+D/3//f/97/3f/c/9r/2P/X/9f/2P/Z/9n/6f/p/+r/7P/u/+//8P/w//D/8P/w//D/8P/w//D/8P/w//H/8v/z//X/9//5//r/+//8//3//v////////8AAP///////wAAAQADAAQABQAGAAYABwAHAAcABwAHAAcABwAHAAcACAAIAAgACAAHAAYABgAGAAYABgAGAAYABgAGAAYABgAFAAUABQAFAAUABQAFAAUABQAFAAUABAAEAAQAAwACAAIAAgABAAEAAAD///7//P/6//n/+P/3//b/9f/0//T/8//z//L/8v/w/+//7v/s/+v/6v/p/+j/5//k/+L/4f/g/+D/4P/g/+D/3//f/97/3P/a/9j/1//Y/9n/2v/q/+r/7P/u/+//8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/x//L/9f/3//r/+//8//3//v////////8AAAAAAAD/////AAABAAMABQAGAAYABgAGAAcABwAHAAcABgAGAAYABwAHAAcABwAHAAYABgAFAAUABQAFAAUABQAGAAYABgAFAAUABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAADAAMAAgACAAEAAAAAAP///v/9//v/+v/5//j/9//2//X/9P/z//P/8//y//H/8P/u/+3/7P/r/+r/6P/l/+P/4f/g/+D/4P/g/+D/4P/g/+D/4P/f/93/2//Z/9j/2f/a/+v/7P/u/+//8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8v/0//b/+f/7//z//f/+//////8AAAAAAAAAAAAAAAAAAAIAAwAEAAUABgAGAAYABgAGAAYABgAGAAYABgAGAAYABgAGAAYABQAFAAUABAAEAAQABAAEAAUABQAFAAUABAAEAAQABAADAAMAAwAEAAQABAAEAAQABAAEAAMAAgACAAIAAQAAAAAA///+//3//P/6//n/+P/3//b/9f/0//T/8//z//L/8f/w/+7/7f/s/+v/6f/n/+T/4f/g/+D/4P/g/+D/4P/g/+D/4P/g/+D/3//d/9v/2v/Z/9r/6//t/+//8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/x//L/9f/4//v//P/9//7//////wAAAAAAAAAAAAAAAAEAAgADAAQABQAFAAUABgAGAAYABQAFAAUABQAFAAUABQAFAAUABQAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAMAAwACAAIAAgABAAEAAAD///7//f/8//v/+f/4//f/9v/1//T/9P/z//P/8v/x/+//7v/t/+z/6//o/+X/4v/g/+D/4P/g/+D/4P/g/+D/4P/g/+D/4P/g/9//3f/b/9r/2v/s/+7/7//w//D/8P/w//D/8P/w//D/8f/x//H/8v/y//P/8//0//T/9f/2//b/9//4//j/+f/6//r/+//7//z//P/9//3//v/+//7//v///////////wAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////////////////////7//v/+//7//v/9//3//P/8//z/+//7//r/+v/5//j/9//3//b/9f/0//P/8v/y//D/8P/v/+7/7f/s/+v/6v/p/+j/5//n/+b/5f/l/+T/5P/j/+P/4//h/+D/4P/g/+D/4P/e/9z/2v/Z/+3/7//w//D/8P/w//D/8P/w//H/8f/x//H/8v/y//P/8//0//T/9f/2//b/9//3//j/+f/5//r/+//7//z//P/9//3//v/+//7///////////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////////////7//v/+//7//f/9//z//P/8//v/+v/6//n/+f/4//f/9v/2//X/9P/z//L/8f/w/+//7v/t/+z/6//q/+n/6f/o/+f/5v/m/+X/5P/k/+T/4//j/+P/4//g/+D/4P/g/9//3f/b/9n/7v/v//D/8P/w//D/8P/w//H/8f/x//H/8v/y//P/8//0//T/9f/1//b/9v/3//j/+P/5//r/+v/7//z//P/9//3//v/+//7/////////AAAAAAAAAAAAAAAAAAAAAAEAAQABAAEAAQABAAEAAQABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////7//v/+//3//f/8//z//P/7//r/+v/5//j/+P/3//b/9f/0//P/8v/x//D/7//u/+7/7P/s/+v/6v/p/+j/5//n/+b/5v/l/+T/5P/k/+P/4//j/+H/4P/g/+D/3//e/9z/2v/u/+//8P/w//D/8P/w//D/8f/x//L/8v/y//L/8//z//T/9P/1//b/9v/3//j/+P/5//r/+v/7//v//P/8//3//v/+//7//////wAAAAAAAAAAAAAAAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAAAAAAAAAAAAAAAAAAAAAAAAAAA///////////+//7//v/9//3//P/8//v/+//6//n/+f/4//f/9v/1//T/9P/z//L/8f/w/+//7v/t/+z/6//q/+n/6f/o/+f/5v/m/+X/5f/k/+T/5P/j/+P/4//g/+D/4P/g/97/3f/b/+//8P/w//D/8P/w//D/8P/x//H/8v/y//L/8//z//T/9P/0//X/9v/2//f/+P/4//n/+v/6//v//P/8//3//f/+//7//v//////AAAAAAAAAAAAAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAD///////////7//v/+//3//f/8//z/+//7//r/+f/5//j/9//2//X/9P/0//P/8v/x//D/7//u/+3/7P/r/+r/6f/p/+j/5//m/+b/5f/l/+T/5P/k/+P/4//j/+D/4P/g/+D/3//d/9z/7//w//D/8P/w//D/8P/w//H/8f/x//H/8v/y//P/8//0//T/9f/1//b/9v/3//j/+P/5//r/+v/7//z//P/9//3//v/+//7/////////AAAAAAAAAAAAAAAAAAABAAEAAQABAAEAAQABAAEAAQABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA//////////////7//v/+//3//f/8//z//P/7//r/+v/5//j/+P/3//b/9f/0//P/8v/x//D/7//u/+7/7f/s/+v/6v/p/+j/6P/n/+b/5v/l/+T/5P/k/+P/4//j/+L/4P/g/+D/4P/f/97/3P/w//D/8P/w//D/8P/w//D/8P/x//H/8f/x//L/8v/z//P/9P/0//X/9v/2//f/+P/4//n/+f/6//v/+//8//z//f/9//7//v/+////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD////////////////+//7//v/+//3//f/8//z//P/7//r/+v/5//n/+P/3//b/9v/1//T/8//y//H/8P/v/+7/7f/s/+v/6v/q/+n/6P/n/+b/5v/l/+X/5P/k/+P/4//j/+P/4v/g/+D/4P/f/9//3v/d//D/8P/w//D/8P/w//D/8P/w//D/8P/x//H/8f/y//L/8//z//T/9P/1//b/9v/3//j/+P/5//r/+v/7//v//P/8//3//f/+//7//v//////////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAD//////////////////////////////v/+//7//v/+//3//f/8//z//P/7//v/+v/6//n/+P/4//f/9v/1//T/8//y//L/8f/w/+//7v/t/+z/6//q/+n/6P/n/+f/5v/l/+X/5P/k/+P/4//j/+P/4//i/+D/4P/g/9//3//e/93/8f/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/x//T/+P/8//7//////wAAAAAAAAAA////////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA/////////v/+//3//f/8//v/+v/5//j/+P/3//b/9f/0//P/8v/y//D/7//r/+f/4//g/+D/4P/j/+T/5P/k/+T/5P/k/+P/4P/g/+D/3//f/9//3v/y//H/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//P/9v/6//7/AAAAAAAAAAAAAAAAAAD///////8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA9v/u/+n/5f/i/+H/4f/j/+X/6f/v//X//f8AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAP////////7//v/9//3//P/7//r/+f/4//j/9//2//X/9P/0//P/8v/w/+7/6v/m/+L/4P/g/+T/5P/k/+X/5f/k/+T/5P/g/+D/4P/g/+D/3//e//T/8//y//H/8P/w//D/8P/w//D/8P/w//D/8P/w//D/8P/w//L/9f/5//3/AAABAAAAAAAAAAAAAAAAAAAA//8AAAAAAAAAAAAAAAAAAAAA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Pf89/z3/Pf89/0b/P/8//z//QP84/zj/OP8y//v+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+5f4b/zj/OP84/0P/ev+c/5z/nP+i/9n/+v/6//r/+/8AAPz//P/8//z/+//7//v/+//6/wAA/v/+//7//////////v/+/////v/9//z/+//6//n/+P/3//b/DwAOAA0ADAAKAAkABwAFAAQAAwACAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA2/+k/5z/nP+c/3n/Qv84/zj/OP84/zj/Of87/zv/O/87/zv/O/87/zv/QP9B/zz/PP89/zj/OP84/yz/9f7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7f/hb/OP84/zj/P/92/5z/nP+c/5//1v/8//3//f/9/wAA/v/+//7//v/9//3//f/8//z/AAD+//7////////////+//7////+//3//P/8//r/+f/4//f/9v8PAA4ADQAMAAsACQAHAAUABAACAAIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADk/6z/nP+c/5z/g/9M/zj/OP84/zj/OP84/zr/Ov85/zn/Of85/zn/Of85/0T/Ov86/zr/OP84/zj/J//w/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/t3+FP84/zj/OP89/3T/nP+c/5z/nf/U////////////AAAAAP//AAD////////+//7//v8AAP7//v////////////7//v////7//f/8//z/+//6//j/9//2/w8ADgANAAwACwAJAAcABQAEAAIAAgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAO3/tv+c/5z/nP+O/1f/OP84/zj/OP84/zb/Nv84/zj/OP83/zf/N/83/zf/QP84/zf/N/83/zf/N/8n//D+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+3f4U/zj/OP84/z3/dP+c/5z/nP+d/9T/AAAAAAAAAAAAAAAA/////wAAAAAAAP/////+/wAA/v/+/////////////v/+/////v/9//3//P/7//r/+P/3//b/DwAOAA0ADAALAAkABwAGAAQAAwACAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA+P/C/5z/nP+c/5r/ZP84/zj/OP84/zj/Nv80/zb/Nv82/zb/Nf81/zX/Nf83/z3/NP80/zT/NP8z/yz/9f7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+2P7X/tf+1v7V/tX+1P7U/tP+0/7f/hb/OP84/zj/P/92/5z/nP+c/5//1v8AAAAAAAAAAAAAAAD///////8AAAAA///////////+//7////////////+//7////+//7//f/8//v/+v/5//j/9/8QAA4ADQAMAAoACQAHAAYABAADAAIAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAM7/nP+c/5z/nP9y/zz/OP84/zj/OP82/zT/Nf80/zT/NP80/zP/M/8y/zL/O/80/zL/Mf8w/zD/L/8A/9T+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7a/tr+2f7Y/tf+1/7W/tX+1f7U/uX+HP84/zj/OP9F/3v/nP+c/5z/o//a/wAAAAAAAAAAAAAAAP///////wAAAAAAAP////////7//v////////////7//v////7//v/9//z/+//6//n/+P/3/xAADwANAAwACgAJAAcABgAEAAMAAgABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA3P+m/5z/nP+c/4L/TP84/zj/OP84/zb/M/8x/zP/Mv8y/zL/Mf8x/zD/MP8x/zr/L/8u/y7/Lf8s/w//2/7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7U/tT+1P7b/t3+3P7b/tr+2f7Y/tj+1/7W/tb+7v4k/zj/OP84/07/hP+c/5z/nP+q/+H/AAAAAAAAAAAAAAAA////////AAAAAAAAAAAAAP///v/+/////////////v/+/////v/+//3//P/8//r/+f/4//j/EAAPAA0ADAAKAAgABwAGAAQAAwACAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADq/7X/nP+c/5z/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AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAEAAQABAAIAAgACAAIAAgACAAEAAQAAAP///v/8//P/9P/0//T/9P/0//P/8//y//H/8f/w//D/8P/w/+//EQARABEAEQASABEAEQAQABAAEAAQABAAEAAQAA8ADwAOAA4ADQAMAAsACgAJAAgABwAGAAUABAADAAIAAgABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAEAAQACAAIAAgACAAIAAgACAAIAAQABAAAA///+//z/8//z//P/9P/0//P/8//y//H/8f/w//D/8P/w//D/8P8RABEAEQARABEAEQAQABAAEAAQABAAEAAQABAAEAAPAA8ADwAOAA4ADQAMAAoACQAIAAcABgAFAAQABAADAAIAAgABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQABAAEAAQACAAIAAgADAAMAAgACAAIAAgABAAEAAAD///7//P/y//L/8//z//P/8//y//L/8P/w//D/8P/w//D/8P/w/xAAEAARABEAEQAQABAADwAPAA8ADwAPAA8ADwAQABAAEAAQAA8ADgAOAA0ADAAKAAkACAAHAAYABQAEAAQAAwACAAIAAQABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQABAAEAAgACAAIAAgADAAMAAwADAAIAAgACAAEAAQAAAP///P/4//L/8v/y//L/8//y//L/8f/u/+7/7//v/+//8P/w/+//DwAQABAADwAPAA8ADgAOAA4ADgAOAA4ADgAPAA8AEAAQABAAEAAPAA4ADgANAAwACgAJAAgABwAGAAYABQAEAAMAAwACAAIAAQABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAEAAQABAAIAAgACAAIAAwADAAMAAwADAAMAAwACAAIAAQAAAP///P/4//T/8f/x//L/8v/y//L/8f/x/+7/7v/u/+7/7v/u/+7/7v8OAA4ADgAOAA4ADQANAA0ADQANAA0ADQANAA4ADwAQABAAEAAQAA8ADwAOAA4ADQALAAoACQAIAAcABgAGAAUABAAEAAMAAwACAAIAAgABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQABAAEAAQACAAIAAgACAAIAAwADAAMABAAEAAQAAwADAAMAAgABAAAA/f/4//T/8P/u//H/8f/x//L/8f/x//D/7v/t/+3/7v/u/+3/7f/t/w0ADQANAAwADAAMAAwACwALAAsACwALAAwADAAOAA8AEAAQABAADwAPAA4ADgAOAAwACwAKAAkACAAIAAcABgAFAAUABAAEAAMAAwACAAIAAgABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAEAAQABAAIAAgACAAIAAwADAAMAAwADAAMABAAEAAQABAAEAAMAAwACAAAA/v/6//X/8P/u/+3/8P/w//H/8f/x//D/8P/u/+3/7f/t/+3/7P/s/+v/DAAMAAwACwALAAsACgAKAAoACgAKAAoACgALAA0ADgAPAA8ADwAPAA8ADwAPAA4ADQAMAAsACgAKAAkACAAHAAcABgAGAAUABQAEAAQAAwADAAIAAgACAAEAAQABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQABAAEAAgACAAIAAgADAAMAAwADAAQABAAEAAQABAAEAAQABAAEAAQAAwACAAEA///8//b/8f/u/+3/7f/w//D/8P/x//D/8P/w/+7/7f/t/+3/7f/s/+v/6v8LAAsACwALAAoACgAKAAoACQAJAAoACgAKAAsADAANAA4ADwAPAA8ADwAPAA8ADwAOAA0ADAALAAsACgAKAAkACAAIAAcABwAGAAYABQAEAAQABAADAAMAAgACAAIAAQABAAEAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAQABAAEAAQACAAIAAgADAAMAAwADAAQABAAEAAQABAAEAAUABQAFAAUABQAEAAQAAwADAAIAAAD+//n/9P/v/+3/7f/t/+//7//w//D/8P/w/+//7v/t/+3/7f/t/+z/6//q/woACgAKAAoACgAKAAkACQAJAAkACQAJAAoACgALAAwADQAOAA4ADgAOAA8ADwAPAA4ADQAMAAwADAALAAsACwAKAAoACQAIAAgABwAGAAYABQAFAAQABAAEAAMAAwACAAIAAgACAAEAAQABAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAEAAQABAAEAAQACAAIAAgACAAIAAwADAAQABAAEAAQABAAFAAUABQAFAAUABgAGAAYABgAFAAQABAADAAIAAQAAAP3/9//y/+7/7f/t/+3/7//v/+//8P/w/+//7//u/+3/7f/t/+3/7P/r/+r/CgAKAAoACgAJAAkACQAJAAgACAAIAAkACQAKAAsADAANAA0ADgAOAA4ADwAPAA8ADwAOAA0ADQANAA0ADQAMAAwACwALAAoACgAJAAgACAAHAAcABgAGAAUABQAEAAQABAADAAMAAgACAAIAAgABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAQABAAEAAgACAAIAAgACAAMAAwADAAMABAAEAAUABQAFAAUABgAGAAYABgAGAAYABgAGAAcABgAGAAUABAAEAAMAAgABAP//+//1//D/7f/t/+3/7f/u/+//7//v/+//7//u/+7/7f/t/+3/7f/s/+v/6f8JAAkACQAJAAkACQAIAAgACAAIAAgACAAIAAkACgALAAwADQANAA4ADgAPAA8AEAAPAA8ADgAOAA4ADgAOAA4ADgANAA0ADAAMAAsACgAKAAkACQAIAAgABwAGAAYABgAFAAUABAAEAAQAAwADAAMAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAgADAAMAAwAEAAQABAAEAAUABQAFAAYABgAGAAcABwAHAAcABwAHAAcABwAHAAcABwAHAAYABQAEAAMAAwACAAAA/v/6//T/8P/t/+3/7f/t/+7/7v/v/+//7//u/+7/7v/t/+3/7f/t/+z/6v/p/wkACAAIAAgACAAIAAgABwAHAAcABwAHAAcACAAJAAoACwAMAAwADQAOAA4ADwAPAA8AEAAQABAAEAAQABAAEAAQAA8ADwAOAA4ADQANAAwACwALAAoACgAJAAkACAAIAAcABwAGAAYABgAFAAUABAAEAAQABAADAAMAAwADAAMAAwADAAMAAwADAAMAAwADAAQABAAEAAQABQAFAAUABgAGAAYABgAGAAcABwAIAAgACAAIAAgACAAIAAgACAAIAAgACAAIAAcABgAFAAQAAwACAAEA///+//r/9P/w/+3/7f/t/+3/7v/u/+7/7//v/+7/7v/u/+3/7f/t/+3/7P/q/+j/CAAIAAgACAAIAAgABwAHAAYABgAGAAYABgAHAAgACQAKAAsADAANAA0ADgAPAA8ADwAQABEAEQARABEAEQARABIAEQARABEAEAAQAA8ADgAOAA0ADQAMAAwACwALAAoACgAJAAkACAAIAAcABwAGAAYABgAGAAUABQAFAAUABQAFAAUABQAFAAUABQAFAAUABQAGAAYABgAGAAcABwAIAAgACAAIAAgACAAJAAkACgAKAAoACgAKAAoACgAKAAoACQAJAAgACAAHAAUABAADAAEAAAD///3/+v/1//D/7f/t/+3/7f/t/+7/7v/u/+7/7v/u/+3/7f/t/+3/7f/r/+n/5/8IAAgACAAIAAgACAAHAAYABgAGAAYABgAGAAYABwAIAAkACgALAAwADQAOAA4ADwAQABAAEgASABMAEwATABMAEwAUABMAEwATABIAEgARABAAEAAPAA8ADgAOAA4ADQAMAAwACwALAAoACgAJAAkACQAIAAgACAAIAAcABwAHAAcABwAHAAcABwAHAAcABwAHAAgACAAIAAkACQAKAAoACgAKAAoACgAKAAsACwALAAwADAAMAAwADAAMAAsACwALAAoACQAIAAcABQAEAAIAAQAAAP7//f/6//b/8f/u/+3/7f/t/+3/7v/u/+7/7v/u/+7/7f/t/+3/7f/s/+r/6P/m/wgACAAIAAcABwAHAAcABgAGAAYABgAGAAYABgAHAAgACQAKAAsADAANAA4ADgAPABAAEQASABMAEwAUABQAFQAVABUAFQAVABUAFAAUABMAEgASABEAEQAQABAAEAAQAA8ADgAOAA0ADQAMAAwADAAMAAsACwAKAAoACgAKAAoACgAKAAoACgAKAAoACgAKAAoACgAKAAsACwALAAwADAAMAAwADAAMAAwADAANAA0ADQANAA0ADQANAA0ADQANAAwACwAKAAkABwAFAAQAAgABAAAA/v/9//v/9//y/+//7f/t/+3/7f/t/+3/7v/u/+3/7f/t/+3/7f/t/+v/6f/n/+b/CQAIAAgABwAGAAYABgAGAAYABgAGAAYABgAGAAcACAAJAAoADAANAA4ADgAOAA8AEAARABIAEwAUABUAFgAXABcAFwAXABcAFgAWABUAFAAUABMAEwATABIAEgASABIAEgARABEAEAAQAA8ADwAPAA4ADgAOAA0ADQANAA0ADAAMAAwADAAMAAwADAAMAAwADQANAA0ADQANAA4ADgAPAA8ADwAOAA4ADgAOAA4ADgAOAA4ADgAOAA8ADwAPAA4ADgANAAwACgAIAAYABAACAAEAAAD+//3//P/5//T/8P/u/+3/7f/t/+3/7f/t/+3/7f/t/+3/7f/t/+z/6v/o/+b/5v8JAAkACAAHAAYABgAGAAYABwAGAAYABgAGAAYABwAIAAkACwAMAA4ADgAPAA8ADwAQABEAEgATABQAFgAXABgAGQAZABgAGAAYABcAFwAWABUAFQAVABQAFAAUABQAFAAUABQAFAATABMAEgASABIAEgARABEAEAAQABAADwAPAA8ADwAPAA8ADwAPAA8ADwAQABAAEAAQABAAEAARABEAEgARABEAEAAQABAAEAAPAA8ADwAPABAAEAAQABAAEAAPAA4ADQALAAgABgAEAAIAAQAAAP///v/9//v/9//y/+//7f/t/+3/7f/t/+3/7f/t/+3/7f/t/+z/6v/o/+b/5v/m/woACQAIAAcABgAGAAYABwAHAAcABgAGAAYABgAHAAgACgALAAwADgAOAA8ADwAPABAAEQASABQAFQAWABgAGQAaABoAGgAaABkAGQAYABgAFwAXABcAFwAWABYAFgAXABcAFwAXABYAFgAVABUAFQAVABQAFAATABMAEwASABIAEgASABIAEgASABIAEgASABIAEgASABIAEgATABMAFAAUABMAEwASABIAEQARABEAEAAQABAAEQARABEAEQAQABAADwANAAsACQAGAAQAAwABAAAA///+//3//P/5//X/8f/u/+3/7f/t/+3/7f/t/+3/7f/t/+z/6v/o/+b/5v/m/+f/CgAKAAkACAAHAAcABwAHAAcABwAGAAYABgAHAAgACQAKAAsADAANAA4ADgAPAA8AEAARABIAFAAVABcAGAAaABoAGwAbABsAGwAaABoAGQAZABkAGQAZABkAGQAZABkAGQAZABkAGQAZABgAGAAYABgAFwAXABYAFgAVABUAFQAVABUAFQAVABUAFQAVABUAFQAWABYAFQAVABYAFgAWABYAFgAVABQAFAAUABMAEwASABIAEgASABIAEgASABEAEAAPAA0ACwAJAAcABQADAAEAAAD///7//f/8//r/9//z//D/7v/t/+3/7f/t/+3/7f/s/+z/6v/o/+f/5v/m/+f/6P8LAAoACgAJAAkACAAIAAgABwAHAAcABwAHAAgACAAJAAoACwAMAAwADQAOAA4ADwAQABEAEwAUABUAFwAZABoAGwAbABwAHAAcABsAGwAbABsAGwAcABwAHAAcABwAHAAcABwAHAAcABwAHAAbABsAGwAaABoAGQAYABgAGAAYABgAGAAYABgAGAAYABgAGAAYABkAGQAYABgAGQAZABkAGAAYABcAFgAWABYAFgAVABUAFAATABMAEwATABIAEgARAA8ADgAMAAkABwAFAAMAAgAAAP7//f/8//v/+v/4//X/8v/w/+7/7f/t/+z/7P/s/+v/6v/p/+j/5v/m/+f/6P/o/wwACwALAAoACgAKAAkACAAHAAcABwAHAAgACAAJAAoACwALAAsADAAMAA0ADgAPABAAEgATABQAFgAYABkAGwAbABwAHAAcABwAHAAcAB0AHQAeAB4AHgAeAB4AHgAeAB4AHgAeAB4AHwAfAB4AHgAeAB4AHQAcABsAGwAbABsAGwAbABsAGgAaABoAGwAbABsAHAAcABwAGwAbABsAGwAaABoAGQAYABgAGAAYABgAFwAVABQAEwATABMAEwASABAADwANAAwACgAIAAYABAACAAAA/v/9//z/+//5//j/9v/0//L/7//u/+3/7P/r/+r/6v/p/+j/6P/o/+j/6P/p/+r/DAAMAAsACwAKAAoACQAIAAgACAAIAAgACAAJAAkACgALAAsACwAMAAwADQAOABAAEQASABQAFQAWABgAGgAbABsAHAAcABwAHQAdAB0AHgAfACAAIAAgACAAIAAgACAAIAAgACAAIQAhACEAIQAhACEAIAAgAB8AHgAdAB0AHgAeAB4AHQAdAB0AHQAdAB4AHgAeAB4AHgAeAB0AHQAdABwAHAAbABoAGgAaABoAGQAYABcAFQAUABMAEwASABEAEAAPAA0ADAAKAAgABgAEAAIAAAD+//3//P/6//n/9//2//T/8v/w/+//7v/s/+v/6v/q/+n/6f/p/+n/6f/q/+r/6/8=","sites":[{"id":"crusher","type":"crusher","name":"Primary Crusher","pos":[107.9,107.9]},{"id":"dump_south","type":"dump","name":"South Waste Dump","pos":[-107.9,-107.9]},{"id":"parking","type":"parking","name":"Ready Line","pos":[107.9,-107.9]},{"id":"fuel","type":"fuel","name":"Fuel Bay","pos":[107.9,-76.2]},{"id":"pit_floor","type":"ore","name":"Pit Floor","pos":[4.0,-6.0]},{"id":"pit_south","type":"ore","name":"South Bench","pos":[14.2,-87.5]},{"id":"pit_west","type":"ore","name":"West Bench","pos":[-61.4,0.6]}],"roads":[{"id":"ramp_access","type":"haul","w":15.0,"pts":[[83.3,0.0],[83.5,5.0],[87.3,7.5],[91.9,9.5],[96.5,11.4],[101.1,13.3]]},{"id":"crusher_road","type":"haul","w":15.0,"pts":[[101.1,13.3],[101.5,18.3],[101.8,23.3],[102.2,28.3],[102.6,33.2],[102.9,38.2],[103.3,43.2],[103.6,48.2],[104.0,53.1],[104.3,58.1],[104.7,63.1],[105.0,68.1],[105.4,73.1],[105.8,78.0],[106.1,83.0],[106.5,88.0],[106.8,93.0],[107.2,98.0],[107.5,102.9],[107.9,107.9]]},{"id":"fuel_road","type":"haul","w":15.0,"pts":[[101.1,13.3],[101.5,8.4],[101.9,3.4],[102.3,-1.6],[102.6,-6.6],[103.0,-11.5],[103.4,-16.5],[103.8,-21.5],[104.1,-26.5],[104.5,-31.4],[104.9,-36.4],[105.3,-41.4],[105.7,-46.4],[106.0,-51.3],[106.4,-56.3],[106.8,-61.3],[107.2,-66.2],[107.5,-71.2],[107.9,-76.2]]},{"id":"parking_road","type":"haul","w":15.0,"pts":[[107.9,-76.2],[107.9,-81.5],[107.9,-86.8],[107.9,-92.0],[107.9,-97.3],[107.9,-102.6],[107.9,-107.9]]},{"id":"dump_road","type":"haul","w":15.0,"pts":[[107.9,-107.9],[102.9,-107.9],[97.9,-107.9],[92.8,-107.9],[87.8,-107.9],[82.8,-107.9],[77.8,-107.9],[72.8,-107.9],[67.8,-107.9],[62.7,-107.9],[57.7,-107.9],[52.7,-107.9],[47.7,-107.9],[42.7,-107.9],[37.6,-107.9],[32.6,-107.9],[27.6,-107.9],[22.6,-107.9],[17.6,-107.9],[12.6,-107.9],[7.5,-107.9],[2.5,-107.9],[-2.5,-107.9],[-7.5,-107.9],[-12.6,-107.9],[-17.6,-107.9],[-22.6,-107.9],[-27.6,-107.9],[-32.6,-107.9],[-37.6,-107.9],[-42.7,-107.9],[-47.7,-107.9],[-52.7,-107.9],[-57.7,-107.9],[-62.7,-107.9],[-67.8,-107.9],[-72.8,-107.9],[-77.8,-107.9],[-82.8,-107.9],[-87.8,-107.9],[-92.8,-107.9],[-97.9,-107.9],[-102.9,-107.9],[-107.9,-107.9]]},{"id":"pit_south_spur","type":"spur","w":15.0,"pts":[[11.8,-73.0],[12.6,-77.8],[13.4,-82.7],[14.2,-87.5]]},{"id":"pit_west_spur","type":"spur","w":15.0,"pts":[[-46.7,0.4],[-51.6,0.5],[-56.5,0.5],[-61.5,0.6]]},{"id":"ramp_main_1","type":"ramp","w":16.5,"pts":[[83.3,0.0],[82.9,-5.0],[82.3,-10.1],[81.3,-15.0],[79.9,-19.9],[78.2,-24.6],[76.1,-29.2],[73.7,-33.6],[71.0,-37.9],[67.9,-41.9],[64.6,-45.7],[61.0,-49.3],[57.3,-52.7],[53.3,-55.8],[49.2,-58.8],[45.0,-61.5],[40.5,-64.0],[36.0,-66.2],[31.4,-68.2],[26.6,-69.8],[21.8,-71.2],[16.8,-72.3],[11.8,-73.0]]},{"id":"ramp_main_2","type":"ramp","w":16.5,"pts":[[11.8,-73.0],[6.8,-73.3],[1.7,-73.2],[-3.3,-72.6],[-8.2,-71.6],[-13.0,-70.1],[-17.7,-68.1],[-22.1,-65.7],[-26.3,-62.9],[-30.1,-59.6],[-33.7,-56.0],[-36.9,-52.1],[-39.8,-48.0],[-42.3,-43.6],[-44.5,-39.1],[-46.3,-34.3],[-47.6,-29.5],[-48.6,-24.5],[-49.1,-19.5],[-49.2,-14.5],[-48.8,-9.4],[-48.0,-4.5],[-46.7,0.4]]},{"id":"ramp_main_3","type":"ramp","w":16.5,"pts":[[-46.7,0.4],[-45.0,5.1],[-42.7,9.7],[-40.0,13.9],[-36.8,17.8],[-33.1,21.3],[-29.1,24.3],[-24.8,26.9],[-20.3,29.2],[-15.6,31.2],[-10.8,32.8],[-5.9,33.7],[-0.8,34.0],[4.2,33.6],[9.1,32.4],[13.8,30.5],[18.1,28.0],[22.1,24.8],[25.4,21.0],[28.2,16.8],[30.3,12.2],[31.7,7.4],[32.4,2.4]]},{"id":"floor_road","type":"haul","w":15.0,"pts":[[32.4,2.4],[27.6,1.0],[22.9,-0.4],[18.2,-1.8],[13.4,-3.2],[8.7,-4.6],[4.0,-6.0]]}],"trucks":[{"id":"truck-0","spawn":[101.1,-107.9],"hd":0.0},{"id":"truck-1","spawn":[107.9,-107.9],"hd":0.0},{"id":"truck-2","spawn":[114.7,-107.9],"hd":0.0}]};
+
 (() => {
-  const N = 100, CELL = 2;               // 200 m × 200 m world, 2 m cells
-  const MAX_SLOPE = 0.15, R_MIN = 15;    // haul truck limits
-  const WIN = 64, AHEAD = 48, LAT = 32;  // model window: 64 cells, truck 16 cells above the bottom edge
-  const STEP_DT = 0.5, V = 10;           // waypoint every 0.5 s at 10 m/s
+  const W = WORLD, N = W.n, CELL = W.cell, OX = W.origin[0], OZ = W.origin[1];
+  const MAX_V = 8, MAX_STEER = 30 * Math.PI / 180, WHEELBASE = 5, ACCEL = 1.5;
+  const R_MIN = WHEELBASE / Math.tan(MAX_STEER);
+  const DT = 0.1, HORIZON = 3, RDT = 0.2, CAR_R = 5;
+  const STEERS = [-1, -0.75, -0.5, -0.3, -0.15, 0, 0.15, 0.3, 0.5, 0.75, 1], SPEEDS = [8, 5, 2.5, 0];
   const css = n => getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 
-  let seed = 7, world, start, goal, path = null, raw = null, clickPhase = 0, lastMs = 0, expanded = 0;
-  const rng = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
-
-  function noiseLayer(res) {
-    const g = [];
-    for (let i = 0; i <= res; i++) { g.push([]); for (let j = 0; j <= res; j++) g[i].push(rng()); }
-    const s = t => t * t * (3 - 2 * t);
-    const out = new Float32Array(N * N);
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const fx = x / N * res, fy = y / N * res, ix = Math.floor(fx), iy = Math.floor(fy);
-      const tx = s(fx - ix), ty = s(fy - iy);
-      const a = g[iy][ix] * (1 - tx) + g[iy][ix + 1] * tx, b = g[iy + 1][ix] * (1 - tx) + g[iy + 1][ix + 1] * tx;
-      out[y * N + x] = a * (1 - ty) + b * ty;
+  const unb64 = s => Uint8Array.from(atob(s), ch => ch.charCodeAt(0));
+  const cost = unb64(W.cost);                          // cost * 10, 0 = impassable
+  const height = new Int16Array(unb64(W.h).buffer);    // decimetres
+  const free = i => cost[i] > 0;
+  const cellOf = (x, z) => { const c = Math.floor((x - OX) / CELL), r = Math.floor((z - OZ) / CELL); return c < 0 || r < 0 || c >= N || r >= N ? -1 : r * N + c; };
+  const blockedAt = (x, z) => { const i = cellOf(x, z); return i < 0 || !free(i); };
+  // Blocked grid grown by one cell, used for the truck body.
+  const inflated = new Uint8Array(N * N);
+  for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+    let b = 0;
+    for (let dr = -1; dr <= 1 && !b; dr++) for (let dc = -1; dc <= 1; dc++) {
+      const rr = r + dr, cc = c + dc;
+      if (rr < 0 || cc < 0 || rr >= N || cc >= N || !free(rr * N + cc)) { b = 1; break; }
     }
-    return out;
+    inflated[r * N + c] = b;
   }
+  const hitsTerrain = blockedAt;
 
-  function stamp(mask, cx, cy, r, v) {
-    for (let y = Math.max(0, Math.floor(cy - r)); y <= Math.min(N - 1, Math.ceil(cy + r)); y++)
-      for (let x = Math.max(0, Math.floor(cx - r)); x <= Math.min(N - 1, Math.ceil(cx + r)); x++)
-        if ((x - cx) ** 2 + (y - cy) ** 2 <= r * r) mask[y * N + x] = v;
-  }
-  function line(mask, x0, y0, x1, y1, w) {
-    const n = Math.ceil(Math.hypot(x1 - x0, y1 - y0));
-    for (let i = 0; i <= n; i++) stamp(mask, x0 + (x1 - x0) * i / n, y0 + (y1 - y0) * i / n, w, 1);
-  }
-
-  function makeWorld() {
-    const a = noiseLayer(4), b = noiseLayer(9);
-    const h = new Float32Array(N * N);
-    for (let i = 0; i < N * N; i++) h[i] = a[i] + 0.35 * b[i];
-    const slope0 = new Float32Array(N * N);
-    for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-      const gx = (h[y * N + Math.min(N - 1, x + 1)] - h[y * N + Math.max(0, x - 1)]) / 2;
-      const gy = (h[Math.min(N - 1, y + 1) * N + x] - h[Math.max(0, y - 1) * N + x]) / 2;
-      slope0[y * N + x] = Math.hypot(gx, gy) / CELL;
-    }
-    // Scale relief so that about 12% of cells are too steep.
-    const sorted = Array.from(slope0).sort((p, q) => p - q);
-    const k = MAX_SLOPE / sorted[Math.floor(0.88 * sorted.length)];
-    const slope = slope0.map(s => s * k), height = h.map(v => v * k);
-
-    const road = new Uint8Array(N * N), rock = new Uint8Array(N * N), site = new Uint8Array(N * N);
-    const crusher = [6, 50 + Math.floor(rng() * 20 - 10)];
-    const pits = [[40 + rng() * 15, 15 + rng() * 15], [62 + rng() * 15, 50 + rng() * 15], [40 + rng() * 15, 80 + rng() * 12]];
-    line(road, crusher[0], crusher[1], 30, crusher[1], 1.6);
-    pits.forEach(p => { line(road, 30, crusher[1], p[0], p[1], 1.6); stamp(site, p[0], p[1], 5, 1); });
-    stamp(site, crusher[0], crusher[1], 4, 1);
-    for (let i = 0; i < 22; i++) stamp(rock, rng() * N, rng() * N, 1 + rng() * 2.5, 1);
-
-    const cost = new Float32Array(N * N);
-    for (let i = 0; i < N * N; i++) {
-      const graded = road[i] || site[i];
-      if (graded) rock[i] = 0;
-      cost[i] = rock[i] || (!graded && slope[i] > MAX_SLOPE) ? Infinity : (1 + 20 * slope[i]) * (graded ? 0.5 : 1);
-    }
-    return { height, slope, road, rock, site, cost, cv: new Uint8Array(N * N), pits, crusher };
-  }
-
-  function refreshCost(w) {
-    for (let i = 0; i < N * N; i++) {
-      const graded = w.road[i] || w.site[i];
-      const blocked = w.cv[i] || (w.rock[i] && !graded) || (!graded && w.slope[i] > MAX_SLOPE);
-      w.cost[i] = blocked ? Infinity : (1 + 20 * w.slope[i]) * (graded ? 0.5 : 1);
-    }
-  }
-
-  function astar(cost, s, g) {
+  function astar(s, g) {
     const t0 = performance.now();
-    const G = new Float32Array(N * N).fill(Infinity), P = new Int32Array(N * N).fill(-1), closed = new Uint8Array(N * N);
-    const heap = [];
+    const G = new Float32Array(N * N).fill(Infinity), P = new Int32Array(N * N).fill(-1), done = new Uint8Array(N * N), heap = [];
     const push = (f, i) => { heap.push([f, i]); let c = heap.length - 1; while (c > 0) { const p = (c - 1) >> 1; if (heap[p][0] <= heap[c][0]) break; [heap[p], heap[c]] = [heap[c], heap[p]]; c = p; } };
     const pop = () => { const top = heap[0], last = heap.pop(); if (heap.length) { heap[0] = last; let c = 0; for (;;) { const l = 2 * c + 1, r = l + 1; let m = c; if (l < heap.length && heap[l][0] < heap[m][0]) m = l; if (r < heap.length && heap[r][0] < heap[m][0]) m = r; if (m === c) break; [heap[m], heap[c]] = [heap[c], heap[m]]; c = m; } } return top; };
-    const hmin = 0.5, gx = g % N, gy = (g / N) | 0;
-    const H = i => { const dx = Math.abs(i % N - gx), dy = Math.abs(((i / N) | 0) - gy); return hmin * (Math.max(dx, dy) + 0.4142 * Math.min(dx, dy)); };
-    G[s] = 0; push(H(s), s); expanded = 0;
+    const gc = g % N, gr = (g / N) | 0;
+    const H = i => { const dc = Math.abs(i % N - gc), dr = Math.abs(((i / N) | 0) - gr); return Math.max(dc, dr) + 0.4142 * Math.min(dc, dr); };
+    G[s] = 0; push(H(s), s); let expanded = 0;
     while (heap.length) {
       const [, i] = pop();
-      if (closed[i]) continue;
-      closed[i] = 1; expanded++;
+      if (done[i]) continue;
+      done[i] = 1; expanded++;
       if (i === g) break;
-      const x = i % N, y = (i / N) | 0;
-      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
-        if (!dx && !dy) continue;
-        const nx = x + dx, ny = y + dy;
-        if (nx < 0 || ny < 0 || nx >= N || ny >= N) continue;
-        const j = ny * N + nx;
-        if (!isFinite(cost[j]) || closed[j]) continue;
-        const ng = G[i] + (dx && dy ? 1.4142 : 1) * 0.5 * (cost[i] + cost[j]);
+      const c = i % N, r = (i / N) | 0;
+      for (let dr = -1; dr <= 1; dr++) for (let dc = -1; dc <= 1; dc++) {
+        if (!dr && !dc) continue;
+        const rr = r + dr, cc = c + dc;
+        if (rr < 0 || cc < 0 || rr >= N || cc >= N) continue;
+        const j = rr * N + cc;
+        if (inflated[j] || done[j]) continue;
+        const ng = G[i] + (dr && dc ? 1.4142 : 1) * 0.05 * (cost[i] + cost[j]);
         if (ng < G[j]) { G[j] = ng; P[j] = i; push(ng + H(j), j); }
       }
     }
-    lastMs = performance.now() - t0;
-    if (P[g] < 0 && g !== s) return null;
-    const out = [];
-    for (let i = g; i !== -1; i = P[i]) out.push([(i % N + 0.5) * CELL, (((i / N) | 0) + 0.5) * CELL]);
-    return out.reverse();
+    const ms = performance.now() - t0;
+    if (P[g] < 0) return { pts: null, ms, expanded };
+    const pts = [];
+    for (let i = g; i !== -1; i = P[i]) pts.push([OX + (i % N + 0.5) * CELL, OZ + (((i / N) | 0) + 0.5) * CELL]);
+    return { pts: pts.reverse(), ms, expanded };
   }
-
-  function chaikin(pts, iters) {
-    let p = pts;
-    for (let k = 0; k < iters; k++) {
+  function chaikin(p, k) {
+    for (let it = 0; it < k; it++) {
       const q = [p[0]];
-      for (let i = 0; i < p.length - 1; i++) {
-        const [ax, ay] = p[i], [bx, by] = p[i + 1];
-        q.push([0.75 * ax + 0.25 * bx, 0.75 * ay + 0.25 * by], [0.25 * ax + 0.75 * bx, 0.25 * ay + 0.75 * by]);
-      }
+      for (let i = 0; i < p.length - 1; i++) { const [ax, az] = p[i], [bx, bz] = p[i + 1]; q.push([0.75 * ax + 0.25 * bx, 0.75 * az + 0.25 * bz], [0.25 * ax + 0.75 * bx, 0.25 * az + 0.75 * bz]); }
       q.push(p[p.length - 1]); p = q;
     }
     return p;
   }
-
-  function resample(pts, step) {
-    const out = [pts[0]]; let carry = 0;
-    for (let i = 0; i < pts.length - 1; i++) {
-      const [ax, ay] = pts[i], [bx, by] = pts[i + 1], L = Math.hypot(bx - ax, by - ay);
+  function resample(p, step) {
+    const out = [p[0]]; let carry = 0;
+    for (let i = 0; i < p.length - 1; i++) {
+      const [ax, az] = p[i], [bx, bz] = p[i + 1], L = Math.hypot(bx - ax, bz - az);
       let d = step - carry;
-      while (d <= L) { out.push([ax + (bx - ax) * d / L, ay + (by - ay) * d / L]); d += step; }
+      while (d <= L) { out.push([ax + (bx - ax) * d / L, az + (bz - az) * d / L]); d += step; }
       carry = L - (d - step);
     }
     return out;
   }
-
-  // Indices of resampled points where the heading changes faster than 1 / R_MIN.
-  function tightTurns(pts) {
-    const r = resample(pts, 5), bad = [];
+  function tightTurns(p) {
+    const r = resample(p, 4); let n = 0;
     for (let i = 1; i < r.length - 1; i++) {
-      const h1 = Math.atan2(r[i][1] - r[i - 1][1], r[i][0] - r[i - 1][0]);
-      const h2 = Math.atan2(r[i + 1][1] - r[i][1], r[i + 1][0] - r[i][0]);
+      const h1 = Math.atan2(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1]), h2 = Math.atan2(r[i + 1][0] - r[i][0], r[i + 1][1] - r[i][1]);
       let d = Math.abs(h2 - h1); if (d > Math.PI) d = 2 * Math.PI - d;
-      if (d / 5 > 1 / R_MIN) bad.push(r[i]);
+      if (d / 4 > 1 / R_MIN) n++;
     }
-    return bad;
+    return n;
   }
 
-  function pathLength(p) { let s = 0; for (let i = 1; i < p.length; i++) s += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]); return s; }
-
-  function randomFree() {
-    for (;;) { const i = Math.floor(rng() * N * N); if (isFinite(world.cost[i])) return i; }
-  }
-
-  function plan() {
-    raw = astar(world.cost, start, goal);
-    path = raw && (document.getElementById("opt-smooth").checked ? chaikin(raw, 3) : raw);
-    draw();
-  }
-
-  function newQuery() {
-    for (let tries = 0; tries < 50; tries++) {
-      start = randomFree(); goal = randomFree();
-      const d = Math.hypot(start % N - goal % N, ((start / N) | 0) - ((goal / N) | 0));
-      if (d < 45) continue;
-      plan(); if (path) return;
-    }
-  }
-
-  const mapC = document.getElementById("map"), mctx = mapC.getContext("2d");
-  const S = mapC.width / N;
-
-  function terrainColor(i) {
-    const w = world;
-    if (w.cv[i]) return [194, 54, 43];
-    if (w.site[i]) return [122, 79, 179];
-    if (w.road[i]) return [201, 161, 90];
-    if (w.rock[i] || w.slope[i] > MAX_SLOPE) return [59, 63, 65];
-    const t = Math.min(1, Math.max(0, (w.height[i] - 0) / 1.6));
-    return [168 - 40 * t, 160 - 30 * t, 132 - 30 * t];
-  }
-
-  function drawPath(ctx, pts, toPx, color, width) {
-    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = "round"; ctx.beginPath();
-    pts.forEach((p, i) => { const [x, y] = toPx(p); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-    ctx.stroke();
-  }
-
-  function draw() {
-    const img = mctx.createImageData(N, N);
-    for (let i = 0; i < N * N; i++) { const [r, g, b] = terrainColor(i); img.data.set([r, g, b, 255], i * 4); }
-    const off = document.createElement("canvas"); off.width = off.height = N; off.getContext("2d").putImageData(img, 0, 0);
-    mctx.imageSmoothingEnabled = false; mctx.drawImage(off, 0, 0, mapC.width, mapC.height);
-    const toPx = p => [p[0] / CELL * S, p[1] / CELL * S];
-    const pathCol = css("--path"), bad = css("--bad");
-    if (path) {
-      if (document.getElementById("opt-smooth").checked) drawPath(mctx, raw, toPx, "rgba(255,255,255,0.45)", 1.5);
-      drawPath(mctx, path, toPx, pathCol, 3.5);
-      tightTurns(path).forEach(p => { const [x, y] = toPx(p); mctx.fillStyle = bad; mctx.beginPath(); mctx.arc(x, y, 4.5, 0, 7); mctx.fill(); });
-      drawWindow(toPx);
-    }
-    [[start, "#ffffff"], [goal, css("--accent-fill")]].forEach(([i, c], k) => {
-      if (i == null) return;
-      const [x, y] = [(i % N + 0.5) * S, (((i / N) | 0) + 0.5) * S];
-      mctx.fillStyle = c; mctx.strokeStyle = "#1b2124"; mctx.lineWidth = 2; mctx.beginPath();
-      k ? mctx.rect(x - 7, y - 7, 14, 14) : mctx.arc(x, y, 7, 0, 7); mctx.fill(); mctx.stroke();
+  // Moving vehicles: ping-pong along roads.
+  function makeMovers() {
+    const prefer = ["ramp_main_2", "floor_road", "parking_road", "crusher_road", "ramp_access"];
+    const roads = prefer.map(id => W.roads.find(r => r.id === id)).filter(Boolean).slice(0, 4);
+    return roads.map((r, k) => {
+      const pts = resample(r.pts, 1), L = pts.length - 1;
+      return { pts, s: (0.3 + 0.2 * k) * L, dir: k % 2 ? 1 : -1, speed: 3 + k * 0.6, x: 0, z: 0, vx: 0, vz: 0, side: 0, off: 0 };
     });
-    drawChannels(); drawStats();
+  }
+  function stepMovers(ms, dt) {
+    ms.forEach(m => {
+      if (m.static) return;
+      const L = m.pts.length - 1;
+      // Light vehicles give way to haul trucks: stop and pull off the road until the truck passes.
+      const dTruck = truck ? Math.hypot(m.x - truck.x, m.z - truck.z) : Infinity;
+      const i0 = Math.min(L - 1, Math.floor(m.s)), a0 = m.pts[i0], b0 = m.pts[i0 + 1];
+      const len0 = Math.hypot(b0[0] - a0[0], b0[1] - a0[1]) || 1, perp = [(b0[1] - a0[1]) / len0, -(b0[0] - a0[0]) / len0];
+      m.cool = Math.max(0, (m.cool || 0) - dt);
+      // Deadlock breaker: if the truck has waited 3 s, the vehicle drives away along the road for 10 s.
+      if (m.side && holdTime > 3) {
+        m.side = 0; m.cool = 10;
+        const ahead = m.pts[Math.max(0, Math.min(L, Math.round(m.s + 5)))];
+        m.dir = Math.hypot(ahead[0] - truck.x, ahead[1] - truck.z) > dTruck ? 1 : -1;
+      }
+      if (dTruck < 22 && !m.side && !m.cool) {
+        const base = [m.x - perp[0] * m.off, m.z - perp[1] * m.off];
+        const away = (base[0] + perp[0] - truck.x) ** 2 + (base[1] + perp[1] - truck.z) ** 2 > (base[0] - perp[0] - truck.x) ** 2 + (base[1] - perp[1] - truck.z) ** 2 ? 1 : -1;
+        const ok = s => !blockedAt(base[0] + perp[0] * 12 * s, base[1] + perp[1] * 12 * s);
+        m.side = ok(away) ? away : ok(-away) ? -away : 0;
+        if (!m.side) m.dir = -m.dir;
+      } else if (dTruck > 28) m.side = 0;
+      const want = m.side * 12;
+      m.off += Math.max(-3 * dt, Math.min(3 * dt, want - m.off));
+      if (!m.side && Math.abs(m.off) < 0.5) {
+        m.s += m.dir * m.speed * dt;
+        if (m.s >= L) { m.s = L; m.dir = -1; } else if (m.s <= 0) { m.s = 0; m.dir = 1; }
+      }
+      const i = Math.min(L - 1, Math.floor(m.s)), f = m.s - i, a = m.pts[i], b = m.pts[i + 1];
+      const nx = a[0] + (b[0] - a[0]) * f + perp[0] * m.off, nz = a[1] + (b[1] - a[1]) * f + perp[1] * m.off;
+      if (dt > 0) { m.vx = (nx - m.x) / dt; m.vz = (nz - m.z) / dt; }
+      m.x = nx; m.z = nz;
+    });
   }
 
-  // Truck pose: at the start, facing along the first 10 m of the path.
-  function pose() {
-    const p0 = path[0], r = resample(path, 10), p1 = r[1] || path[path.length - 1];
-    const th = Math.atan2(p1[1] - p0[1], p1[0] - p0[0]);
-    return { x: p0[0], y: p0[1], f: [Math.cos(th), Math.sin(th)], l: [Math.sin(th), -Math.cos(th)] };
-  }
-  // Window cell (row, col) -> world metres. Row 0 is the far edge ahead.
-  function cellToWorld(P, r, c) {
-    const fwd = (AHEAD - r - 0.5) * CELL, lat = (c + 0.5 - LAT) * CELL;
-    return [P.x + P.f[0] * fwd + P.l[0] * lat, P.y + P.f[1] * fwd + P.l[1] * lat];
-  }
-  function worldToCell(P, q) {
-    const dx = q[0] - P.x, dy = q[1] - P.y;
-    const fwd = dx * P.f[0] + dy * P.f[1], lat = dx * P.l[0] + dy * P.l[1];
-    return [lat / CELL + LAT, AHEAD - fwd / CELL];
+  let movers, truck, route, astarInfo, cands = [], best = null, playing = !matchMedia("(prefers-reduced-motion: reduce)").matches;
+  let holdTime = 0, simT = 0, stops = 0, minClear = Infinity, status = "driving", lastAction = { thr: 0, steer: 0 }, wasMoving = false;
+
+  function siteById(id) { return W.sites.find(s => s.id === id); }
+  function setupRun(startXZ, goalXZ, heading) {
+    truck = null; holdTime = 0;
+    movers = makeMovers(); stepMovers(movers, 0);
+    // Do not start a vehicle on top of the truck.
+    movers.forEach(m => { for (let k = 0; k < 40 && Math.hypot(m.x - startXZ[0], m.z - startXZ[1]) < 30; k++) { m.s = (m.s + 7) % (m.pts.length - 1); stepMovers([m], 0); } });
+    const s = cellOf(...startXZ), g = cellOf(...goalXZ);
+    astarInfo = astar(s, g);
+    route = astarInfo.pts ? resample(chaikin(astarInfo.pts, 3), 2) : null;
+    let yaw = heading;
+    if (route && route.length > 4) yaw = Math.atan2(route[4][0] - route[0][0], route[4][1] - route[0][1]);
+    truck = { x: startXZ[0], z: startXZ[1], yaw, v: 0, steer: 0, trail: [] };
+    simT = 0; stops = 0; minClear = Infinity; status = route ? "driving" : "no route"; wasMoving = false;
+    plan(); draw();
   }
 
-  function drawWindow(toPx) {
-    const P = pose();
-    const corners = [[0, 0], [0, WIN], [WIN, WIN], [WIN, 0]].map(([r, c]) => toPx(cellToWorld(P, r - 0.5, c - 0.5)));
-    mctx.setLineDash([6, 4]); mctx.strokeStyle = "#ffffff"; mctx.lineWidth = 1.5; mctx.beginPath();
-    corners.forEach(([x, y], i) => i ? mctx.lineTo(x, y) : mctx.moveTo(x, y)); mctx.closePath(); mctx.stroke(); mctx.setLineDash([]);
+  function nearestIdx(x, z) {
+    let bi = 0, bd = Infinity;
+    for (let i = 0; i < route.length; i++) { const d = (route[i][0] - x) ** 2 + (route[i][1] - z) ** 2; if (d < bd) { bd = d; bi = i; } }
+    return bi;
   }
-
-  const CH = [
-    ["road", (i, w) => w.road[i] || w.site[i] ? 1 : 0],
-    ["slope", (i, w) => Math.min(1, w.slope[i] / MAX_SLOPE)],
-    ["static obstacles", (i, w) => w.rock[i] && !(w.road[i] || w.site[i]) ? 1 : 0],
-    ["CV obstacles", (i, w) => w.cv[i]],
-    ["route / goal", null],
-    ["output: 16 waypoints", null],
-  ];
-  const chanWrap = document.getElementById("channels");
-  const chanCtx = CH.map(([name]) => {
-    const fig = document.createElement("figure"), c = document.createElement("canvas");
-    c.width = c.height = WIN * 2; fig.append(c);
-    const cap = document.createElement("figcaption"); cap.textContent = name; fig.append(cap); chanWrap.append(fig);
-    return c.getContext("2d");
-  });
-
-  function sampleWindow(P, fn) {
-    const img = new ImageData(WIN, WIN);
-    for (let r = 0; r < WIN; r++) for (let c = 0; c < WIN; c++) {
-      const [wx, wy] = cellToWorld(P, r, c), gx = Math.floor(wx / CELL), gy = Math.floor(wy / CELL);
-      const v = gx < 0 || gy < 0 || gx >= N || gy >= N ? 0 : fn(gy * N + gx, world, wx, wy);
-      const k = (r * WIN + c) * 4, g = 30 + 215 * v;
-      img.data.set([g, g, g * 0.92, 255], k);
+  function rollout(st, steer, vt) {
+    let { x, z, yaw, v } = st; const pts = [[x, z]]; let hit = false, clear = Infinity;
+    const d0 = movers.map(m => Math.hypot(m.x - x, m.z - z) - CAR_R);
+    for (let t = RDT; t <= HORIZON + 1e-6; t += RDT) {
+      v += (vt - v) * Math.min(1, ACCEL * RDT);
+      yaw += v / WHEELBASE * Math.tan(steer * MAX_STEER) * RDT;
+      x += v * Math.sin(yaw) * RDT; z += v * Math.cos(yaw) * RDT;
+      pts.push([x, z]);
+      if (hitsTerrain(x, z)) hit = true;
+      movers.forEach((m, k) => {
+        const d = Math.hypot(m.x + m.vx * t - x, m.z + m.vz * t - z) - CAR_R;
+        clear = Math.min(clear, d);
+        // Too close and still closing in. Moving away from a near vehicle is allowed.
+        if (d < 1.5 && d < d0[k] - 0.05) hit = true;
+      });
     }
-    return img;
+    return { pts, hit, clear, steer, vt };
+  }
+  function plan() {
+    cands = []; best = null;
+    if (!route) return;
+    const ni = nearestIdx(truck.x, truck.z);
+    const tgt = route[Math.min(route.length - 1, ni + 12)];
+    for (const s of STEERS) for (const vt of SPEEDS) {
+      const c = rollout(truck, s, vt);
+      const [ex, ez] = c.pts[c.pts.length - 1];
+      let cross = Infinity;
+      for (let i = ni; i < Math.min(route.length, ni + 30); i++) cross = Math.min(cross, Math.hypot(route[i][0] - ex, route[i][1] - ez));
+      c.score = Math.hypot(tgt[0] - ex, tgt[1] - ez) + 1.5 * cross + 4 * Math.abs(s - truck.steer) - 1.2 * vt + 10 * Math.max(0, 1 - c.clear / 10);
+      cands.push(c);
+      if (!c.hit && (!best || c.score < best.score)) best = c;
+    }
   }
 
-  function drawChannels() {
-    if (!path) { chanCtx.forEach(ctx => ctx.clearRect(0, 0, WIN * 2, WIN * 2)); return; }
-    const P = pose(), gw = [(goal % N + 0.5) * CELL, (((goal / N) | 0) + 0.5) * CELL];
-    const fns = CH.slice(0, 4).map(c => c[1]);
-    fns.push((i, w, wx, wy) => Math.exp(-((wx - gw[0]) ** 2 + (wy - gw[1]) ** 2) / (2 * 12 ** 2)));
-    fns.forEach((fn, k) => blit(chanCtx[k], sampleWindow(P, fn)));
-    // Output panel: road channel as backdrop, 16 waypoints from the path at 10 m/s.
-    const ctx = chanCtx[5];
-    blit(ctx, sampleWindow(P, CH[0][1]));
-    ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(0, 0, WIN * 2, WIN * 2);
-    const wps = resample(path, V * STEP_DT).slice(1, 17);
-    ctx.fillStyle = css("--accent-fill");
-    wps.forEach(q => { const [x, y] = worldToCell(P, q); ctx.beginPath(); ctx.arc(x * 2, y * 2, 2.6, 0, 7); ctx.fill(); });
-    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(LAT * 2, AHEAD * 2 - 7); ctx.lineTo(LAT * 2 - 5, AHEAD * 2 + 5); ctx.lineTo(LAT * 2 + 5, AHEAD * 2 + 5); ctx.fill();
-  }
-  function blit(ctx, img) {
-    const off = document.createElement("canvas"); off.width = off.height = WIN; off.getContext("2d").putImageData(img, 0, 0);
-    ctx.imageSmoothingEnabled = false; ctx.drawImage(off, 0, 0, WIN * 2, WIN * 2);
-    ctx.fillStyle = "#ffffff"; ctx.beginPath(); ctx.moveTo(LAT * 2, AHEAD * 2 - 7); ctx.lineTo(LAT * 2 - 5, AHEAD * 2 + 5); ctx.lineTo(LAT * 2 + 5, AHEAD * 2 + 5); ctx.fill();
+  function step() {
+    if (!route || status === "arrived") return;
+    simT += DT;
+    stepMovers(movers, DT);
+    plan();
+    let steer = 0, vt = 0;
+    if (best) { steer = best.steer; vt = best.vt; status = vt === 0 ? "holding" : "driving"; } else status = "holding";
+    truck.v += (vt - truck.v) * Math.min(1, ACCEL * DT);
+    truck.steer = steer;
+    truck.yaw += truck.v / WHEELBASE * Math.tan(steer * MAX_STEER) * DT;
+    truck.x += truck.v * Math.sin(truck.yaw) * DT; truck.z += truck.v * Math.cos(truck.yaw) * DT;
+    truck.trail.push([truck.x, truck.z]);
+    lastAction = { thr: vt / MAX_V, steer };
+    if (truck.v > 1) wasMoving = true;
+    if (wasMoving && truck.v < 0.3) { stops++; wasMoving = false; }
+    holdTime = truck.v < 0.3 ? holdTime + DT : 0;
+    for (const m of movers) minClear = Math.min(minClear, Math.hypot(m.x - truck.x, m.z - truck.z) - CAR_R);
+    const end = route[route.length - 1];
+    if (Math.hypot(end[0] - truck.x, end[1] - truck.z) < 5) { status = "arrived"; truck.v = 0; }
   }
 
-  function drawStats() {
-    const el = document.getElementById("stats");
-    if (!path) { el.innerHTML = '<div class="stat"><span class="k">result</span><span class="v"><span class="pill no">no path</span></span></div>'; return; }
-    const tight = tightTurns(path).length, L = pathLength(path);
-    const sx = (start % N + 0.5) * CELL, sy = (((start / N) | 0) + 0.5) * CELL, gx = (goal % N + 0.5) * CELL, gy = (((goal / N) | 0) + 0.5) * CELL;
+  // ---- drawing ----
+  const mapC = document.getElementById("map"), mctx = mapC.getContext("2d"), S = mapC.width / N;
+  const toPx = (x, z) => [(x - OX) / CELL * S, (N - (z - OZ) / CELL) * S];
+  const base = document.createElement("canvas"); base.width = base.height = N;
+  (() => {
+    const img = base.getContext("2d").createImageData(N, N);
+    for (let r = 0; r < N; r++) for (let c = 0; c < N; c++) {
+      const i = r * N + c, k = ((N - 1 - r) * N + c) * 4;
+      const hx = (height[r * N + Math.min(N - 1, c + 1)] - height[r * N + Math.max(0, c - 1)]);
+      const hz = (height[Math.min(N - 1, r + 1) * N + c] - height[Math.max(0, r - 1) * N + c]);
+      const shade = Math.max(-1, Math.min(1, (hx - hz) / 25));
+      let rgb = free(i) ? [176, 166, 140] : [48, 54, 58];
+      if (free(i)) { const t = Math.min(1, (cost[i] - 10) / 30); rgb = [176 - 30 * t, 166 - 34 * t, 140 - 36 * t]; }
+      const f = 1 + 0.25 * shade;
+      img.data.set([rgb[0] * f, rgb[1] * f, rgb[2] * f, 255], k);
+    }
+    base.getContext("2d").putImageData(img, 0, 0);
+  })();
+  const siteColor = { crusher: "#d0453a", dump: "#7d6a4e", ore: "#c98a1c", parking: "#4b7bb8", fuel: "#3a9a6b" };
+
+  function polyline(ctx, pts, map, color, width, dash) {
+    if (!pts || pts.length < 2) return;
+    ctx.strokeStyle = color; ctx.lineWidth = width; ctx.lineJoin = ctx.lineCap = "round"; ctx.setLineDash(dash || []);
+    ctx.beginPath(); pts.forEach((p, i) => { const [x, y] = map(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); ctx.setLineDash([]);
+  }
+  function truckShape(ctx, x, y, ang, len, color) {
+    ctx.save(); ctx.translate(x, y); ctx.rotate(ang); ctx.fillStyle = color; ctx.strokeStyle = "#1b2124"; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, -len); ctx.lineTo(len * 0.6, len * 0.7); ctx.lineTo(-len * 0.6, len * 0.7); ctx.closePath(); ctx.fill(); ctx.stroke(); ctx.restore();
+  }
+
+  function drawMap() {
+    mctx.imageSmoothingEnabled = false; mctx.drawImage(base, 0, 0, mapC.width, mapC.height);
+    W.roads.forEach(r => polyline(mctx, r.pts, toPx, "rgba(155,138,106,0.85)", r.w / CELL * S * 0.5));
+    W.sites.forEach(s => {
+      const [x, y] = toPx(s.pos[0], s.pos[1]);
+      mctx.fillStyle = siteColor[s.type] || "#888"; mctx.strokeStyle = "#ffffff"; mctx.lineWidth = 2;
+      mctx.beginPath(); mctx.arc(x, y, 7, 0, 7); mctx.fill(); mctx.stroke();
+      mctx.font = "600 11px 'IBM Plex Sans Condensed', sans-serif"; mctx.fillStyle = "#ffffff"; mctx.strokeStyle = "rgba(0,0,0,0.75)"; mctx.lineWidth = 3;
+      const tx = Math.min(mapC.width - 90, x + 10); mctx.strokeText(s.name, tx, y + 4); mctx.fillText(s.name, tx, y + 4);
+    });
+    polyline(mctx, route, toPx, css("--path"), 3);
+    polyline(mctx, truck.trail, toPx, "rgba(255,255,255,0.7)", 1.5, [3, 3]);
+    cands.forEach(c => { if (!c.hit) polyline(mctx, c.pts, toPx, "rgba(235,235,235,0.55)", 1); });
+    if (best) polyline(mctx, best.pts, toPx, css("--accent-fill"), 3.5);
+    movers.forEach(m => {
+      const [x, y] = toPx(m.x, m.z);
+      mctx.fillStyle = m.static ? "#c2362b" : "#8a5cc7"; mctx.strokeStyle = "#ffffff"; mctx.lineWidth = 2;
+      mctx.beginPath(); mctx.arc(x, y, CAR_R / CELL * S * 0.6, 0, 7); mctx.fill(); mctx.stroke();
+    });
+    const [tx, ty] = toPx(truck.x, truck.z);
+    truckShape(mctx, tx, ty, truck.yaw, 9, "#ffffff");
+  }
+
+  const egoC = document.getElementById("ego"), ectx = egoC.getContext("2d");
+  const EGO_SCALE = 2.5, EGO_X = egoC.width / 2, EGO_Y = egoC.height - 22;
+  function toEgo(x, z) {
+    const dx = x - truck.x, dz = z - truck.z, s = Math.sin(truck.yaw), c = Math.cos(truck.yaw);
+    const fwd = dx * s + dz * c, right = dx * c - dz * s;
+    return [EGO_X + right * EGO_SCALE, EGO_Y - fwd * EGO_SCALE];
+  }
+  function lidar() {
+    const rays = [];
+    for (let k = 0; k < 60; k++) {
+      const a = truck.yaw + (-60 + (k + 0.5) * 2) * Math.PI / 180, sx = Math.sin(a), cz = Math.cos(a);
+      let r = 100;
+      for (let d = 2; d <= 100; d += 1) {
+        const x = truck.x + sx * d, z = truck.z + cz * d;
+        if (blockedAt(x, z) || movers.some(m => Math.hypot(m.x - x, m.z - z) < CAR_R * 0.6)) { r = d; break; }
+      }
+      rays.push([a, r]);
+    }
+    return rays;
+  }
+  function drawEgo() {
+    ectx.fillStyle = css("--panel"); ectx.fillRect(0, 0, egoC.width, egoC.height);
+    ectx.strokeStyle = css("--line"); ectx.lineWidth = 1;
+    [25, 50, 75, 100].forEach(r => { ectx.beginPath(); ectx.arc(EGO_X, EGO_Y, r * EGO_SCALE, Math.PI + Math.PI / 6, 2 * Math.PI - Math.PI / 6); ectx.stroke(); });
+    ectx.fillStyle = css("--muted"); ectx.font = "11px 'IBM Plex Mono', monospace";
+    [50, 100].forEach(r => ectx.fillText(r + " m", EGO_X + 4, EGO_Y - r * EGO_SCALE + 12));
+    lidar().forEach(([a, r]) => {
+      const x = truck.x + Math.sin(a) * r, z = truck.z + Math.cos(a) * r, [px, py] = toEgo(x, z);
+      const near = r < 30;
+      ectx.strokeStyle = near ? css("--bad") : "rgba(120,140,150,0.45)"; ectx.lineWidth = near ? 1.6 : 1;
+      ectx.beginPath(); ectx.moveTo(EGO_X, EGO_Y); ectx.lineTo(px, py); ectx.stroke();
+      if (r < 100) { ectx.fillStyle = near ? css("--bad") : css("--muted"); ectx.fillRect(px - 1.5, py - 1.5, 3, 3); }
+    });
+    if (route) {
+      const ni = nearestIdx(truck.x, truck.z);
+      ectx.fillStyle = css("--path");
+      for (let k = 1; k <= 8; k++) { const p = route[Math.min(route.length - 1, ni + k * 2.5 | 0)]; const [px, py] = toEgo(p[0], p[1]); ectx.beginPath(); ectx.arc(px, py, 3.5, 0, 7); ectx.fill(); }
+    }
+    if (best) polyline(ectx, best.pts, toEgo, css("--accent-fill"), 3);
+    truckShape(ectx, EGO_X, EGO_Y, 0, 9, "#ffffff");
+  }
+
+  function drawPanel() {
+    const bar = (k, v, lo, hi, txt) => {
+      const z = (0 - lo) / (hi - lo), p = (v - lo) / (hi - lo), left = Math.min(z, p) * 100, w = Math.abs(p - z) * 100;
+      return '<div class="bar"><span>' + k + '</span><span class="track"><span class="fill" style="left:' + left + '%;width:' + Math.max(1, w) + '%"></span></span><span class="val">' + txt + "</span></div>";
+    };
+    document.getElementById("bars").innerHTML =
+      bar("throttle", lastAction.thr, 0, 1, lastAction.thr.toFixed(2)) + bar("steer", lastAction.steer, -1, 1, (lastAction.steer >= 0 ? "+" : "") + lastAction.steer.toFixed(2));
+    const pill = status === "arrived" ? "ok" : status === "driving" ? "ok" : "warn";
     const rows = [
-      ["A* time", lastMs.toFixed(1) + " ms"],
-      ["cells expanded", expanded.toLocaleString()],
-      ["path length", L.toFixed(0) + " m"],
-      ["length / straight", (L / Math.hypot(gx - sx, gy - sy)).toFixed(2)],
-      ["drive time @10 m/s", (L / V).toFixed(0) + " s"],
-      ["15 m radius", tight ? '<span class="pill no">' + tight + " tight turns</span>" : '<span class="pill ok">drivable</span>'],
+      ["status", '<span class="pill ' + pill + '">' + status + "</span>"],
+      ["speed", truck.v.toFixed(1) + " m/s"],
+      ["sim time", simT.toFixed(1) + " s"],
+      ["full stops", String(stops)],
+      ["min clearance", isFinite(minClear) ? Math.max(0, minClear).toFixed(1) + " m" : "-"],
+      ["A* time", astarInfo.ms.toFixed(1) + " ms"],
+      ["A* route", route ? (resample(route, 1).length - 1) + " m" : "none"],
+      ["A* turns < 8.7 m", route ? String(tightTurns(route)) : "-"],
     ];
-    el.innerHTML = rows.map(([k, v]) => '<div class="stat"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>").join("");
+    document.getElementById("stats").innerHTML = rows.map(([k, v]) => '<div class="stat"><span class="k">' + k + '</span><span class="v">' + v + "</span></div>").join("");
   }
+  function draw() { drawMap(); drawEgo(); drawPanel(); }
 
+  // ---- controls ----
+  const fromSel = document.getElementById("from"), toSel = document.getElementById("to");
+  W.sites.forEach(s => { fromSel.add(new Option(s.name, s.id)); toSel.add(new Option(s.name, s.id)); });
+  fromSel.value = W.sites.some(s => s.id === "parking") ? "parking" : W.sites[0].id;
+  toSel.value = W.sites.some(s => s.id === "pit_floor") ? "pit_floor" : W.sites[1].id;
+  let customStart = null, customGoal = null, clickPhase = 0;
+  function restart() {
+    const a = customStart || siteById(fromSel.value).pos, b = customGoal || siteById(toSel.value).pos;
+    setupRun(a, b, 0);
+  }
+  fromSel.onchange = toSel.onchange = () => { customStart = customGoal = null; restart(); };
+  document.getElementById("btn-reset").onclick = restart;
+  const playBtn = document.getElementById("btn-play");
+  const syncPlay = () => { playBtn.textContent = playing ? "Pause" : "Play"; };
+  playBtn.onclick = () => { playing = !playing; syncPlay(); };
+  document.getElementById("btn-rock").onclick = () => {
+    if (!route) return;
+    const p = route[Math.min(route.length - 1, nearestIdx(truck.x, truck.z) + 20)];
+    movers.push({ static: true, x: p[0], z: p[1], vx: 0, vz: 0, pts: [p, p] });
+    plan(); draw();
+  };
   mapC.addEventListener("click", e => {
     const rect = mapC.getBoundingClientRect();
-    const x = Math.floor((e.clientX - rect.left) / rect.width * N), y = Math.floor((e.clientY - rect.top) / rect.height * N);
-    const i = y * N + x;
-    if (!isFinite(world.cost[i])) return;
-    if (clickPhase === 0) { start = i; path = null; clickPhase = 1; draw(); }
-    else { goal = i; clickPhase = 0; plan(); }
+    const x = OX + (e.clientX - rect.left) / rect.width * N * CELL, z = OZ + (1 - (e.clientY - rect.top) / rect.height) * N * CELL;
+    if (blockedAt(x, z)) return;
+    if (clickPhase === 0) { customStart = [x, z]; clickPhase = 1; }
+    else { customGoal = [x, z]; clickPhase = 0; restart(); }
   });
-  document.getElementById("btn-random").onclick = () => { clickPhase = 0; newQuery(); };
-  document.getElementById("btn-map").onclick = () => { world = makeWorld(); clickPhase = 0; newQuery(); };
-  document.getElementById("btn-rock").onclick = () => {
-    if (!raw) return;
-    const m = raw[Math.floor(raw.length * 0.55)];
-    stamp(world.cv, m[0] / CELL - 0.5, m[1] / CELL - 0.5, 3.2, 1);
-    refreshCost(world); plan();
-  };
-  document.getElementById("opt-smooth").onchange = () => { if (raw) plan(); };
   matchMedia("(prefers-color-scheme: dark)").addEventListener("change", draw);
   new MutationObserver(draw).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
 
-  world = makeWorld();
-  newQuery();
+  let frame = 0;
+  function loop() {
+    if (playing && frame++ % 2 === 0) { step(); draw(); }
+    requestAnimationFrame(loop);
+  }
+  if (globalThis.__PLANNER_TEST__) globalThis.__PLANNER_TEST__ = () => ({ truck, movers, cands, route, nearestIdx });
+  syncPlay(); restart(); loop();
 })();
 </script>
