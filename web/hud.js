@@ -1,6 +1,7 @@
 import { D2R, NEAR, PathBuffer, Ribbon, buildRibbon, cameraModel, interpolateActors, nearestOnPolyline, predictPath, project, routePath, straightPath, toCamera } from "./hud_math.js";
 
 const MAX_LEN = 80;
+const CAND_BUCKETS = 4;
 const HALF_W = 2.65;
 const TRUCK_SIZE = [5.3, 4.5, 9.35];
 const PERSON_SIZE = [0.6, 1.8, 0.6];
@@ -223,7 +224,7 @@ class TileHud {
       tone = lead.state === "stop" ? "red" : "amber";
     }
 
-    if (forward && engaged) this.drawCandidates(ctx, plan, cam, groundY, full, u);
+    if (forward && engaged && !this.el.classList.contains("thumb")) this.drawCandidates(ctx, plan, cam, groundY, full, u);
     buildRibbon(this.path, ego, cam, HALF_W, len, this.ribbon, 0.45);
     if (forward) this.drawRibbon(ctx, this.ribbon, tone, engaged && !holding, full, u, now, stopAt != null && stopAt <= len + 0.01 ? stopAt : null);
     if (forward && near) {
@@ -439,17 +440,21 @@ class TileHud {
     ctx.lineWidth = (full ? 1.25 : 0.9) * u;
     ctx.lineJoin = "round";
     ctx.lineCap = "round";
-    for (const c of plan.list) {
-      if (c.pts === plan.chosen) continue;
-      ctx.strokeStyle = rgba(C.white, (full ? 0.05 + 0.25 * c.weight : 0.04 + 0.12 * c.weight));
+    for (let b = 0; b < CAND_BUCKETS; b++) {
+      ctx.strokeStyle = rgba(C.white, full ? 0.05 + 0.25 * ((b + 0.5) / CAND_BUCKETS) : 0.04 + 0.12 * ((b + 0.5) / CAND_BUCKETS));
       ctx.beginPath();
-      let started = false;
-      for (const p of c.pts) {
-        if (project(cam, p[0], p.length > 2 ? p[2] : groundY, p[1], pt) < NEAR) { started = false; continue; }
-        started ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]);
-        started = true;
+      let any = false;
+      for (const c of plan.list) {
+        if (c.pts === plan.chosen || Math.min(CAND_BUCKETS - 1, Math.floor(c.weight * CAND_BUCKETS)) !== b) continue;
+        let started = false;
+        for (const p of c.pts) {
+          if (project(cam, p[0], p.length > 2 ? p[2] : groundY, p[1], pt) < NEAR) { started = false; continue; }
+          started ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]);
+          started = true;
+          any = true;
+        }
       }
-      ctx.stroke();
+      if (any) ctx.stroke();
     }
     ctx.restore();
   }
@@ -630,7 +635,7 @@ export function createHud({ focusOnClick = true } = {}) {
       if (!h) return;
       h.meta = meta || h.meta;
       if (meta && meta.det) hud.setDetections(name, meta.det.items);
-      if (!focused || focused === h) h.draw(performance.now());
+      h.dirty = true;
     },
 
     setState(state) {

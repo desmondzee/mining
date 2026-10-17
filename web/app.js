@@ -295,7 +295,15 @@ function drawNetwork() {
   });
 }
 
+let mapQueued = false;
 function drawMap() {
+  if (mapQueued) return;
+  mapQueued = true;
+  requestAnimationFrame(() => { mapQueued = false; paintMap(); });
+}
+
+function paintMap() {
+  if (document.hidden) return;
   ctx.clearRect(0, 0, map.width, map.height);
   const [x0, y0] = toCanvas(state.bounds[0], state.bounds[3]);
   const [x1, y1] = toCanvas(state.bounds[2], state.bounds[1]);
@@ -384,7 +392,15 @@ function drawMap() {
       ctx.strokeStyle = colour;
       ctx.lineWidth = 1 * PX;
       ctx.globalAlpha = 0.18;
-      cands.forEach((c, i) => { if (scores[i] != null && i !== t.choice) { polyline([[t.x, t.z], ...c]); ctx.stroke(); } });
+      if (t.id === selected) {
+        ctx.beginPath();
+        cands.forEach((c, i) => {
+          if (scores[i] == null || i === t.choice) return;
+          ctx.moveTo(cx, cy);
+          for (const p of c) { const [x, y] = toCanvas(p[0], p[1]); ctx.lineTo(x, y); }
+        });
+        ctx.stroke();
+      }
       const chosen = cands[t.choice];
       if (chosen) {
         ctx.globalAlpha = 0.9;
