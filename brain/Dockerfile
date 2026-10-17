@@ -1,4 +1,3 @@
-# Build from the repo root: docker compose build (see docker-compose.yml)
 FROM python:3.12-slim
 
 COPY --from=ghcr.io/astral-sh/uv:0.8.18 /uv /bin/uv

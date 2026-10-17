@@ -4,7 +4,6 @@ __pycache__/
 *.pyc
 .DS_Store
 
-# Unity project artefacts, if a project is added under unity/
 unity/**/Library/
 unity/**/Temp/
 unity/**/Logs/

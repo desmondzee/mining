@@ -1,7 +1,5 @@
 # Spec
 
-Rows with a `Source` are checked against the code by `brain/tests/test_spec.py`. Change both together.
-
 ## Platform
 
 | Item | Value |
