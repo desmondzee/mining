@@ -514,8 +514,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Actors rate (Hz) | 10 | `isaac/sim/sensors.py:ACTORS_HZ` |
 | JPEG quality | 80 | `isaac/sim/protocol.py:JPEG_QUALITY` |
 | Overview | perspective, looks at the road network's centre from the side opposite the ore faces | |
-| Overview elevation (deg) | 50 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
-| Overview distance (× road extent) | 0.8 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
+| Overview elevation (deg) | 32 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
+| Overview distance (× road extent) | 0.62 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
 | Overview horizontal FOV (deg) | 60 | `isaac/sim/sensors.py:OVERVIEW_HFOV` |
 | Truck frame `cam` | `{x, y, z, yaw, pitch, roll, hfov}` camera world pose, Unity Euler (pitch > 0 looks down) | |
 | Physics substep (s) | 1/60, real-time paced | |
