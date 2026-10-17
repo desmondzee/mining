@@ -8,18 +8,23 @@ envgen/.venv.nosync/bin/pip install -r envgen/requirements.txt
 PY=envgen/.venv.nosync/bin/python
 ```
 
-## Procedural fallback (no keys, ~1 s)
+## Procedural fallback (no keys, ~2 s)
 ```bash
-$PY -m envgen.procedural --seed 42 --id default
+$PY -m envgen.procedural --seed 42 --id default                 # design truck komatsu_hd465 (default), 260 m world
+$PY -m envgen.procedural --id big --truck cat785d               # or cat797f | komatsu930e (world auto-sized)
+$PY -m envgen.mine_spec --truck komatsu_hd465                   # print the spec and its standards check
+$PY -m envgen.measure_geometry --id default                     # measure the as-built geometry from heightmap.raw
 ```
-This generates a 400x400 m open-pit copper mine:
-- 8 benches, each 10 m high, with steep faces.
-- An 890 m spiral haul ramp at 9% grade, running from the rim to the 80 m deep floor.
-- Surface haul roads joining the crusher, dump, parking and fuel pads.
-- Three ore sites: the pit floor plus two bench loading bays beside the ramp.
-- Five trucks parked at the Ready Line.
+The geometry follows an explicit design spec tied to a real design truck. See `DESIGN_SPEC.md`; the same numbers are in `world.json["design"]`.
+- The default design truck is the Komatsu HD465-7 (55 t). Roads are 15 m (3.5 × truck width), the ramp is 16.5 m, and the ramp grade is 9 % with 2 % cross-fall.
+- A 1.1 m safety windrow (≥ MSHA mid-axle height) runs along the ramp crest edge.
+- Benches are 10 m high with 70° faces and 6.5 m catch berms (modified Ritchie).
+- The pit is a 3-bench, 30 m deep spiral pit in a 260 m lease, with a level 40 m run-out at the ramp foot.
+- Three ore sites: the pit floor plus two bench loading bays cut into the highwall beside the ramp.
+- Surface haul roads join the crusher, fuel bay, ready line and dump pads in the lease corners.
+- Three trucks (`truck-0..2`) start on the ready line.
 
-The script reports navgrid reachability from the parking site.
+The script prints navgrid reachability, any spec violations, and the measured-vs-spec table.
 
 ## World Labs Marble
 ```bash
@@ -51,7 +56,7 @@ Site placement uses the largest connected passable region: ore sites go low in t
 |---|---|
 | `world.json`, `navgrid.json` | per CONTRACT.md |
 | `terrain.glb` | heightmap mesh, Y up, RGBA vertex colors (dirt / rock face / gravel road / pad / ore tint) |
-| `heightmap.raw` + `heightmap_meta.json` | Unity RAW, 513x513 uint16 LE, row 0 = south; meta has min/max height for scaling |
+| `heightmap.raw` + `heightmap_meta.json` | Unity RAW, 513x513 (1025x1025 when size_m > 500) uint16 LE, row 0 = south; meta has min/max height for scaling |
 | `preview.png` | top-down hillshade with sites and trucks, north up |
 | Marble only | `splat_500k.spz`, `splat_100k.spz`, `collider.glb`, `pano.jpg`, `concept.png`, `marble_world.json` |
 

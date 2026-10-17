@@ -148,3 +148,13 @@ world.json gains (all metres, Y up, points are 3D `[x, y, z]` with y = terrain h
 Every site gets `"pos3": [x, y, z]` (terrain height at its pos) and keeps `name` as its display label.
 Roads + junctions form a connected graph: every site is the endpoint of at least one road.
 Unity mapping: contract (x, y, z) -> Unity Vector3(x, y, z) directly.
+
+### Design spec, bounds, trucks (envgen, additive)
+- `world.json` gains `"bounds": [xmin, zmin, xmax, zmax]`, which equals the world extent. The procedural default is now a 260 m lease, so `[-130,-130,130,130]` with `origin [-130,-130]` and navgrid 130x130 @ 2 m. Read `size_m`/`origin`/`bounds`; do not assume 400 m.
+- `world.json` gains `"design"`. It holds the pit/haul-road design spec, all metres/degrees/percent: `design_truck` {name, payload_t, width_m, length_m, tire, tire_diameter_m, turning/clearance diameters ...}, `bench_height_m`, `n_benches`, `face_angle_deg`, `berm_width_m`, `inter_ramp_angle_deg`, `overall_slope_deg`, `ramp_grade_pct`, `road_width_m`, `ramp_width_m`, `safety_berm_height_m`, `cross_fall_pct`, `min_curve_radius_m`, `floor_radius_m`, `checks` / `violations` / `warnings`, `references`, `notes`, and `as_built` (geometry measured back from heightmap.raw). See `envgen/DESIGN_SPEC.md`.
+- `roads[].width_m` equals `design.ramp_width_m` for `type: "ramp"` and `design.road_width_m` otherwise. The default design truck is the Komatsu HD465-7, so these are 16.5 m and 15 m.
+- The procedural default now has **3 trucks with ids `truck-0`, `truck-1`, `truck-2`** (callsigns "Truck 0..2"), replacing T1..T5. Each has `capacity_t` = design-truck payload (55) plus an optional `model` string.
+- `trucks[].heading_deg` convention: 0 = +z (north), clockwise positive when viewed from above (Unity `eulerAngles.y`), i.e. `heading = atan2(dx, dz)`.
+- The default site ids are unchanged except the bench ore sites, which are now `pit_south` and `pit_west`. Their ids derive from compass direction, so look sites up by `type`.
+- `procedural.py --truck komatsu_hd465|cat785d|cat797f|komatsu930e`. The big-truck presets auto-size the world (500–600 m, heightmap 1025 when > 500 m).
+
