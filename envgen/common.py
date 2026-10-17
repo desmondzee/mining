@@ -1314,3 +1314,163 @@ def haul_cycle_roads(world):
             ids |= set(road_route(world["roads"], o, d) or [])
     return ids
 
+
+
+# ---------------------------------------------------------------- road corridors + footprint-aware nav check
+NAV_MIN_CORRIDOR_M = 10.0      # every road must leave at least this much clear width in the navgrid
+NAV_PAD_RADIUS_M = 12.0        # open pad around every site / load / dump point / parking slot (8.5 m turning radius)
+NAV_MARGIN_M = 0.5             # clearance added to the truck half-width when eroding the passable mask
+
+
+def _cell_centres(shape, origin, cell):
+    h, w = shape
+    X = origin[0] + (np.arange(w) + 0.5) * cell
+    Z = origin[1] + (np.arange(h) + 0.5) * cell
+    return np.meshgrid(X, Z)
+
+
+def road_polylines(world, step=0.25):
+    """2D centrelines of every road, resampled every `step` m: [(road, (N, 2) array)]."""
+    out = []
+    for r in world.get("roads", []):
+        P = np.array([[q[0], q[2]] for q in r["points"]], float)
+        out.append((r, resample(P, step) if len(P) >= 2 else P))
+    return out
+
+
+def nav_points(world):
+    """{label: [x, z]} for every site pos, load / dump point and parking slot."""
+    pts = {}
+    for s in world["sites"]:
+        pts[s["id"]] = list(s["pos"])
+        for k in ("load_point", "dump_point"):
+            if s.get(k):
+                pts[f"{s['id']}.{k}"] = [s[k]["pos3"][0], s[k]["pos3"][2]]
+        for i, q in enumerate(s.get("slots", [])):
+            pts[f"{s['id']}.slots[{i}]"] = [q["pos3"][0], q["pos3"][2]]
+    return pts
+
+
+NAV_PAD_MAX_DH_M = 3.0         # pads only open ground within this height of the pad centre (no bench faces)
+
+
+def carve_road_corridors(cost, origin, cell, world, forbid=None, heights=None, min_width=NAV_MIN_CORRIDOR_M,
+                         pad_radius=NAV_PAD_RADIUS_M, pad_max_dh=NAV_PAD_MAX_DH_M, road_cost=1.0):
+    """Open the drivable road corridors in the navgrid (returns a new cost array; heights are untouched).
+
+    Every cell whose centre lies within max(width_m, min_width)/2 of a road centreline (plan distance), or within
+    pad_radius of a site / load point / dump point / parking slot, becomes passable with road_cost, even where
+    the slope rule marked it impassable (scan noise, vegetation, steep cells beside a cut road). Cells in
+    `forbid` (bool grid, e.g. outside the scan footprint / no-scan border) are never opened. With `heights`
+    (navgrid cell-centre heights), a pad only opens cells within pad_max_dh of the height at its centre, so a pad
+    at a bench bay does not turn the bench face behind it into a 'road' linking two levels."""
+    from scipy.spatial import cKDTree
+    cost = np.array(cost, float, copy=True)
+    X, Z = _cell_centres(cost.shape, origin, cell)
+    Q = np.stack([X.ravel(), Z.ravel()], 1)
+    open_ = np.zeros(cost.size, bool)
+    for r, P in road_polylines(world):
+        rad = max(float(r.get("width_m") or 0.0), min_width) / 2
+        lo, hi = P.min(0) - rad - cell, P.max(0) + rad + cell
+        box = np.all((Q >= lo) & (Q <= hi), axis=1)
+        d, _ = cKDTree(P).query(Q[box], distance_upper_bound=rad + 1e-6)
+        idx = np.nonzero(box)[0]
+        open_[idx[np.isfinite(d)]] = True
+    pts = np.array(list(nav_points(world).values()), float)
+    Hf = None if heights is None else np.asarray(heights, float).ravel()
+    for p in pts:
+        near = np.hypot(Q[:, 0] - p[0], Q[:, 1] - p[1]) <= pad_radius + 1e-6
+        if Hf is not None:
+            r, c = world_to_cell(p, origin, cell)
+            r, c = min(max(r, 0), cost.shape[0] - 1), min(max(c, 0), cost.shape[1] - 1)
+            near &= np.abs(Hf - Hf[r * cost.shape[1] + c]) <= pad_max_dh
+        open_ |= near
+    open_ = open_.reshape(cost.shape)
+    if forbid is not None:
+        open_ &= ~forbid
+    cost[open_] = road_cost
+    return cost
+
+
+def _corner_rule_labels(mask):
+    """Connected components of `mask` under 8-connectivity with the corner rule (a diagonal step needs both
+    orthogonal neighbours in the mask), same as the A* / road builder. Returns labels (-1 outside mask)."""
+    from scipy.sparse.csgraph import connected_components
+    G = grade_graph(np.zeros(mask.shape), np.where(mask, 1.0, -1.0), 1.0, smooth=0)
+    _, lab = connected_components(G, directed=False)
+    return np.where(mask.ravel(), lab, -1).reshape(mask.shape)
+
+
+def corridor_clearance(cost, origin, cell, P, search=20.0):
+    """Plan distance (m) from each point in P (N, 2) to the nearest impassable cell (as a square) or to the
+    grid edge, capped at `search`."""
+    from scipy.spatial import cKDTree
+    h, w = cost.shape
+    rr, cc = np.nonzero(cost <= 0)
+    # the outside of the grid counts as blocked: add a ring of virtual cells around it
+    ring_c = np.concatenate([np.arange(-1, w + 1), np.arange(-1, w + 1), np.full(h, -1), np.full(h, w)])
+    ring_r = np.concatenate([np.full(w + 2, -1), np.full(w + 2, h), np.arange(h), np.arange(h)])
+    cx = origin[0] + (np.concatenate([cc, ring_c]) + 0.5) * cell
+    cz = origin[1] + (np.concatenate([rr, ring_r]) + 0.5) * cell
+    B = np.stack([cx, cz], 1)
+    tree = cKDTree(B)
+    out = np.full(len(P), search)
+    for i, nb in enumerate(tree.query_ball_point(P, search + cell)):
+        if nb:
+            dx = np.maximum(np.abs(B[nb, 0] - P[i, 0]) - cell / 2, 0)
+            dz = np.maximum(np.abs(B[nb, 1] - P[i, 1]) - cell / 2, 0)
+            out[i] = min(search, float(np.hypot(dx, dz).min()))
+    return out
+
+
+def navgrid_check(world, cost, origin, cell, truck_width=None, margin=NAV_MARGIN_M, min_width=NAV_MIN_CORRIDOR_M):
+    """Footprint-aware navigability check of a navgrid against the world's sites and roads.
+
+    1. Erode the passable mask by a disk of radius truck_width/2 + margin (a cell survives when its centre is at
+       least that far from every impassable cell / the grid edge), so the eroded grid is where the truck's
+       centre can be without its body touching blocked ground.
+    2. Every pair of sites, and every pair of all nav points (sites + load / dump points + parking slots), must
+       be connected in the eroded mask (8-connected, corner rule).
+    3. Minimum corridor width along each road = 2 x the minimum clearance (centre -> nearest blocked cell) sampled
+       every 0.5 m along its centreline; must be >= min_width.
+    Returns (problems, summary dict for world.design.navgrid_check)."""
+    from itertools import combinations
+    if truck_width is None:
+        truck_width = float(world.get("design", {}).get("design_truck", {}).get("width_m", 4.24))
+    rad = truck_width / 2 + margin
+    h, w = cost.shape
+    X, Z = _cell_centres(cost.shape, origin, cell)
+    clr = corridor_clearance(cost, origin, cell, np.stack([X.ravel(), Z.ravel()], 1),
+                             search=rad + 2 * cell).reshape(cost.shape)
+    eroded = (cost > 0) & (clr >= rad)
+    lab = _corner_rule_labels(eroded)
+    pts = nav_points(world)
+    comp = {}
+    for k, p in pts.items():
+        r, c = world_to_cell(p, origin, cell)
+        comp[k] = int(lab[r, c]) if (0 <= r < h and 0 <= c < w) else -1
+    errs = [f"{k} at {pts[k]} is not drivable for a {truck_width:.2f} m truck (+{margin} m margin)"
+            for k, v in comp.items() if v < 0]
+    site_ids = [s["id"] for s in world["sites"]]
+    sp = list(combinations(site_ids, 2))
+    s_ok = [(a, b) for a, b in sp if comp[a] >= 0 and comp[a] == comp[b]]
+    ap = list(combinations(list(pts), 2))
+    a_ok = [(a, b) for a, b in ap if comp[a] >= 0 and comp[a] == comp[b]]
+    if len(s_ok) < len(sp):
+        errs.append(f"site pairs connected {len(s_ok)}/{len(sp)}; not: "
+                    + ", ".join(f"{a}-{b}" for a, b in sp if (a, b) not in s_ok))
+    if len(a_ok) < len(ap):
+        errs.append(f"nav point pairs connected {len(a_ok)}/{len(ap)}")
+    widths = {}
+    for r, P in road_polylines(world, step=0.5):
+        wmin = 2 * float(corridor_clearance(cost, origin, cell, P, search=max(min_width, 20.0)).min())
+        widths[r["id"]] = round(wmin, 1)
+        if wmin < min_width - 1e-6:
+            errs.append(f"road {r['id']}: min navgrid corridor width {wmin:.1f} m < {min_width} m")
+    summary = {"truck_width_m": truck_width, "erosion_radius_m": round(rad, 2), "min_required_width_m": min_width,
+               "min_corridor_width_m": widths,
+               "pairs_connected": f"{len(s_ok)}/{len(sp)}", "nav_point_pairs_connected": f"{len(a_ok)}/{len(ap)}",
+               "nav_points": len(pts),
+               "method": "passable mask (cost > 0) eroded by truck_width/2 + margin; pairs connected 8-way with the "
+                         "corner rule; corridor width = 2 x min centreline clearance to the nearest blocked cell"}
+    return errs, summary

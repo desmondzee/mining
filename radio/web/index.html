@@ -1,0 +1,489 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="theme-color" content="#0b0d0c">
+<title>Haul Net Radio</title>
+<style>
+  :root {
+    --bg: #0b0d0c; --panel: #151917; --panel2: #1c211e; --line: #2a312d; --text: #e6ece8; --dim: #8a968f;
+    --amber: #ffb627; --green: #43d17a; --red: #ff4d4d; --blue: #4db8ff; --orange: #ff8c3a;
+    --t0: #ffb627; --t1: #3fd0ff; --t2: #ff5c8a; --ctl: #b7a6ff;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+    font: 14px/1.35 -apple-system, BlinkMacSystemFont, "SF Pro Text", Roboto, "Segoe UI", sans-serif; }
+  body { display: flex; flex-direction: column; height: 100dvh; overflow: hidden;
+    padding: env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+  .mono { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; }
+  header { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .12em; font-weight: 700; }
+  header .ch { color: var(--amber); }
+  .spacer { flex: 1; }
+  .pill { font-size: 10px; letter-spacing: .06em; padding: 2px 6px; border-radius: 999px; border: 1px solid var(--line); color: var(--dim); }
+  .pill.on { color: var(--green); border-color: #245c3a; }
+  .pill.warn { color: var(--amber); border-color: #6a5320; }
+  .pill.off { color: var(--red); border-color: #6a2a2a; }
+  button { font: inherit; color: inherit; }
+  #spk { background: none; border: 1px solid var(--line); border-radius: 6px; padding: 2px 6px; font-size: 11px; color: var(--dim); }
+
+  #trucks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 8px 10px 4px; }
+  .chip { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--c); border-radius: 8px; padding: 6px 8px; min-width: 0; }
+  .chip .top { display: flex; align-items: center; gap: 5px; }
+  .chip .cs { font-weight: 700; font-size: 12px; white-space: nowrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+  .dot.driving { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .dot.avoiding { background: var(--orange); box-shadow: 0 0 6px var(--orange); }
+  .dot.arrived { background: var(--blue); }
+  .chip .st { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .chip .task { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+  #mapwrap { position: relative; margin: 4px 10px; height: 24vh; min-height: 120px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  #map { width: 100%; height: 100%; display: block; }
+  #modeTag { position: absolute; left: 8px; top: 6px; font-size: 10px; color: var(--dim); letter-spacing: .08em; }
+
+  #log { flex: 1; min-height: 60px; overflow-y: auto; padding: 6px 12px; display: flex; flex-direction: column; gap: 4px; }
+  .msg { display: flex; gap: 8px; align-items: baseline; }
+  .msg .who { flex: none; font-weight: 700; font-size: 12px; min-width: 76px; color: var(--c, var(--dim)); }
+  .msg .txt { font-size: 13px; }
+  .msg.operator .txt { color: var(--amber); }
+  .msg.quiet .txt { color: var(--dim); }
+  .msg .tm { margin-left: auto; color: #55605a; font-size: 10px; flex: none; }
+  .msg.playing .txt { text-decoration: underline; text-decoration-color: var(--c); text-underline-offset: 3px; }
+
+  #heard { min-height: 22px; padding: 2px 14px; color: var(--amber); font-size: 14px; text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #heard.dim { color: var(--dim); }
+
+  #pttrow { display: flex; align-items: center; justify-content: center; gap: 18px; padding: 4px 0 6px; }
+  #ptt { width: 132px; height: 132px; border-radius: 50%; border: 3px solid #3a2e12; touch-action: none;
+    background: radial-gradient(circle at 50% 35%, #3a2f17, #1f1a0e 70%); color: var(--amber);
+    font-weight: 800; letter-spacing: .14em; font-size: 15px; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    box-shadow: 0 0 0 6px #14110a, 0 8px 24px #000a; transition: transform .06s, box-shadow .1s; }
+  #ptt small { display: block; font-size: 10px; letter-spacing: .08em; color: #b08a3a; font-weight: 600; margin-top: 4px; }
+  #ptt.rec { background: radial-gradient(circle at 50% 35%, #ff5a4a, #8f1c14 75%); color: #fff; border-color: #ff8c7d; transform: scale(.96);
+    box-shadow: 0 0 0 6px #3a0f0b, 0 0 36px #ff3b2f99; }
+  #ptt.rec small { color: #ffd6d0; }
+  #ptt.busy { opacity: .75; }
+  .side { display: flex; flex-direction: column; gap: 8px; width: 84px; }
+  .side button { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 8px 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; }
+  #stopAll { color: #fff; background: #5a1414; border-color: #8a2424; }
+  #release { color: var(--dim); }
+  #level { height: 3px; width: 84px; background: var(--panel2); border-radius: 2px; overflow: hidden; }
+  #level i { display: block; height: 100%; width: 0; background: var(--green); }
+
+  #quick { display: flex; gap: 6px; overflow-x: auto; padding: 4px 10px; scrollbar-width: none; }
+  #quick::-webkit-scrollbar { display: none; }
+  #quick button { flex: none; background: var(--panel); border: 1px solid var(--line); border-radius: 999px; padding: 6px 10px; font-size: 12px; white-space: nowrap; }
+  #quick button:active { background: var(--panel2); }
+  form { display: flex; gap: 6px; padding: 4px 10px 8px; }
+  form input { flex: 1; min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; color: var(--text); padding: 9px 10px; font-size: 16px; }
+  form button { background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; padding: 0 14px; font-weight: 700; }
+  #toast { position: fixed; left: 50%; top: 56px; transform: translateX(-50%); background: #2a1515; border: 1px solid #6a2a2a; color: #ffd0d0;
+    padding: 6px 12px; border-radius: 8px; font-size: 12px; display: none; max-width: 92vw; z-index: 9; }
+</style>
+</head>
+<body>
+<header>
+  <h1>HAUL NET <span class="ch">CH1</span></h1>
+  <span class="spacer"></span>
+  <span id="pLink" class="pill">LINK</span>
+  <span id="pStt" class="pill">STT</span>
+  <span id="pTts" class="pill">TTS</span>
+  <span id="pLlm" class="pill">LLM</span>
+  <button id="spk">SPK ON</button>
+</header>
+
+<div id="trucks"></div>
+<div id="mapwrap"><canvas id="map"></canvas><div id="modeTag"></div></div>
+<div id="log"></div>
+<div id="heard" class="dim">Hold the button and talk</div>
+
+<div id="pttrow">
+  <div class="side">
+    <button id="stopAll">ALL STOP</button>
+    <button id="release">RELEASE</button>
+  </div>
+  <button id="ptt">PUSH<small>HOLD TO TALK</small></button>
+  <div class="side">
+    <button id="statusBtn">STATUS</button>
+    <div id="level"><i></i></div>
+  </div>
+</div>
+
+<div id="quick"></div>
+<form id="txt"><input id="cmd" placeholder="Type a command…" autocomplete="off" enterkeyhint="send"><button>SEND</button></form>
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = (s) => document.querySelector(s);
+const COLORS = { "truck-0": "var(--t0)", "truck-1": "var(--t1)", "truck-2": "var(--t2)" };
+const HEX = { "truck-0": "#ffb627", "truck-1": "#3fd0ff", "truck-2": "#ff5c8a" };
+const QUICK = [
+  "Truck one go to the lower face",
+  "Truck two haul from the middle face to the crusher",
+  "Truck three haul two loads from the lower face to the crusher",
+  "All trucks return to the ready line",
+  "Everyone stop",
+  "Status report",
+];
+const colorOf = (id) => COLORS[id] || "var(--ctl)";
+
+// ------------------------------------------------------------------ UI helpers
+function toast(msg, ms = 3500) {
+  const t = $("#toast"); t.textContent = msg; t.style.display = "block";
+  clearTimeout(toast._t); toast._t = setTimeout(() => (t.style.display = "none"), ms);
+}
+function setHeard(text, dim = false) { const h = $("#heard"); h.textContent = text; h.classList.toggle("dim", dim); }
+function pill(id, state, label) { const p = $(id); p.className = "pill " + state; if (label) p.textContent = label; }
+
+const logEl = $("#log");
+const seen = new Set();
+function addLog(ev) {
+  if (ev.id && seen.has("log:" + ev.id)) return;
+  if (ev.id) seen.add("log:" + ev.id);
+  const d = document.createElement("div");
+  d.className = "msg " + (ev.kind || "") + (ev.spoken === false ? " quiet" : "");
+  d.id = "m-" + ev.id;
+  d.style.setProperty("--c", ev.kind === "operator" ? "var(--amber)" : colorOf(ev.truck_id));
+  const tm = new Date((ev.t || Date.now() / 1000) * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+  d.innerHTML = `<span class="who"></span><span class="txt"></span><span class="tm mono">${tm}</span>`;
+  d.querySelector(".who").textContent = ev.kind === "operator" ? "DISPATCH" : (ev.from || "").toUpperCase();
+  d.querySelector(".txt").textContent = ev.text;
+  const stick = logEl.scrollHeight - logEl.scrollTop - logEl.clientHeight < 40;
+  logEl.appendChild(d);
+  while (logEl.children.length > 80) logEl.firstChild.remove();
+  if (stick) logEl.scrollTop = logEl.scrollHeight;
+}
+
+// ------------------------------------------------------------------ trucks + map
+let trucks = [], world = null, mode = null;
+function renderTrucks() {
+  const box = $("#trucks");
+  box.innerHTML = "";
+  for (const t of trucks) {
+    const d = document.createElement("div");
+    d.className = "chip"; d.style.setProperty("--c", colorOf(t.id));
+    const kmh = Math.round((t.speed || 0) * 3.6);
+    const rem = t.remaining_m != null ? ` · ${t.remaining_m} m` : "";
+    d.innerHTML = `<div class="top"><span class="dot ${t.status || ""}"></span><span class="cs"></span></div>
+      <div class="st mono"></div><div class="task"></div>`;
+    d.querySelector(".cs").textContent = t.callsign;
+    d.querySelector(".st").textContent = `${(t.status || "?").toUpperCase()} ${kmh} km/h`;
+    d.querySelector(".task").textContent = (t.task || "standing by") + rem;
+    box.appendChild(d);
+  }
+}
+
+const cv = $("#map"), g = cv.getContext("2d");
+let ext = null;
+function grow(x, z) {
+  if (!ext) ext = { x0: x, x1: x, z0: z, z1: z };
+  ext.x0 = Math.min(ext.x0, x); ext.x1 = Math.max(ext.x1, x); ext.z0 = Math.min(ext.z0, z); ext.z1 = Math.max(ext.z1, z);
+}
+function drawMap() {
+  const dpr = window.devicePixelRatio || 1, W = cv.clientWidth, H = cv.clientHeight;
+  if (cv.width !== W * dpr || cv.height !== H * dpr) { cv.width = W * dpr; cv.height = H * dpr; }
+  g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
+  if (world) for (const r of world.roads) for (const [x, z] of r.points) grow(x, z);
+  for (const t of trucks) grow(t.x, t.z);
+  if (!ext) return;
+  const pad = 14, sx = (W - 2 * pad) / Math.max(1, ext.x1 - ext.x0), sz = (H - 2 * pad) / Math.max(1, ext.z1 - ext.z0);
+  const s = Math.min(sx, sz), ox = (W - s * (ext.x1 - ext.x0)) / 2, oy = (H - s * (ext.z1 - ext.z0)) / 2;
+  const P = (x, z) => [ox + (x - ext.x0) * s, H - oy - (z - ext.z0) * s];
+  if (world) {
+    g.lineCap = g.lineJoin = "round";
+    for (const [w, c] of [[Math.max(3, 15 * s), "#2b302c"], [1, "#4a534d"]]) {
+      g.strokeStyle = c; g.lineWidth = w;
+      for (const r of world.roads) { g.beginPath(); r.points.forEach(([x, z], i) => g[i ? "lineTo" : "moveTo"](...P(x, z))); g.stroke(); }
+    }
+    g.font = "10px -apple-system, sans-serif";
+    const sc = { ore: "#43d17a", crusher: "#b7a6ff", dump: "#a08060", parking: "#ffb627", fuel: "#4db8ff" };
+    for (const st of world.sites) {
+      const [px, py] = P(st.x, st.z);
+      g.fillStyle = sc[st.type] || "#888"; g.beginPath(); g.arc(px, py, 3.5, 0, 7); g.fill();
+      g.fillStyle = "#9aa59f"; g.fillText(st.name.replace("Primary ", ""), px + 5, py - 4);
+    }
+  }
+  for (const t of trucks) {
+    if (t.route && t.route.length) {
+      g.strokeStyle = HEX[t.id] || "#ccc"; g.globalAlpha = .55; g.setLineDash([4, 4]); g.lineWidth = 2;
+      g.beginPath(); g.moveTo(...P(t.x, t.z)); for (const [x, z] of t.route) g.lineTo(...P(x, z)); g.stroke();
+      g.setLineDash([]); g.globalAlpha = 1;
+    }
+    const [px, py] = P(t.x, t.z), a = (t.yaw || 0) * Math.PI / 180, k = 7;
+    g.save(); g.translate(px, py); g.rotate(a);
+    g.fillStyle = HEX[t.id] || "#ccc"; g.strokeStyle = "#000"; g.lineWidth = 1;
+    g.beginPath(); g.moveTo(0, -k); g.lineTo(k * .65, k * .7); g.lineTo(-k * .65, k * .7); g.closePath(); g.fill(); g.stroke();
+    g.restore();
+  }
+}
+window.addEventListener("resize", drawMap);
+fetch("/api/radio/world").then((r) => r.json()).then((w) => { world = w; drawMap(); }).catch(() => {});
+
+// ------------------------------------------------------------------ audio: radio chain + queue
+let ctx = null, chainIn = null, noiseBuf = null, speakerOn = true;
+function ensureCtx() {
+  if (!ctx) {
+    const AC = window.AudioContext || window.webkitAudioContext;
+    ctx = new AC();
+    const hp = ctx.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = 300; hp.Q.value = 0.7;
+    const lp = ctx.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3400; lp.Q.value = 0.7;
+    const mid = ctx.createBiquadFilter(); mid.type = "peaking"; mid.frequency.value = 1700; mid.gain.value = 5; mid.Q.value = 1;
+    const sh = ctx.createWaveShaper(); const n = 1024, curve = new Float32Array(n), kk = 6;
+    for (let i = 0; i < n; i++) { const x = (i / (n - 1)) * 2 - 1; curve[i] = ((1 + kk) * x) / (1 + kk * Math.abs(x)); }
+    sh.curve = curve; sh.oversample = "2x";
+    const out = ctx.createGain(); out.gain.value = 0.55;
+    hp.connect(lp); lp.connect(mid); mid.connect(sh); sh.connect(out); out.connect(ctx.destination);
+    chainIn = hp;
+    noiseBuf = ctx.createBuffer(1, ctx.sampleRate * 0.4, ctx.sampleRate);
+    const d = noiseBuf.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+    // iOS unlock: play one silent frame inside the gesture
+    const s = ctx.createBufferSource(); s.buffer = ctx.createBuffer(1, 1, 22050); s.connect(ctx.destination); s.start(0);
+  }
+  if (ctx.state === "suspended") ctx.resume();
+}
+function squelch(dur = 0.12, vol = 0.18, when = 0) {
+  if (!ctx) return;
+  const t0 = ctx.currentTime + when;
+  const src = ctx.createBufferSource(); src.buffer = noiseBuf;
+  const bp = ctx.createBiquadFilter(); bp.type = "bandpass"; bp.frequency.value = 2200; bp.Q.value = 0.6;
+  const gn = ctx.createGain(); gn.gain.setValueAtTime(vol, t0); gn.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+  src.connect(bp); bp.connect(gn); gn.connect(ctx.destination); src.start(t0); src.stop(t0 + dur + 0.02);
+  const o = ctx.createOscillator(); o.type = "square"; o.frequency.value = 1400;
+  const og = ctx.createGain(); og.gain.setValueAtTime(0.06, t0); og.gain.exponentialRampToValueAtTime(0.001, t0 + 0.03);
+  o.connect(og); og.connect(ctx.destination); o.start(t0); o.stop(t0 + 0.04);
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const queue = [];
+let playing = false, recording = false;
+function enqueue(ev) {
+  if (!ev || ev.kind === "operator" || ev.spoken === false || !ev.text) return;
+  if (seen.has("play:" + ev.id)) return;
+  seen.add("play:" + ev.id);
+  if (!speakerOn) return;
+  queue.push(ev);
+  pump();
+}
+async function pump() {
+  if (playing) return;
+  playing = true;
+  try {
+    while (queue.length) {
+      while (recording) await sleep(100); // never talk over the operator
+      const ev = queue.shift();
+      const el = document.getElementById("m-" + ev.id); if (el) el.classList.add("playing");
+      try { await playEvent(ev); } catch (e) { console.warn("play failed", e); try { await speak(ev); } catch (_) {} }
+      if (el) el.classList.remove("playing");
+      await sleep(180);
+    }
+  } finally { playing = false; }
+}
+async function playEvent(ev) {
+  if (!ev.audio_url || !ctx) return speak(ev);
+  const buf = await fetch(ev.audio_url).then((r) => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); });
+  const audio = await new Promise((res, rej) => ctx.decodeAudioData(buf, res, rej));
+  squelch(0.1, 0.16);
+  await sleep(90);
+  const src = ctx.createBufferSource(); src.buffer = audio; src.connect(chainIn);
+  // faint hiss bed under the voice
+  const hiss = ctx.createBufferSource(); hiss.buffer = noiseBuf; hiss.loop = true;
+  const hg = ctx.createGain(); hg.gain.value = 0.012; const hb = ctx.createBiquadFilter(); hb.type = "bandpass"; hb.frequency.value = 2500;
+  hiss.connect(hb); hb.connect(hg); hg.connect(ctx.destination);
+  await new Promise((res) => { src.onended = res; src.start(); hiss.start(); setTimeout(res, audio.duration * 1000 + 1500); });
+  try { hiss.stop(); } catch (_) {}
+  squelch(0.16, 0.2);
+  await sleep(160);
+}
+function speak(ev) {
+  return new Promise((res) => {
+    if (!("speechSynthesis" in window)) return res();
+    squelch(0.1, 0.16);
+    const u = new SpeechSynthesisUtterance(ev.text);
+    const idx = { "truck-0": 0, "truck-1": 1, "truck-2": 2 }[ev.truck_id];
+    u.rate = 1.08; u.pitch = idx == null ? 1.15 : [0.8, 1.0, 0.65][idx];
+    const vs = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.startsWith("en"));
+    if (vs.length) u.voice = vs[(idx == null ? 3 : idx) % vs.length];
+    const done = () => { squelch(0.14, 0.18); res(); };
+    u.onend = done; u.onerror = done;
+    speechSynthesis.speak(u);
+    setTimeout(res, 9000);
+  });
+}
+$("#spk").onclick = () => {
+  ensureCtx(); speakerOn = !speakerOn; $("#spk").textContent = speakerOn ? "SPK ON" : "SPK OFF";
+  if (!speakerOn) { queue.length = 0; try { speechSynthesis.cancel(); } catch (_) {} }
+};
+
+// ------------------------------------------------------------------ commands
+let busy = false;
+async function sendCommand(text) {
+  text = (text || "").trim();
+  if (!text) return;
+  setHeard("“" + text + "”");
+  try {
+    const r = await fetch("/api/radio/command", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text }) });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    for (const rep of j.replies || []) {
+      const ev = { id: rep.id, from: rep.callsign, truck_id: rep.truck_id, text: rep.text, audio_url: rep.audio_url, kind: rep.truck_id ? "truck" : "control", t: Date.now() / 1000 };
+      addLog(ev); enqueue(ev);
+    }
+  } catch (e) { toast("Command failed: " + e.message); }
+}
+$("#txt").onsubmit = (e) => { e.preventDefault(); ensureCtx(); const v = $("#cmd").value; $("#cmd").value = ""; $("#cmd").blur(); sendCommand(v); };
+for (const q of QUICK) {
+  const b = document.createElement("button"); b.textContent = q;
+  b.onclick = () => { ensureCtx(); sendCommand(q); };
+  $("#quick").appendChild(b);
+}
+$("#stopAll").onclick = () => { ensureCtx(); sendCommand("All trucks stop"); };
+$("#statusBtn").onclick = () => { ensureCtx(); sendCommand("Status report"); };
+$("#release").onclick = async () => {
+  ensureCtx();
+  if (!confirm("Release all radio tasks and clear every truck goal?")) return;
+  await fetch("/api/radio/release", { method: "POST" }).catch(() => toast("release failed"));
+};
+
+// ------------------------------------------------------------------ push to talk
+let stream = null, rec = null, chunks = [], recStart = 0, pressed = false, analyser = null, mimeType = "";
+function pickMime() {
+  if (!window.MediaRecorder) return null;
+  const c = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4;codecs=mp4a.40.2", "audio/mp4", "audio/aac", "audio/ogg;codecs=opus"];
+  for (const m of c) { try { if (MediaRecorder.isTypeSupported(m)) return m; } catch (_) {} }
+  return "";
+}
+async function getStream() {
+  if (stream && stream.getAudioTracks().some((t) => t.readyState === "live")) return stream;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    throw new Error(location.protocol === "https:" ? "microphone API not available" : "microphone needs HTTPS (open the tunnel URL)");
+  }
+  stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+  try {
+    const srcNode = ctx.createMediaStreamSource(stream);
+    analyser = ctx.createAnalyser(); analyser.fftSize = 512; srcNode.connect(analyser);
+  } catch (_) { analyser = null; }
+  return stream;
+}
+function meter() {
+  const bar = $("#level i");
+  if (!recording || !analyser) { bar.style.width = "0"; return; }
+  const a = new Uint8Array(analyser.fftSize); analyser.getByteTimeDomainData(a);
+  let m = 0; for (const v of a) m = Math.max(m, Math.abs(v - 128));
+  bar.style.width = Math.min(100, (m / 128) * 180) + "%";
+  requestAnimationFrame(meter);
+}
+async function pttDown(e) {
+  if (e) e.preventDefault();
+  if (pressed || busy) return;
+  pressed = true;
+  ensureCtx();
+  try { speechSynthesis.cancel(); } catch (_) {}
+  const btn = $("#ptt");
+  let s;
+  try { s = await getStream(); } catch (err) { pressed = false; toast(err.message || String(err), 6000); return; }
+  if (!pressed) { setHeard("Mic ready. Hold to talk.", true); return; } // first-time permission prompt ate the press
+  if (mimeType === "") mimeType = pickMime();
+  if (mimeType === null) { pressed = false; toast("MediaRecorder not supported in this browser; type instead"); return; }
+  chunks = [];
+  try { rec = new MediaRecorder(s, mimeType ? { mimeType } : undefined); } catch (_) { rec = new MediaRecorder(s); }
+  rec.ondataavailable = (ev) => { if (ev.data && ev.data.size) chunks.push(ev.data); };
+  rec.onstop = onRecStop;
+  squelch(0.05, 0.1);
+  rec.start();
+  recStart = performance.now(); recording = true;
+  btn.classList.add("rec"); btn.firstChild.textContent = "TALK";
+  setHeard("Listening…", true);
+  meter();
+}
+async function pttUp(e) {
+  if (e) e.preventDefault();
+  if (!pressed) return;
+  pressed = false;
+  const btn = $("#ptt");
+  btn.classList.remove("rec"); btn.firstChild.textContent = "PUSH";
+  if (!rec || rec.state === "inactive") { recording = false; return; }
+  await sleep(250); // keep the tail of the last word
+  try { rec.stop(); } catch (_) {}
+}
+async function onRecStop() {
+  recording = false;
+  squelch(0.12, 0.14);
+  const dur = performance.now() - recStart - 250;
+  const type = (rec && rec.mimeType) || mimeType || "audio/mp4";
+  const blob = new Blob(chunks, { type });
+  if (dur < 350 || blob.size < 1000) { setHeard("Too short. Hold the button while you talk.", true); pump(); return; }
+  const ext = type.includes("webm") ? "webm" : type.includes("ogg") ? "ogg" : type.includes("aac") ? "aac" : "m4a";
+  const fd = new FormData(); fd.append("audio", blob, "ptt." + ext);
+  busy = true; $("#ptt").classList.add("busy"); setHeard("Copying…", true);
+  try {
+    const r = await fetch("/api/radio/transcribe", { method: "POST", body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || r.status);
+    if (!j.text) { setHeard("Didn't catch that. Say again.", true); return; }
+    await sendCommand(j.text);
+  } catch (err) {
+    toast("Speech-to-text failed: " + err.message + ". Use the text box.", 6000);
+    setHeard("STT failed. Type the command below.", true);
+  } finally { busy = false; $("#ptt").classList.remove("busy"); pump(); }
+}
+const ptt = $("#ptt");
+ptt.addEventListener("pointerdown", (e) => { try { ptt.setPointerCapture(e.pointerId); } catch (_) {} pttDown(e); });
+ptt.addEventListener("pointerup", pttUp);
+ptt.addEventListener("pointercancel", pttUp);
+ptt.addEventListener("contextmenu", (e) => e.preventDefault());
+document.addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat && document.activeElement.tagName !== "INPUT") pttDown(e); });
+document.addEventListener("keyup", (e) => { if (e.code === "Space" && document.activeElement.tagName !== "INPUT") pttUp(e); });
+document.addEventListener("pointerdown", () => ensureCtx(), { once: true });
+
+// ------------------------------------------------------------------ websocket
+let ws = null, backoff = 500, wsOpen = false, polled = false;
+function handleState(msg) {
+  trucks = msg.trucks || []; renderTrucks(); drawMap();
+  mode = msg.mode;
+  pill("#pLink", !msg.brain_ok ? "off" : msg.mode === "mock" ? "warn" : msg.sim_connected ? "on" : "warn",
+    !msg.brain_ok ? "NO BRAIN" : msg.mode === "mock" ? "MOCK" : msg.sim_connected ? "LIVE" : "NO SIM");
+  $("#modeTag").textContent = msg.mode === "mock" ? "MOCK SIM (brain unreachable)" : "";
+}
+// HTTP polling fallback whenever the websocket is down (e.g. uvicorn without websocket support, flaky tunnel)
+setInterval(async () => {
+  if (wsOpen) return;
+  try {
+    const j = await fetch("/api/radio/state").then((r) => r.json());
+    handleState(j);
+    for (const ev of j.log || []) { if (!polled) seen.add("play:" + ev.id); addLog(ev); enqueue(ev); }
+    polled = true;
+  } catch (_) { pill("#pLink", "off", "OFFLINE"); }
+}, 600);
+function connect() {
+  ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/ws/radio");
+  ws.onopen = () => { backoff = 500; wsOpen = true; };
+  ws.onmessage = (m) => {
+    const msg = JSON.parse(m.data);
+    if (msg.type === "hello") {
+      health(msg.health);
+      for (const ev of msg.log || []) { addLog(ev); seen.add("play:" + ev.id); } // history: show, don't replay
+    } else if (msg.type === "state") {
+      handleState(msg);
+    } else if (msg.type === "radio") {
+      addLog(msg); enqueue(msg);
+    }
+  };
+  ws.onclose = () => { wsOpen = false; setTimeout(connect, backoff); backoff = Math.min(5000, backoff * 2); };
+}
+function health(h) {
+  if (!h) return;
+  pill("#pStt", h.stt ? "on" : "off"); pill("#pTts", h.tts ? "on" : "warn"); pill("#pLlm", h.llm ? "on" : "warn", h.llm ? "LLM" : "REGEX");
+}
+fetch("/api/radio/health").then((r) => r.json()).then(health).catch(() => {});
+setInterval(() => fetch("/api/radio/health").then((r) => r.json()).then(health).catch(() => {}), 10000);
+connect();
+if (location.protocol !== "https:" && !["localhost", "127.0.0.1"].includes(location.hostname)) {
+  toast("Plain HTTP: the phone mic needs HTTPS. Use the tunnel URL (radio/tunnel.sh).", 8000);
+}
+</script>
+</body>
+</html>

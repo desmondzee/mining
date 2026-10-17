@@ -1,9 +1,11 @@
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net.Sockets;
 using System.Text;
 using System.Threading;
+using MineSim;
 using UnityEngine;
 
 public class BrainClient : MonoBehaviour
@@ -45,6 +47,9 @@ public class BrainClient : MonoBehaviour
         public string truck_model;
         public BrainProtocol.Obstacle[] obstacles;
         public BrainProtocol.MapPath[] paths;
+        public BrainProtocol.Road[] roads;
+        public BrainProtocol.Site[] sites;
+        public BrainProtocol.Junction[] junctions;
     }
 
     void Awake()
@@ -57,7 +62,7 @@ public class BrainClient : MonoBehaviour
 
     void Start()
     {
-        walkers = FindObjectsByType<PedestrianWalker>(FindObjectsSortMode.InstanceID);
+        walkers = FindObjectsByType<PedestrianWalker>(FindObjectsSortMode.None).OrderBy(w => w.name, StringComparer.Ordinal).ToArray();
         hello = Hello();
         running = true;
         worker = new Thread(Run) { IsBackground = true, Name = "BrainClient" };
@@ -159,9 +164,27 @@ public class BrainClient : MonoBehaviour
 
         var rocks = new List<BrainProtocol.Obstacle>();
         if (obstacles != null)
-            foreach (var r in obstacles.GetComponentsInChildren<Renderer>())
-                rocks.Add(new BrainProtocol.Obstacle { x = r.bounds.center.x, z = r.bounds.center.z, r = Mathf.Max(r.bounds.extents.x, r.bounds.extents.z) });
+            foreach (Transform child in obstacles)
+            {
+                if (!child.gameObject.activeInHierarchy) continue;
+                var b = Union(child.GetComponentsInChildren<Collider>().Select(c => c.bounds)) ?? Union(child.GetComponentsInChildren<Renderer>().Select(r => r.bounds));
+                if (b is Bounds o) rocks.Add(new BrainProtocol.Obstacle { x = o.center.x, z = o.center.z, r = Mathf.Max(o.extents.x, o.extents.z) });
+            }
         msg.obstacles = rocks.ToArray();
+
+        msg.roads = FindObjectsByType<MineRoad>(FindObjectsSortMode.None).OrderBy(r => r.roadId, StringComparer.Ordinal).Select(r => new BrainProtocol.Road
+        {
+            id = r.roadId, from = r.from, to = r.to, width_m = r.widthM, one_way = r.oneWay,
+            points = r.points.Select(p => new BrainProtocol.MapPoint { x = p.x, z = p.z }).ToArray(),
+        }).ToArray();
+        msg.sites = FindObjectsByType<MineSiteMarker>(FindObjectsSortMode.None).OrderBy(s => s.siteId, StringComparer.Ordinal).Select(s => new BrainProtocol.Site
+        {
+            id = s.siteId, type = s.siteType, name = s.siteName, x = s.Position.x, z = s.Position.z,
+        }).ToArray();
+        msg.junctions = FindObjectsByType<MineJunction>(FindObjectsSortMode.None).OrderBy(j => j.junctionId, StringComparer.Ordinal).Select(j => new BrainProtocol.Junction
+        {
+            id = j.junctionId, x = j.Position.x, z = j.Position.z,
+        }).ToArray();
 
         var paths = new List<BrainProtocol.MapPath>();
         var seen = new HashSet<Transform>();
@@ -178,6 +201,17 @@ public class BrainClient : MonoBehaviour
         }
         msg.paths = paths.ToArray();
         return BrainProtocol.Encode(JsonUtility.ToJson(msg), null);
+    }
+
+    static Bounds? Union(IEnumerable<Bounds> all)
+    {
+        Bounds? total = null;
+        foreach (var b in all)
+        {
+            if (total is Bounds t) { t.Encapsulate(b); total = t; }
+            else total = b;
+        }
+        return total;
     }
 
     static void ReadExactly(NetworkStream s, byte[] buf, int n)

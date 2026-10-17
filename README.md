@@ -33,6 +33,13 @@ ssh -N -L 8080:127.0.0.1:8080 watson
 
 Open http://localhost:8080.
 
+Public domain (Cloudflare Tunnel, origin `http://localhost:8080`, Access policy on allowed emails):
+
+```bash
+cp .env.example .env
+docker compose --profile public up -d tunnel
+```
+
 ## Develop locally
 
 ```bash

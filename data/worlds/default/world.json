@@ -1552,6 +1552,28 @@
       "n_benches 5 -> 4: crest 116 m > 97 m allowed by the 260 m world",
       "n_benches 4 -> 3: crest 100 m > 97 m allowed by the 260 m world"
     ],
+    "navgrid_check": {
+      "truck_width_m": 4.24,
+      "erosion_radius_m": 2.62,
+      "min_required_width_m": 10.0,
+      "min_corridor_width_m": {
+        "ramp_access": 20.9,
+        "crusher_road": 40.0,
+        "fuel_road": 21.4,
+        "parking_road": 40.0,
+        "dump_road": 15.8,
+        "pit_south_spur": 13.4,
+        "pit_west_spur": 13.1,
+        "ramp_main_1": 13.8,
+        "ramp_main_2": 13.7,
+        "ramp_main_3": 13.7,
+        "floor_road": 14.0
+      },
+      "pairs_connected": "21/21",
+      "nav_point_pairs_connected": "105/105",
+      "nav_points": 15,
+      "method": "passable mask (cost > 0) eroded by truck_width/2 + margin; pairs connected 8-way with the corner rule; corridor width = 2 x min centreline clearance to the nearest blocked cell"
+    },
     "as_built": {
       "method": "measured from heightmap.raw (16-bit, 0.508 m/px) by envgen.measure_geometry",
       "bench_face_angle_deg": {
@@ -1660,9 +1682,9 @@
       "name": "Excavator 2",
       "face": "pit_south",
       "pos3": [
-        23.12,
+        24.11,
         -10.01,
-        -88.67
+        -88.81
       ],
       "heading_deg": 277.5,
       "model": "excavator"
@@ -1673,11 +1695,11 @@
       "name": "Excavator 3",
       "face": "pit_west",
       "pos3": [
-        -61.4,
+        -62.57,
         -20.01,
-        9.6
+        9.52
       ],
-      "heading_deg": 180.0,
+      "heading_deg": 172.5,
       "model": "excavator"
     }
   ]

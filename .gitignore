@@ -35,3 +35,4 @@ unity/Captures/
 unity/Assets/MineSim/Generated/
 unity/Assets/MineSim/Generated.meta
 .claude/
+!.env.example

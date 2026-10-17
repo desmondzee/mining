@@ -22,6 +22,9 @@ public static class BrainProtocol
     [Serializable] public class MapPoint { public float x; public float z; }
     [Serializable] public class MapPath { public MapPoint[] points; }
     [Serializable] public class Obstacle { public float x; public float z; public float r; }
+    [Serializable] public class Road { public string id; public string from; public string to; public float width_m; public bool one_way; public MapPoint[] points; }
+    [Serializable] public class Site { public string id; public string type; public string name; public float x; public float z; }
+    [Serializable] public class Junction { public string id; public float x; public float z; }
     [Serializable] public class PedestrianState { public string id; public float x; public float z; public float yaw; }
 
     [Serializable]
