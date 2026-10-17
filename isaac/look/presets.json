@@ -26,13 +26,13 @@
    "exposure": {"ev": -0.9}
   },
   "golden_hour": {
-   "sun": {"azimuth": 255.0, "elevation": 9.0, "intensity": 3200.0, "color": [1.0, 0.66, 0.4]},
-   "sky": {"remove_sun_deg": 10.0, "intensity": 900.0, "saturation": 0.9, "tint": [1.0, 0.82, 0.66]},
+   "sun": {"azimuth": 255.0, "elevation": 9.0, "intensity": 6000.0, "color": [1.0, 0.66, 0.4]},
+   "sky": {"remove_sun_deg": 10.0, "intensity": 1700.0, "saturation": 0.9, "tint": [1.0, 0.82, 0.66]},
    "fog": {"color": [0.96, 0.78, 0.6], "density": 0.06, "start": 150.0},
-   "exposure": {"ev": 1.2}
+   "exposure": {"ev": 0.0}
   },
   "overcast": {
-   "sun": {"intensity": 450.0, "angle": 20.0, "color": [0.95, 0.97, 1.0]},
+   "sun": {"intensity": 450.0, "angle": 8.0, "color": [0.95, 0.97, 1.0]},
    "sky": {"remove_sun_deg": 15.0, "intensity": 2000.0, "saturation": 0.15, "gamma": 0.75},
    "fog": {"color": [0.8, 0.81, 0.82], "density": 0.1, "start": 80.0, "end": 4000.0},
    "exposure": {"ev": -0.6},
