@@ -18,6 +18,7 @@ from scipy.ndimage import distance_transform_edt
 
 WORLDS_DIR = os.path.join(os.path.dirname(__file__), "worlds")
 SAFE_CLEARANCE = 6.0  # m from a cell centre to the nearest blocked cell; A* pays extra below this
+DEFAULT_ROAD_WIDTH = 15.0  # m, for a road in world.json without width_m
 EDGE_COST = 2.0  # extra step cost at zero clearance, falls linearly to 0 at SAFE_CLEARANCE
 
 
@@ -36,6 +37,7 @@ class World:
     site_types: Dict[str, str]
     roads: List[np.ndarray]  # each (k, 2) x/z centreline
     road_ids: List[str]
+    road_widths: List[float]  # m, same order as roads
     spawns: List[Tuple[float, float]]
 
     def cell_of(self, x, z):
@@ -158,6 +160,7 @@ def load(world_id: str = "default", worlds_dir: str = WORLDS_DIR) -> World:
         site_types={s["id"]: s["type"] for s in meta["sites"]},
         roads=roads,
         road_ids=[r["id"] for r in meta.get("roads", [])],
+        road_widths=[float(r.get("width_m") or DEFAULT_ROAD_WIDTH) for r in meta.get("roads", [])],
         spawns=[tuple(t["spawn"]) for t in meta.get("trucks", [])],
     )
 

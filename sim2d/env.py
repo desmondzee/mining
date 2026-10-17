@@ -80,6 +80,7 @@ class Mover:
     static: bool = False
     pedestrian: bool = False  # pedestrians never give way
     radius: float = VEHICLE_R
+    half_w: float = 7.5  # half the road width, m
     side: int = 0
     off: float = 0.0
     cool: float = 0.0
@@ -123,12 +124,14 @@ class DriveEnv:
         self.n_peds = n_peds
         self.rng = np.random.default_rng(seed)
         self._roads = {w.name: [resample(r, 1.0) for r in w.roads if len(r) > 1] for w in self.worlds}
+        self._road_half_w = {w.name: [wd / 2 for r, wd in zip(w.roads, w.road_widths) if len(r) > 1] for w in self.worlds}
         self.world = self.worlds[0]
 
     # ---- episode ----
     def reset(self, start: Optional[str] = None, goal: Optional[str] = None, load: Optional[float] = None) -> Dict[str, np.ndarray]:
         self.world = w = self.worlds[self.rng.integers(len(self.worlds))]
         self.road_pts = self._roads[w.name]
+        self.road_half_w = self._road_half_w[w.name]
         ids = list(w.sites)
         for _ in range(50):
             a = start or ids[self.rng.integers(len(ids))]
@@ -162,8 +165,10 @@ class DriveEnv:
         k = int(self.rng.integers(lo, hi + 1))
         movers = []
         for _ in range(k):
-            pts = self.road_pts[self.rng.integers(len(self.road_pts))]
-            m = Mover(pts=pts, s=float(self.rng.uniform(0, len(pts) - 1)), direction=int(self.rng.choice([-1, 1])), speed=float(self.rng.uniform(2.5, 5.0)))
+            k_road = self.rng.integers(len(self.road_pts))
+            pts = self.road_pts[k_road]
+            m = Mover(pts=pts, s=float(self.rng.uniform(0, len(pts) - 1)), direction=int(self.rng.choice([-1, 1])), speed=float(self.rng.uniform(2.5, 5.0)),
+                      half_w=self.road_half_w[k_road])
             movers.append(m)
         lo, hi = self.n_peds
         for _ in range(int(self.rng.integers(lo, hi + 1))):
@@ -236,7 +241,8 @@ class DriveEnv:
             m.x, m.z = px, pz
             s_before, off_before = m.s, m.off
             m.cool = max(0.0, m.cool - dt)
-            # Light vehicles give way to haul trucks: pull off the road until the truck passes.
+            # Light vehicles give way to haul trucks: pull to the road edge until the truck passes.
+            pull = max(0.0, m.half_w - m.radius - EDGE_MARGIN)
             ahead = m.pts[max(0, min(L, int(round(m.s + 5))))]
             away_dir = 1 if math.hypot(ahead[0] - tr.x, ahead[1] - tr.z) > d_truck else -1
             if m.side and self.hold_time > 3.0:
@@ -247,14 +253,14 @@ class DriveEnv:
                 base = np.array([m.x - perp[0] * m.off, m.z - perp[1] * m.off])
                 pv = np.array(perp)
                 away = 1 if np.sum((base + pv - [tr.x, tr.z]) ** 2) > np.sum((base - pv - [tr.x, tr.z]) ** 2) else -1
-                ok = [s for s in (away, -away) if not w.blocked_at(*(base + pv * 12 * s))]
+                ok = [s for s in (away, -away) if pull > 0 and not w.blocked_at(*(base + pv * pull * s))]
                 m.side = ok[0] if ok else 0
                 if not ok:
                     # No room to pull off (narrow road): back away from the truck once and keep going.
                     m.direction, m.cool = away_dir, 5.0
             elif d_truck > 28:
                 m.side = 0
-            want = m.side * 12.0
+            want = m.side * pull
             m.off += max(-3 * dt, min(3 * dt, want - m.off))
             if not m.side and abs(m.off) < 0.5:
                 m.s += m.direction * m.speed * dt
