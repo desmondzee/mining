@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 import numpy as np
@@ -8,6 +9,7 @@ from .kinematics import GroundFollow, Truck, yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
 from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
 from .views import View, view_pose
+from .excavators import JOINTS, RadioPoller, Rig
 
 PEDESTRIAN_PROBE = 30.0
 
@@ -25,14 +27,21 @@ class Sim:
             surround_path = self.world.asset("surround")
             surround = read_glb(surround_path).triangles() if surround_path and surround_path.exists() else None
             self.caster = Caster(ground, surround)
-            height = self.caster.height
-            self.probe = self.caster.probe
+            prober = Caster(ground, surround, device="cpu")
+            height = prober.height
+            self.probe = prober.probe
         else:
             hm = W.heightmap(self.world)
             height = hm
             self.probe = lambda xs, zs, tops, lengths: np.array([hm(x, z) for x, z in zip(xs, zs)])
         self.height = height
         self.excavators = W.excavators(self.world, height, repo)
+        self.rigs = {b.id: Rig(b.id) for b in self.excavators}
+        self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
+        nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
+        self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
+        radio = os.environ.get("RADIO_URL")
+        self.radio = RadioPoller(radio, self.rigs).start() if radio else None
         self.paths = W.crossing_paths(self.world)
         self.walkers = make_walkers(self.paths)
         for w in self.walkers:
@@ -67,6 +76,8 @@ class Sim:
         heights = follows[0].sample(self.probe, pts[:, 0], pts[:, 2], refs) if follows else []
         for i, (f, t) in enumerate(zip(follows, self.trucks)):
             f.apply(t, heights[5 * i : 5 * i + 5], dt)
+        for rig in self.rigs.values():
+            rig.step(dt)
         for w in self.walkers:
             w.step(dt)
         if self.walkers:
@@ -74,6 +85,34 @@ class Sim:
             h = self.probe(np.array([w.x for w in self.walkers]), np.array([w.z for w in self.walkers]), ys + PEDESTRIAN_PROBE, np.full(len(ys), PEDESTRIAN_PROBE * 2))
             for w, y in zip(self.walkers, np.where(np.isfinite(h), h, ys)):
                 w.y = float(y)
+
+    def excavator_yaw(self, box) -> float:
+        return self.radio.headings.get(box.id, box.yaw) if self.radio else box.yaw
+
+    def joint_frames(self, box) -> dict[str, tuple[np.ndarray, np.ndarray]]:
+        rot = self.rigs[box.id].joint_rotations()
+        p, r = np.array([box.x, box.y, box.z]), yaw_matrix(self.excavator_yaw(box))
+        frames, prev = {}, np.zeros(3)
+        for j in JOINTS:
+            if j not in self.rig_origins:
+                continue
+            p = p + r @ (self.rig_origins[j] - prev)
+            r = r @ rot[j]
+            prev = self.rig_origins[j]
+            frames[j] = (p, r)
+        return frames
+
+    def excavator_state(self) -> list[dict]:
+        out = []
+        for b in self.excavators:
+            rig = self.rigs[b.id]
+            frames = self.joint_frames(b)
+            bucket = frames.get("bucket")
+            out.append({
+                "id": b.id, "digging": rig.digging, "phase": rig.phase, "pose_deg": list(rig.pose),
+                "bucket": None if bucket is None else {"position": bucket[0].tolist(), "rotation": bucket[1].tolist()},
+            })
+        return out
 
     def fx_state(self) -> list[tuple]:
         return [(t.id, (t.x, t.y, t.z), t.yaw, t.speed, [tuple(map(float, c)) for c in self.follow[t.id].contacts]) for t in self.trucks]

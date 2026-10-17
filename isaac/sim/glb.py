@@ -27,6 +27,7 @@ class Primitive:
     uvs: np.ndarray | None = None
     colors: np.ndarray | None = None
     material: int | None = None
+    node: str = ""
 
 
 @dataclass
@@ -34,6 +35,7 @@ class Glb:
     primitives: list[Primitive] = field(default_factory=list)
     materials: list[Material] = field(default_factory=list)
     images: list[tuple[bytes, str]] = field(default_factory=list)
+    nodes: dict = field(default_factory=dict)
 
     def bounds(self) -> tuple[np.ndarray, np.ndarray]:
         pts = np.concatenate([p.points for p in self.primitives])
@@ -116,9 +118,11 @@ def read_glb(path: str | Path) -> Glb:
     for img in gltf.get("images", []):
         result.images.append((view_bytes(img["bufferView"]) if "bufferView" in img else b"", img.get("mimeType", "image/png")))
 
-    def visit(index: int, parent: np.ndarray) -> None:
+    def visit(index: int, parent: np.ndarray, parent_name: str = "") -> None:
         node = gltf["nodes"][index]
         m = parent @ node_matrix(node)
+        name = node.get("name", f"node{index}")
+        result.nodes[name] = (m, parent_name)
         if "mesh" in node:
             normal_m = np.linalg.inv(m[:3, :3]).T
             for k, prim in enumerate(gltf["meshes"][node["mesh"]]["primitives"]):
@@ -142,10 +146,11 @@ def read_glb(path: str | Path) -> Glb:
                         uvs,
                         colors,
                         prim.get("material"),
+                        name,
                     )
                 )
         for child in node.get("children", []):
-            visit(child, m)
+            visit(child, m, name)
 
     scene = gltf.get("scenes", [{}])[gltf.get("scene", 0)]
     for root in scene.get("nodes", []):
@@ -171,6 +176,7 @@ def transform(glb: Glb, matrix: np.ndarray) -> Glb:
                 p.uvs,
                 p.colors,
                 p.material,
+                p.node,
             )
         )
-    return Glb(prims, glb.materials, glb.images)
+    return Glb(prims, glb.materials, glb.images, glb.nodes)

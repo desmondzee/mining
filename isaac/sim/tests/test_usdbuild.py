@@ -40,3 +40,21 @@ def test_isaac_matrix_maps_yaw_forward():
     fwd_local = np.array([0, 1, 0, 0])
     np.testing.assert_allclose(fwd_local @ m, [1, 0, 0, 0], atol=1e-12)
     np.testing.assert_allclose(np.array([0, 0, 0, 1]) @ m, [1, 3, 2, 1])
+
+
+def test_rig_usd_parts_compose_to_glb(tmp_path):
+    from isaac.sim.excavators import JOINTS
+    from isaac.sim.glb import transform
+    from isaac.sim.usdbuild import TO_ISAAC, convert_rig
+
+    src = W.REPO / W.EXCAVATOR_GLB
+    m, _ = W.model_box(src, horizontal=W.EXCAVATOR_LENGTH)
+    stage = Usd.Stage.Open(str(convert_rig(src, tmp_path, "excavator", m, JOINTS)))
+    assert stage.GetPrimAtPath("/excavator/house/boom/stick/bucket")
+    cache = UsdGeom.XformCache()
+    got = np.concatenate([
+        np.asarray(UsdGeom.Mesh(p).GetPointsAttr().Get()) @ np.asarray(cache.GetLocalToWorldTransform(p))[:3, :3] + np.asarray(cache.GetLocalToWorldTransform(p))[3, :3]
+        for p in stage.Traverse() if p.IsA(UsdGeom.Mesh) and "bucket" in str(p.GetPath())
+    ])
+    want = np.concatenate([p.points for p in transform(read_glb(src), TO_ISAAC @ m).primitives if p.node == "bucket"])
+    np.testing.assert_allclose(got, want, atol=1e-3)

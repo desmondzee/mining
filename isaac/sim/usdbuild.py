@@ -46,7 +46,7 @@ def cache_key(src: Path, matrix: np.ndarray) -> str:
     return h.hexdigest()[:12]
 
 
-def write_mesh_usd(glb: Glb, out: Path, name: str) -> Path:
+def write_mesh_usd(glb: Glb, out: Path, name: str, parts: dict[str, tuple[str, np.ndarray]] | None = None) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     stage = Usd.Stage.CreateNew(str(out))
     UsdGeom.SetStageUpAxis(stage, UsdGeom.Tokens.z)
@@ -93,8 +93,11 @@ def write_mesh_usd(glb: Glb, out: Path, name: str) -> Path:
         reader.CreateInput("varname", Sdf.ValueTypeNames.Token).Set("displayColor")
         shader.CreateInput("diffuseColor", Sdf.ValueTypeNames.Color3f).ConnectToSource(reader.ConnectableAPI(), "result")
         vertex_colour.CreateSurfaceOutput().ConnectToSource(shader.ConnectableAPI(), "surface")
+    for rel, offset in sorted((parts or {}).values(), key=lambda v: v[0].count("/")):
+        UsdGeom.Xform.Define(stage, f"/{name}/{rel}").AddTranslateOp().Set(Gf.Vec3d(*map(float, offset)))
     for k, p in enumerate(glb.primitives):
-        mesh = UsdGeom.Mesh.Define(stage, f"/{name}/mesh_{k}")
+        prefix = f"/{name}/{parts[p.node][0]}" if parts and p.node in parts else f"/{name}"
+        mesh = UsdGeom.Mesh.Define(stage, f"{prefix}/mesh_{k}")
         mesh.CreatePointsAttr(Vt.Vec3fArray.FromNumpy(p.points.astype(np.float32)))
         mesh.CreateFaceVertexCountsAttr(Vt.IntArray.FromNumpy(np.full(len(p.triangles), 3, np.int32)))
         mesh.CreateFaceVertexIndicesAttr(Vt.IntArray.FromNumpy(p.triangles.reshape(-1).astype(np.int32)))
@@ -137,5 +140,31 @@ def convert(src: Path, cache: Path, name: str, matrix: np.ndarray, tint: list[fl
                 p.colors = p.colors.copy()
                 p.colors[:, :3] *= np.asarray(tint[:3], np.float32)
     write_mesh_usd(glb, tmp, name)
+    tmp.replace(out)
+    return out
+
+
+def convert_rig(src: Path, cache: Path, name: str, matrix: np.ndarray, joints: tuple[str, ...]) -> Path:
+    full = TO_ISAAC @ matrix
+    out = cache / f"{name}_{cache_key(src, full)}.usdc"
+    if out.exists():
+        return out
+    raw = read_glb(src)
+    glb = transform(raw, full)
+    origin = {j: (full @ raw.nodes[j][0][:, 3])[:3] for j in joints if j in raw.nodes}
+    parts = {}
+    for j in origin:
+        chain, parent = [j], raw.nodes[j][1]
+        while parent:
+            if parent in origin:
+                chain.insert(0, parent)
+            parent = raw.nodes[parent][1]
+        up = chain[-2] if len(chain) > 1 else None
+        parts[j] = ("/".join(chain), origin[j] - (origin[up] if up else 0))
+    for p in glb.primitives:
+        if p.node in parts:
+            p.points = p.points - origin[p.node]
+    tmp = out.with_suffix(".tmp.usdc")
+    write_mesh_usd(glb, tmp, name, parts)
     tmp.replace(out)
     return out

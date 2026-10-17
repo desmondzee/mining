@@ -112,8 +112,19 @@ def run(args: argparse.Namespace) -> None:
             rgb = np.clip(rgb + rng.normal(0, noise, rgb.shape), 0, 255).astype(np.uint8)
         return encode_jpeg(rgb), rgb.shape[1], rgb.shape[0]
 
+    dedupe = not args.dry_run
+    last_sig: dict[str, bytes] = {}
+    fresh: dict[str, int] = {}
+
     def publish(images, depths, poses, cams, views, frame):
-        encoded = dict(zip(images, jpeg_pool.map(jpeg, images.values())))
+        new = {}
+        for name, img in images.items():
+            sig = img[::17, ::23].tobytes()
+            if not dedupe or last_sig.get(name) != sig:
+                last_sig[name] = sig
+                fresh[name] = fresh.get(name, 0) + 1
+                new[name] = img
+        encoded = dict(zip(new, jpeg_pool.map(jpeg, new.values())))
         if bridge.connected.is_set():
             for name, (data, w, h) in encoded.items():
                 if name in poses:
@@ -175,6 +186,7 @@ def run(args: argparse.Namespace) -> None:
             span = now - start
             print(
                 f"t={span:.0f}s fps={frames / span:.1f} " + " ".join(f"{k}={v / n * 1000:.1f}ms" for k, v in timing.items())
+                + " fresh_fps=" + ",".join(f"{k}:{v / span:.1f}" for k, v in fresh.items())
                 + f" connected={live} sent={bridge.sent} dropped={bridge.dropped} "
                 + " ".join(f"{t.id}=({t.x:.1f},{t.y:.1f},{t.z:.1f},{t.yaw:.0f}deg,{t.speed:.1f}m/s)" for t in sim.trucks),
                 flush=True,
