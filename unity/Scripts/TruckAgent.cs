@@ -1,17 +1,13 @@
-// Drives a truck from the brain's throttle/steer commands with a kinematic bicycle
-// model (matches brain/brain/fakesim.py). Stops if commands stop arriving.
-
 using UnityEngine;
 
 [RequireComponent(typeof(Rigidbody))]
 public class TruckAgent : MonoBehaviour
 {
     public string truckId = "truck-0";
-    public float maxSpeed = 8f;  // m/s
+    public float maxSpeed = 8f;
     public float maxSteerDeg = 30f;
     public float wheelbase = 5f;
-    public float accel = 1.5f;  // speed response rate, 1/s
-    [Tooltip("Stop if no command arrives within this many seconds")]
+    public float accel = 1.5f;
     public float commandTimeout = 0.5f;
 
     Rigidbody body;

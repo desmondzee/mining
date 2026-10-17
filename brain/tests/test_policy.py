@@ -37,8 +37,8 @@ def test_turns_toward_goal():
 
 def test_avoids_obstacle_ahead_toward_open_side():
     depth = CLEAR.copy()
-    depth[:, 24:40] = 3.0  # blocked straight ahead
-    depth[:, :20] = 10.0  # left partly blocked, right open
+    depth[:, 24:40] = 3.0
+    depth[:, :20] = 10.0
     a = act(Truck("t", goal=(0, 50)), None, depth)
     assert a.status == "avoiding" and a.steer > 0 and a.throttle < 0.5
 

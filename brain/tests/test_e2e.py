@@ -1,5 +1,3 @@
-"""End-to-end: fakesim -> bridge -> policy -> actions back, frames out to the hub."""
-
 import asyncio
 
 from fastapi.testclient import TestClient
@@ -22,7 +20,7 @@ def test_frame_produces_action_and_jpeg():
         writer.write(encode({"type": "hello", "trucks": [t.id], "cameras": [t.id], "bounds": quarry.bounds}))
         await writer.drain()
         await asyncio.sleep(0.05)
-        world.trucks[t.id].goal = (t.x + 40, t.z)  # due east -> steer right
+        world.trucks[t.id].goal = (t.x + 40, t.z)
 
         rgb, depth = quarry.render_truck(t)
         writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose={"x": t.x, "z": t.z, "yaw": 0}))

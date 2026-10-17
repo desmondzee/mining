@@ -1,7 +1,3 @@
-// Camera feeds come in over /ws/video as binary messages:
-//   u8 name_len | camera name (UTF-8) | JPEG bytes
-// Truck state comes in over /ws/state as JSON at ~10 Hz.
-
 const COLOURS = ["#f0b428", "#3ca0f0", "#e65050", "#78dc78"];
 const feeds = document.getElementById("feeds");
 const map = document.getElementById("map");
@@ -11,7 +7,7 @@ const simStatus = document.getElementById("sim-status");
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [] };
 let selected = null;
-const tiles = new Map(); // camera name -> { canvas, fps, frames }
+const tiles = new Map();
 const decoder = new TextDecoder();
 
 function wsUrl(path) {
@@ -35,8 +31,6 @@ function truckColour(id) {
   return COLOURS[(i < 0 ? 0 : i) % COLOURS.length];
 }
 
-// ---- video ----
-
 function tileFor(name) {
   let tile = tiles.get(name);
   if (tile) return tile;
@@ -44,7 +38,6 @@ function tileFor(name) {
   el.className = "feed";
   el.innerHTML = `<canvas></canvas><div class="label"><span></span><span class="fps"></span></div>`;
   el.querySelector(".label span").textContent = name;
-  // Overview first, trucks after, in name order.
   const names = [...tiles.keys(), name].sort((a, b) => (a === "overview" ? -1 : b === "overview" ? 1 : a.localeCompare(b)));
   const before = tiles.get(names[names.indexOf(name) + 1]);
   feeds.insertBefore(el, before ? before.el : null);
@@ -58,7 +51,7 @@ async function onVideo(ev) {
   const n = buf[0];
   const name = decoder.decode(buf.subarray(1, 1 + n));
   const tile = tileFor(name);
-  if (tile.busy) return; // still decoding the previous frame: drop this one
+  if (tile.busy) return;
   tile.busy = true;
   try {
     const bmp = await createImageBitmap(new Blob([buf.subarray(1 + n)], { type: "image/jpeg" }));
@@ -78,8 +71,6 @@ setInterval(() => {
     tile.frames = 0;
   }
 }, 1000);
-
-// ---- map + trucks ----
 
 function toCanvas(x, z) {
   const [xmin, zmin, xmax, zmax] = state.bounds;
@@ -122,7 +113,7 @@ function drawMap() {
   }
 }
 
-const truckItems = new Map(); // truck id -> <li>, updated in place so clicks aren't lost
+const truckItems = new Map();
 
 function renderTruckList() {
   for (const t of state.trucks) {

@@ -1,9 +1,3 @@
-"""Truck policy: drive straight at the goal, avoid obstacles seen in the depth image.
-
-Deliberately simple. The RGB frame is passed in so a detector can be added later
-without changing the call sites.
-"""
-
 import math
 from dataclasses import dataclass
 
@@ -11,27 +5,25 @@ import numpy as np
 
 from .world import Truck
 
-ARRIVE_RADIUS = 4.0  # metres
-STOP_DIST = 6.0  # obstacle this close straight ahead: crawl and turn hard
-SLOW_DIST = 15.0  # obstacle this close: slow down and bias away
-STEER_GAIN_DEG = 45.0  # heading error that gives full steer
+ARRIVE_RADIUS = 4.0
+STOP_DIST = 6.0
+SLOW_DIST = 15.0
+STEER_GAIN_DEG = 45.0
 
 
 @dataclass
 class Action:
-    throttle: float  # 0..1
-    steer: float  # -1 (left) .. 1 (right)
+    throttle: float
+    steer: float
     status: str
 
 
 def heading_error(truck: Truck, gx: float, gz: float) -> float:
-    """Signed degrees to turn (positive = right) to face the goal."""
     bearing = math.degrees(math.atan2(gx - truck.x, gz - truck.z))
     return (bearing - truck.yaw + 180.0) % 360.0 - 180.0
 
 
 def sector_ranges(depth: np.ndarray) -> tuple[float, float, float]:
-    """Nearest depth in the left / centre / right thirds of the middle band of rows."""
     h, w = depth.shape
     band = depth[int(h * 0.35) : int(h * 0.65)]
     band = np.where(np.isfinite(band) & (band > 0), band, np.inf)
@@ -48,7 +40,6 @@ def act(truck: Truck, rgb: np.ndarray | None, depth: np.ndarray | None) -> Actio
         return Action(0.0, 0.0, "arrived")
 
     steer = max(-1.0, min(1.0, heading_error(truck, gx, gz) / STEER_GAIN_DEG))
-    # Turning on the spot isn't possible, so keep some speed through big turns.
     throttle = 1.0 - 0.6 * abs(steer)
     status = "driving"
 

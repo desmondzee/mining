@@ -1,8 +1,3 @@
-"""Latest-frame-wins fan-out of encoded camera frames to any number of viewers.
-
-A slow viewer (e.g. over the brev tunnel) skips frames instead of building a backlog.
-"""
-
 import asyncio
 
 
@@ -22,7 +17,6 @@ class FrameHub:
         return any(seq > seen.get(cam, 0) for cam, (seq, _) in self._frames.items())
 
     async def wait_newer(self, seen: dict[str, int]) -> list[tuple[str, bytes]]:
-        """Block until some camera has a frame newer than `seen`; return those frames."""
         async with self._cond:
             await self._cond.wait_for(lambda: self._newer(seen))
             out = []

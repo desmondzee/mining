@@ -1,9 +1,3 @@
-"""Stand-in for the Unity player: 3 trucks on a flat quarry floor with rock obstacles.
-
-Speaks exactly the same protocol as Unity, so the brain, streaming and website can be
-developed and tested without a Unity build. Rendering is a crude per-column raycast.
-"""
-
 import argparse
 import asyncio
 import math
@@ -19,7 +13,7 @@ CAM_W, CAM_H = 640, 360
 FOV_DEG = 90.0
 MAX_RANGE = 100.0
 OVERVIEW_PX = 480
-MAX_SPEED = 8.0  # m/s
+MAX_SPEED = 8.0
 MAX_STEER_DEG = 30.0
 WHEELBASE = 5.0
 TRUCK_RADIUS = 2.5
@@ -51,7 +45,6 @@ class FakeQuarry:
         self.rocks = np.column_stack(
             [rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2)), rng.uniform(1.5, 5.0, n_rocks)]
         )
-        # Keep the start area clear.
         self.rocks = self.rocks[np.hypot(self.rocks[:, 0], self.rocks[:, 1] + 70) > 20]
         self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
 
@@ -66,12 +59,10 @@ class FakeQuarry:
         return np.vstack([self.rocks, np.array(others).reshape(-1, 3)])
 
     def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
-        """Front camera: (rgb HxWx3 uint8, depth HxW float32 metres)."""
         offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
         angles = math.radians(t.yaw) + offsets
         dx, dz = np.sin(angles), np.cos(angles)
 
-        # Ray vs circles (vectorised over columns x obstacles).
         obs = self._obstacles_for(t)
         ox, oz, r = obs[:, 0] - t.x, obs[:, 1] - t.z, obs[:, 2]
         proj = dx[:, None] * ox + dz[:, None] * oz
@@ -79,14 +70,12 @@ class FakeQuarry:
         hit = (proj > 0) & (perp2 < r**2)
         dist = np.where(hit, proj - np.sqrt(np.maximum(r**2 - perp2, 0)), np.inf).min(axis=1)
 
-        # Ray vs the quarry walls.
         with np.errstate(divide="ignore"):
             wx = np.where(dx > 0, (self.half - t.x) / dx, np.where(dx < 0, (-self.half - t.x) / dx, np.inf))
             wz = np.where(dz > 0, (self.half - t.z) / dz, np.where(dz < 0, (-self.half - t.z) / dz, np.inf))
         wall = np.minimum(wx, wz)
         is_wall = wall < dist
         dist = np.minimum(dist, wall)
-        # Perpendicular distance avoids fish-eye distortion.
         dist = np.minimum(dist * np.cos(offsets), MAX_RANGE)
 
         rows = np.arange(CAM_H)[:, None]

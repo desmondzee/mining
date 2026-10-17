@@ -1,9 +1,3 @@
-// Connects the Unity sim to the brain over TCP (see unity/README.md for the protocol).
-// Put one in the scene. Trucks and sensor cameras register themselves.
-//
-// Brain address: command line `-brain-host H -brain-port P`, else env BRAIN_HOST /
-// BRAIN_PORT, else the inspector values.
-
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
@@ -16,7 +10,6 @@ public class BrainClient : MonoBehaviour
 {
     public string host = "127.0.0.1";
     public int port = 9000;
-    [Tooltip("Quarry extent in world metres: xmin, zmin, xmax, zmax. Used by the website map.")]
     public Vector4 bounds = new Vector4(-100, -100, 100, 100);
 
     public static BrainClient Instance { get; private set; }
@@ -59,13 +52,11 @@ public class BrainClient : MonoBehaviour
         worker?.Join(1000);
     }
 
-    /// Queue a fully encoded message. Drops it if the link is down or backed up.
     public void Send(byte[] message)
     {
         if (connected) outbox.TryAdd(message);
     }
 
-    /// Latest action for a truck, or null if none arrived within maxAge seconds.
     public ActionMsg LatestAction(string truckId, float maxAge)
     {
         if (actions.TryGetValue(truckId, out var a) && Now() - a.receivedAt <= maxAge) return a;
@@ -124,10 +115,9 @@ public class BrainClient : MonoBehaviour
                 actions[a.truck] = a;
             }
         }
-        catch (Exception) { /* connection dropped; Run() reconnects */ }
+        catch (Exception) { }
     }
 
-    // Unity's Time API is main-thread only, so both threads share this clock.
     static readonly System.Diagnostics.Stopwatch clock = System.Diagnostics.Stopwatch.StartNew();
     static float Now() => (float)clock.Elapsed.TotalSeconds;
 

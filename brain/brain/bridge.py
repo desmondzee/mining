@@ -1,5 +1,3 @@
-"""TCP server the simulator connects to: frames in, truck actions out."""
-
 import asyncio
 import io
 import logging

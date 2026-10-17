@@ -1,5 +1,3 @@
-"""HTTP/WebSocket server for the website, plus the sim bridge, in one process."""
-
 import asyncio
 import logging
 import os
@@ -50,27 +48,24 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     def get_state():
         return world.snapshot()
 
-    @app.post("/api/trucks/{truck_id}/goal")
-    def set_goal(truck_id: str, goal: Goal):
+    def set_goal(truck_id: str, goal: tuple[float, float] | None) -> dict:
         if truck_id not in world.trucks:
             raise HTTPException(404, f"unknown truck {truck_id}")
         truck = world.trucks[truck_id]
-        truck.goal = (goal.x, goal.z)
-        truck.status = "driving"
+        truck.goal = goal
+        truck.status = "driving" if goal else "idle"
         return truck.to_dict()
 
+    @app.post("/api/trucks/{truck_id}/goal")
+    def post_goal(truck_id: str, goal: Goal):
+        return set_goal(truck_id, (goal.x, goal.z))
+
     @app.delete("/api/trucks/{truck_id}/goal")
-    def clear_goal(truck_id: str):
-        if truck_id not in world.trucks:
-            raise HTTPException(404, f"unknown truck {truck_id}")
-        truck = world.trucks[truck_id]
-        truck.goal = None
-        truck.status = "idle"
-        return truck.to_dict()
+    def delete_goal(truck_id: str):
+        return set_goal(truck_id, None)
 
     @app.websocket("/ws/video")
     async def ws_video(ws: WebSocket):
-        # Each binary message: u8 name_len | camera name (UTF-8) | JPEG bytes.
         await ws.accept()
         seen: dict[str, int] = {}
         try:

@@ -1,9 +1,3 @@
-// Streams a Camera to the brain at a fixed rate: RGBA via AsyncGPUReadback, and (for truck
-// cameras) a low-res depth image from a grid of physics raycasts.
-//
-// Depth comes from colliders, not from what is rendered. Gaussian splats have no
-// colliders, so the quarry needs collision geometry (ground, walls) for depth to see it.
-
 using Unity.Collections;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -11,17 +5,14 @@ using UnityEngine.Rendering;
 [RequireComponent(typeof(Camera))]
 public class SensorCamera : MonoBehaviour
 {
-    [Tooltip("Stream name shown on the website, e.g. truck-0 or overview")]
     public string cameraName = "overview";
-    [Tooltip("Set on truck front cameras; leave empty for the overview camera")]
     public TruckAgent truck;
     public int width = 640, height = 360;
     public float fps = 15f;
-    [Tooltip("Depth image size (raycasts per frame = depthWidth * depthHeight)")]
+    public float horizontalFov = 90f;
     public int depthWidth = 64, depthHeight = 36;
     public float depthRange = 100f;
     public LayerMask depthMask = ~0;
-    [Tooltip("GPU readback rows are usually bottom-up; untick if images arrive upside down")]
     public bool flipRows = true;
 
     Camera cam;
@@ -31,6 +22,7 @@ public class SensorCamera : MonoBehaviour
     void Awake()
     {
         cam = GetComponent<Camera>();
+        cam.fieldOfView = Camera.HorizontalToVerticalFieldOfView(horizontalFov, (float)width / height);
         cam.targetTexture = new RenderTexture(width, height, 24, RenderTextureFormat.ARGB32);
         BrainClient.RegisterCamera(cameraName);
     }
@@ -41,7 +33,6 @@ public class SensorCamera : MonoBehaviour
         if (client == null || !client.Connected || pending || Time.time < nextCapture) return;
         nextCapture = Time.time + 1f / fps;
 
-        // Sample pose and depth now so they match the frame being read back.
         var header = new BrainProtocol.FrameHeader
         {
             camera = cameraName,
@@ -71,7 +62,6 @@ public class SensorCamera : MonoBehaviour
         });
     }
 
-    /// Perpendicular distance (metres) per pixel, row 0 = top. Misses read as depthRange.
     float[] CaptureDepth()
     {
         int n = depthWidth * depthHeight;

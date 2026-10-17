@@ -1,7 +1,3 @@
-// Message framing shared with brain/brain/protocol.py:
-//   u32 header_len | u32 payload_len | header (UTF-8 JSON) | payload
-// Little-endian.
-
 using System;
 using System.Text;
 
@@ -16,9 +12,9 @@ public static class BrainProtocol
     {
         public string type = "frame";
         public string camera;
-        public string truck = "";  // empty for non-truck cameras (e.g. overview)
+        public string truck = "";
         public RgbMeta rgb;
-        public Size depth = new Size();  // w = h = 0 means no depth
+        public Size depth = new Size();
         public Pose pose = new Pose();
         public float speed;
     }
