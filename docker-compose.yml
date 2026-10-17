@@ -24,7 +24,7 @@ services:
     image: cloudflare/cloudflared:2026.9.3
     command: ["tunnel", "--no-autoupdate", "run"]
     environment:
-      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
     network_mode: host
     depends_on: [brain]
     restart: unless-stopped
