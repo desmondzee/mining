@@ -56,14 +56,17 @@ def raycast_enabled(mode: str) -> bool:
 
 
 class DryRenderer:
-    def __init__(self, sim) -> None:
+    def __init__(self, sim, config: dict) -> None:
         import numpy as np
 
         from isaac.sim.sensors import CAM_H, CAM_W
 
-        self.frames = {name: np.zeros((CAM_H, CAM_W, 3), np.uint8) for name in ["overview", *(t.id for t in sim.trucks)]}
+        ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        self.frames = {t.id: np.zeros((CAM_H, CAM_W, 3), np.uint8) for t in sim.trucks}
+        self.frames["overview"] = np.zeros((oh, ow, 3), np.uint8)
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
         self.view_poses = {}
+        self.loads = {}
 
     def update(self, sim, dt: float) -> None:
         self.view_poses = sim.view_poses(dt)
@@ -87,10 +90,10 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), extra_excavators=config.get("extra_excavators", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
-        renderer = DryRenderer(sim)
+        renderer = DryRenderer(sim, config)
     else:
         from isaac.sim.scene import IsaacRenderer
 
@@ -116,7 +119,7 @@ def run(args: argparse.Namespace) -> None:
     last_sig: dict[str, bytes] = {}
     fresh: dict[str, int] = {}
 
-    def publish(images, depths, poses, cams, views, frame):
+    def publish(images, depths, poses, cams, views, loads, frame):
         new = {}
         for name, img in images.items():
             sig = img[::17, ::23].tobytes()
@@ -129,7 +132,8 @@ def run(args: argparse.Namespace) -> None:
             for name, (data, w, h) in encoded.items():
                 if name in poses:
                     i, pose, speed = poses[name]
-                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name]))
+                    extra = {"load": loads[name]} if name in loads else {}
+                    bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name], **extra))
                 elif name in views:
                     bridge.send(encode_frame(name, data, w, h, cam=views[name]))
                 else:
@@ -177,7 +181,7 @@ def run(args: argparse.Namespace) -> None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        meta = (depths, poses, cams, views)
+        meta = (depths, poses, cams, views, dict(renderer.loads))
         if lag:
             meta, previous = (previous or meta), meta
         pending = publisher.submit(publish, images, *meta, frames)

@@ -10,6 +10,7 @@ class Truck:
     z: float = 0.0
     yaw: float = 0.0
     speed: float = 0.0
+    load: float | None = None
     goal: tuple[float, float] | None = None
     goal_site: str | None = None
     status: str = "idle"

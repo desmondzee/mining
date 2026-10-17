@@ -375,6 +375,8 @@
 | Keyframe interval (frames) | 15 | `brain/brain/video.py:GOP_FRAMES` |
 | Truck camera bitrate (kbps) | 600 | `brain/brain/video.py:TRUCK_KBPS` |
 | Overview bitrate (kbps) | 400 | `brain/brain/video.py:OVERVIEW_KBPS` |
+| Bitrate scaling | × pixels / 640×360 (never below 1), capped | |
+| Bitrate cap (kbps) | 4000 | `brain/brain/video.py:MAX_KBPS` |
 | Video join | new viewer gets the current GOP (latest keyframe + following AUs), then live AUs | |
 | Viewer queue (AUs per camera) | 30 | `brain/brain/video.py:VIEWER_QUEUE` |
 | Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
@@ -535,12 +537,12 @@
 | API | `BucketMaterial(stage, excavators_cfg, trucks_cfg, config, sites)`, `update(dt, excavators=[(id, bucket_4x4, phase, phase_t)], trucks=[(id, truck_4x4, under_excavator_id)])`, `empty_truck(id)`, `load(id)`, `tonnes(id)`, `meshes()`, `aim_points()` | |
 | Bucket matrix | rigged GLB `bucket` node frame (pin origin, glTF axes) → Isaac world, column vectors (Gf row-major accepted) | |
 | Truck matrix | truck prim world matrix (`isaac_matrix(rotation, position)`), local X lateral, Y forward, Z up | |
-| Dig cycle | same keys and smootherstep as `envgen/preview/index.html` `EXC_KEYS`, `MineExcavatorRig.RigKeys` | `isaac/material/rig.py:KEYS` |
+| Dig cycle | same keys and smootherstep as `envgen/preview/index.html` `EXC_KEYS`, `MineExcavatorRig.RigKeys` | `isaac/material/rig.py` `KEYS` |
 | Cycle period (s) | 8 | `isaac/material/rig.py:CYCLE_S` |
 | Dump yaw (rad, toward cab side) | 1.7 | `isaac/material/rig.py:DUMP_YAW` |
 | Joint tracking / rest rate (1/s) | 8 / 2.5 | `isaac/material/rig.py:TRACK_RATE`, `REST_RATE` |
-| Phases (cycle fraction) | reach 0, dig 0.12, lift 0.30, swing 0.42, dump 0.60, return 0.78; `hold` when not digging | `isaac/material/rig.py:PHASES` |
-| Optional boom raise at the truck side (deg, compensated by bucket curl) | 0 (25 in the demo) | `isaac/material/rig.py:pose` |
+| Phases (cycle fraction) | reach 0, dig 0.12, lift 0.30, swing 0.42, dump 0.60, return 0.78; `hold` when not digging | `isaac/material/rig.py` `PHASES` |
+| Optional boom raise at the truck side (deg, compensated by bucket curl) | 0 (25 in the demo) | `isaac/material/rig.py` `pose` |
 | Truck payload (t) | 55 | `isaac/material/model.py:Config.payload_t` |
 | Passes to full | 4 | `isaac/material/model.py:Config.passes` |
 | Loose density (t/m³) | 1.8 | `isaac/material/model.py:Config.density` |
@@ -553,7 +555,7 @@
 | Particle pool | 768 | `isaac/material/model.py:Config.max_particles` |
 | Face pile cap (passes) | 3 | `isaac/material/model.py:Config.pile_passes` |
 | Truck empty slide (s) | 2.5 | `isaac/material/model.py:Config.empty_s` |
-| Auto empty: site radius (m) / stop speed (m/s) / stopped for (s) | 30 / 0.3 / 1.5 | `isaac/material/model.py:Config` |
+| Auto empty: site radius (m) / stop speed (m/s) / stopped for (s) | 30 / 0.3 / 1.5 | `isaac/material/model.py` `Config` |
 | Bucket heap grid | 9 × 24 | `isaac/material/geometry.py:BUCKET_NX`, `BUCKET_NZ` |
 | Bed grid cell (m) | 0.2 | `isaac/material/geometry.py:BED_CELL` |
 | Bed heap above rim (m) | 0.9 | `isaac/material/geometry.py:BED_HEAP` |

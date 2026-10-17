@@ -9,7 +9,7 @@ import numpy as np
 log = logging.getLogger(__name__)
 
 META_LEN = struct.Struct("<H")
-META_FIELDS = ("cam", "pose", "speed", "truck")
+META_FIELDS = ("cam", "pose", "speed", "truck", "load")
 
 
 def frame_meta(header: dict, t: float | None = None) -> bytes:

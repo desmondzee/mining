@@ -147,10 +147,13 @@ class IsaacRenderer:
             cam.AddTransformOp().Set(gf(local))
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
         self.fx = self.make_fx(sim, args.fx)
+        self.material = self.make_material(world, sim, config.get("material", {}))
+        self.loads = {}
 
-        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, CAM_W, CAM_H)
+        ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, ow, oh)
         over.AddTransformOp().Set(gf(overview_matrix(world)))
-        cameras.insert(0, ("overview", "/World/Overview", CAM_W, CAM_H))
+        cameras.insert(0, ("overview", "/World/Overview", ow, oh))
 
         self.views = {}
         for v in sim.views:
@@ -174,13 +177,13 @@ class IsaacRenderer:
         self.subframes = int(config.get("rt_subframes", 1))
         self.step_mode = config.get("step", "step_nowait")
         self.lag = int(self.step_mode == "step_nowait")
-        sensors = cameras[: 1 + len(sim.trucks)]
+        sensors = [c for c in cameras[: 1 + len(sim.trucks)] if (c[2], c[3]) == (CAM_W, CAM_H)]
         if config.get("tiled", False) and len(sensors) > 1:
             rp = rep.create.render_product_tiled(cameras=[p for _, p, _, _ in sensors], tile_resolution=(CAM_W, CAM_H))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
             ann.attach(rp)
             self.tiles = (ann, [n for n, _, _, _ in sensors], math.ceil(math.sqrt(len(sensors))))
-            cameras = cameras[len(sensors) :]
+            cameras = [c for c in cameras if c not in sensors]
         for name, path, w, h in cameras:
             rp = rep.create.render_product(path, (w, h))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
@@ -249,23 +252,60 @@ class IsaacRenderer:
         print(f"fx: isaac.fx TruckFx preset {preset}", flush=True)
         return TruckFx(self.stage, {"preset": preset, "trucks": trucks})
 
+    def make_material(self, world, sim, cfg: dict):
+        if not cfg.get("enabled", True) or not sim.excavators:
+            return None
+        try:
+            from isaac.material import rig as R
+            from isaac.material.stage import BucketMaterial, face_colour, sites_from_world
+        except ImportError:
+            return None
+        self.rig_lib = R
+        excavators = [{"id": b.id, "ground": float(b.y), "colour": face_colour(world.dir, b.x, b.z)} for b in sim.excavators]
+        trucks = [{"id": t.id, "prim": f"/World/Trucks/{t.id.replace('-', '_')}"} for t in sim.trucks]
+        for rig in sim.rigs.values():
+            rig.lift_deg = float(cfg.get("lift_deg", 0.0))
+        print(f"material: isaac.material BucketMaterial for {len(excavators)} excavators, lift {cfg.get('lift_deg', 0.0)} deg", flush=True)
+        return BucketMaterial(self.stage, excavators, trucks, cfg.get("model"), sites_from_world(world))
+
+    def bucket_matrix(self, sim, b) -> np.ndarray:
+        R, pose = self.rig_lib, sim.rigs[b.id].pose
+        base = R.base_matrix(b.x, b.y, b.z, sim.excavator_yaw(b), sim.rig_matrix)
+        return base @ R.chain([-math.radians(pose[0]), pose[1], pose[2], pose[3]])["bucket"]
+
+    def update_material(self, sim, dt: float, trucks: dict) -> None:
+        loading = sim.loading()
+        sim.aim({e: (x, y) for e, (x, y) in self.material.aim_points().items()})
+        excavators = []
+        for b in sim.excavators:
+            rig = sim.rigs[b.id]
+            phase, phase_t = self.rig_lib.phase_name(rig.phase) if rig.digging else ("hold", 0.0)
+            excavators.append((b.id, self.bucket_matrix(sim, b), phase, phase_t))
+        self.material.update(dt, excavators, [(t, m, loading.get(t)) for t, m in trucks.items()])
+        self.loads = {t: round(self.material.load(t), 3) for t in trucks}
+
     def update(self, sim, dt: float) -> None:
-        if self.fx is not None:
-            self.fx.update(dt, sim.fx_state())
-        for op, t in zip(self.trucks, sim.trucks):
-            op.Set(isaac_matrix(sim.rotation(t), sim.position(t)))
-        s = TO_ISAAC[:3, :3]
-        for b, base, joints in self.excavators:
-            base.Set(isaac_matrix(yaw_matrix(sim.excavator_yaw(b)), np.array([b.x, b.y, b.z])))
-            rot = sim.rigs[b.id].joint_rotations()
-            for j, op in joints.items():
-                w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
-                op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
-        for op, w in zip(self.people, sim.walkers):
-            op.Set(isaac_matrix(yaw_matrix(w.yaw), np.array([w.x, w.y, w.z])))
-        self.view_poses = sim.view_poses(dt)
-        for name, (p, r) in self.view_poses.items():
-            self.views[name].Set(camera_matrix(r, p))
+        with Sdf.ChangeBlock():
+            if self.fx is not None:
+                self.fx.update(dt, sim.fx_state())
+            mats = {}
+            for op, t in zip(self.trucks, sim.trucks):
+                mats[t.id] = isaac_matrix(sim.rotation(t), sim.position(t))
+                op.Set(mats[t.id])
+            if self.material is not None and dt > 0:
+                self.update_material(sim, dt, mats)
+            s = TO_ISAAC[:3, :3]
+            for b, base, joints in self.excavators:
+                base.Set(isaac_matrix(yaw_matrix(sim.excavator_yaw(b)), np.array([b.x, b.y, b.z])))
+                rot = sim.rigs[b.id].joint_rotations()
+                for j, op in joints.items():
+                    w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
+                    op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
+            for op, w in zip(self.people, sim.walkers):
+                op.Set(isaac_matrix(yaw_matrix(w.yaw), np.array([w.x, w.y, w.z])))
+            self.view_poses = sim.view_poses(dt)
+            for name, (p, r) in self.view_poses.items():
+                self.views[name].Set(camera_matrix(r, p))
 
     def render(self) -> dict:
         if self.step_mode == "update":

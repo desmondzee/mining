@@ -55,9 +55,9 @@ def test_augment_adds_ground_heights_and_route_y():
 
 def test_frame_meta_roundtrip():
     header = {"camera": "truck-0", "truck": "truck-0", "pose": {"x": 1, "z": 2, "yaw": 3}, "speed": 4.5,
-              "cam": {"x": 1, "y": 3.6, "z": 2, "yaw": 3, "pitch": 0, "roll": 0, "hfov": 90}, "rgb": {}}
+              "cam": {"x": 1, "y": 3.6, "z": 2, "yaw": 3, "pitch": 0, "roll": 0, "hfov": 90}, "load": 0.5, "rgb": {}}
     meta, end = unpack_meta(pack_meta(frame_meta(header, t=7.0)) + b"rest")
-    assert meta == {"t": 7.0, **{k: header[k] for k in ("cam", "pose", "speed", "truck")}}
+    assert meta == {"t": 7.0, **{k: header[k] for k in ("cam", "pose", "speed", "truck", "load")}}
     assert end == len(pack_meta(frame_meta(header, t=7.0)))
     overview, _ = unpack_meta(pack_meta(frame_meta({"camera": "overview", "truck": ""}, t=1.0)))
     assert overview == {"t": 1.0}
