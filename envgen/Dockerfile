@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
-# One-off world generator. Usage (from deploy/):
-#   docker compose --profile tools run --rm envgen python -m envgen.procedural --seed 42 --id default
-#   docker compose --profile tools run --rm envgen python -m envgen.worldlabs --help
+# One-off world generator. From the repo root:
+#   docker build -f envgen/Dockerfile -t mining-envgen .
+#   docker run --rm -v "$PWD/data:/app/data" -v "$PWD/envgen/secrets:/run/secrets:ro" mining-envgen python -m envgen.procedural --seed 42 --id default
 FROM python:3.12-slim
 
 ENV PYTHONDONTWRITEBYTECODE=1 \

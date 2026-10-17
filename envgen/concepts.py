@@ -40,8 +40,8 @@ VARIANTS = {
 
 def load_env():
     """Pick up keys without overriding the real environment. Precedence: env vars, then secret files
-    (one file per key, e.g. `wlt_api_key`, in /run/secrets or deploy/secrets), then deploy/.env."""
-    for d in (Path("/run/secrets"), C.REPO / "deploy" / "secrets"):
+    (one file per key, e.g. `wlt_api_key`, in /run/secrets or envgen/secrets), then deploy/.env."""
+    for d in (Path("/run/secrets"), C.REPO / "envgen" / "secrets", C.REPO / "deploy" / "secrets"):
         if d.is_dir():
             for f in d.iterdir():
                 if f.is_file() and not f.name.startswith(".") and f.suffix == "" and f.read_text().strip():

@@ -1,0 +1,4 @@
+worlds/*/splat_*.spz
+worlds/*/*.ply
+concepts/
+audio/
