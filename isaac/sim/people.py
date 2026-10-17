@@ -1,4 +1,5 @@
 import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -258,6 +259,8 @@ class Capsules:
 
 
 def make_people(stage, walkers):
+    if os.environ.get("PEOPLE", "animated") == "capsules":
+        return Capsules(stage, walkers)
     try:
         from isaacsim.storage.native import get_assets_root_path
 
