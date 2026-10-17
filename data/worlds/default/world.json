@@ -20,11 +20,13 @@
     "splat": null,
     "collider": null,
     "terrain_mesh": "terrain.glb",
-    "pano": null,
+    "pano": "sky_pano.jpg",
     "concept": null,
     "heightmap_raw": "heightmap.raw",
     "preview": "preview.png",
-    "heightmap_meta": "heightmap_meta.json"
+    "heightmap_meta": "heightmap_meta.json",
+    "pano_source": "World Labs Marble world marble_surround (sky/horizon backdrop)",
+    "surround": "surround.glb"
   },
   "splat_transform": {
     "scale": 1.0,
@@ -48,7 +50,15 @@
         107.9,
         -1.7,
         107.9
-      ]
+      ],
+      "dump_point": {
+        "pos3": [
+          107.9,
+          -1.7,
+          107.9
+        ],
+        "heading_deg": 4.1
+      }
     },
     {
       "id": "dump_south",
@@ -62,7 +72,15 @@
         -107.9,
         -1.42,
         -107.9
-      ]
+      ],
+      "dump_point": {
+        "pos3": [
+          -107.9,
+          -1.42,
+          -107.9
+        ],
+        "heading_deg": 270.0
+      }
     },
     {
       "id": "parking",
@@ -76,6 +94,32 @@
         107.9,
         -2.8,
         -107.9
+      ],
+      "slots": [
+        {
+          "pos3": [
+            103.0,
+            -2.7,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        },
+        {
+          "pos3": [
+            107.9,
+            -2.8,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        },
+        {
+          "pos3": [
+            112.8,
+            -2.89,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        }
       ]
     },
     {
@@ -105,7 +149,15 @@
         4.0,
         -30.01,
         -6.0
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          4.0,
+          -30.01,
+          -6.0
+        ],
+        "heading_deg": 253.6
+      }
     },
     {
       "id": "pit_south",
@@ -120,7 +172,15 @@
         14.2,
         -10.01,
         -87.5
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          14.2,
+          -10.01,
+          -87.5
+        ],
+        "heading_deg": 170.6
+      }
     },
     {
       "id": "pit_west",
@@ -135,7 +195,15 @@
         -61.4,
         -20.01,
         0.6
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          -61.4,
+          -20.01,
+          0.6
+        ],
+        "heading_deg": 270.6
+      }
     }
   ],
   "junctions": [
@@ -1224,12 +1292,13 @@
       "id": "truck-0",
       "callsign": "Truck 0",
       "spawn": [
-        101.1,
+        103.0,
         -107.9
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 0
     },
     {
       "id": "truck-1",
@@ -1240,18 +1309,20 @@
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 1
     },
     {
       "id": "truck-2",
       "callsign": "Truck 2",
       "spawn": [
-        114.7,
+        112.8,
         -107.9
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 2
     }
   ],
   "navgrid": "navgrid.json",
@@ -1481,6 +1552,28 @@
       "n_benches 5 -> 4: crest 116 m > 97 m allowed by the 260 m world",
       "n_benches 4 -> 3: crest 100 m > 97 m allowed by the 260 m world"
     ],
+    "navgrid_check": {
+      "truck_width_m": 4.24,
+      "erosion_radius_m": 2.62,
+      "min_required_width_m": 10.0,
+      "min_corridor_width_m": {
+        "ramp_access": 20.9,
+        "crusher_road": 40.0,
+        "fuel_road": 21.4,
+        "parking_road": 40.0,
+        "dump_road": 15.8,
+        "pit_south_spur": 13.4,
+        "pit_west_spur": 13.1,
+        "ramp_main_1": 13.8,
+        "ramp_main_2": 13.7,
+        "ramp_main_3": 13.7,
+        "floor_road": 14.0
+      },
+      "pairs_connected": "21/21",
+      "nav_point_pairs_connected": "105/105",
+      "nav_points": 15,
+      "method": "passable mask (cost > 0) eroded by truck_width/2 + margin; pairs connected 8-way with the corner rule; corridor width = 2 x min centreline clearance to the nearest blocked cell"
+    },
     "as_built": {
       "method": "measured from heightmap.raw (16-bit, 0.508 m/px) by envgen.measure_geometry",
       "bench_face_angle_deg": {
@@ -1568,5 +1661,46 @@
         "ok": true
       }
     }
-  }
+  },
+  "equipment": [
+    {
+      "id": "exc-0",
+      "type": "excavator",
+      "name": "Excavator 1",
+      "face": "pit_floor",
+      "pos3": [
+        4.0,
+        -30.01,
+        4.0
+      ],
+      "heading_deg": 180.0,
+      "model": "excavator"
+    },
+    {
+      "id": "exc-1",
+      "type": "excavator",
+      "name": "Excavator 2",
+      "face": "pit_south",
+      "pos3": [
+        24.11,
+        -10.01,
+        -88.81
+      ],
+      "heading_deg": 277.5,
+      "model": "excavator"
+    },
+    {
+      "id": "exc-2",
+      "type": "excavator",
+      "name": "Excavator 3",
+      "face": "pit_west",
+      "pos3": [
+        -62.57,
+        -20.01,
+        9.52
+      ],
+      "heading_deg": 172.5,
+      "model": "excavator"
+    }
+  ]
 }
