@@ -3244,7 +3244,7 @@
     ],
     "ground_texture_tile_m": 32.0,
     "ground_texture_note": "surround.glb: COLOR_0 (large-scale colour / tex mean) x baseColorTexture, UV = world (x, z) / tile_m, REPEAT",
-    "forest_count": 18040,
+    "forest_count": 18036,
     "tracks": [
       {
         "half_width_m": 5.0,
