@@ -1,0 +1,18 @@
+{
+  "file": "heightmap.raw",
+  "resolution": 513,
+  "format": "uint16 little-endian, row-major",
+  "row0": "south edge (min z); col0 = west edge (min x)",
+  "size_m": [
+    260.0,
+    260.0
+  ],
+  "origin": [
+    -130.0,
+    -130.0
+  ],
+  "min_height_m": -50.224,
+  "max_height_m": 7.908,
+  "height_range_m": 58.132,
+  "note": "world_y = min_height_m + value/65535 * height_range_m. Unity: terrain size = (size_m[0], height_range_m, size_m[1]), position y = min_height_m; may need 'Flip Vertically' depending on importer."
+}

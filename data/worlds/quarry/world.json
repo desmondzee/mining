@@ -1,0 +1,970 @@
+{
+  "id": "quarry",
+  "name": "Mining Quarry",
+  "source": "scan",
+  "size_m": [
+    260.0,
+    260.0
+  ],
+  "origin": [
+    -130.0,
+    -130.0
+  ],
+  "bounds": [
+    -130.0,
+    -130.0,
+    130.0,
+    130.0
+  ],
+  "assets": {
+    "visual": "visual.glb",
+    "collider": "collider.glb",
+    "terrain_mesh": "terrain.glb",
+    "splat": null,
+    "pano": null,
+    "concept": null,
+    "heightmap_raw": "heightmap.raw",
+    "heightmap_meta": "heightmap_meta.json",
+    "preview": "preview.png"
+  },
+  "scan_transform": {
+    "scale": 15.795953,
+    "rotation_euler_deg": [
+      0,
+      0,
+      0
+    ],
+    "rotation_matrix": [
+      [
+        1.0,
+        0.0,
+        0.0
+      ],
+      [
+        0.0,
+        1.0,
+        0.0
+      ],
+      [
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "translation": [
+      -38.0381,
+      3.1828,
+      -56.9167
+    ],
+    "up_axis": "+y",
+    "frame": "gltf",
+    "matrix": [
+      [
+        15.795953,
+        0.0,
+        0.0,
+        -38.038061
+      ],
+      [
+        0.0,
+        15.795953,
+        0.0,
+        3.18276
+      ],
+      [
+        0.0,
+        0.0,
+        15.795953,
+        -56.916727
+      ],
+      [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ]
+    ],
+    "order": "p_world = scale * (R @ p_gltf) + translation; p_gltf = visual.glb vertex in glTF scene space (node transforms applied, Y up). matrix = same, 4x4 row-major, column vectors.",
+    "native_extent_xz": [
+      16.4599,
+      10.6774
+    ],
+    "metric": false,
+    "ref_percentile": 90.0,
+    "source_file": "mining_quarry.glb"
+  },
+  "sites": [
+    {
+      "id": "ore_1",
+      "type": "ore",
+      "name": "Pit Floor",
+      "pos": [
+        -38.35,
+        -4.55
+      ],
+      "tonnes": 8000,
+      "pos3": [
+        -38.35,
+        -36.38,
+        -4.55
+      ]
+    },
+    {
+      "id": "ore_2",
+      "type": "ore",
+      "name": "East Bench",
+      "pos": [
+        14.95,
+        0.65
+      ],
+      "tonnes": 6000,
+      "pos3": [
+        14.95,
+        -37.32,
+        0.65
+      ]
+    },
+    {
+      "id": "ore_3",
+      "type": "ore",
+      "name": "North-West Floor",
+      "pos": [
+        -74.75,
+        17.55
+      ],
+      "tonnes": 4500,
+      "pos3": [
+        -74.75,
+        -37.92,
+        17.55
+      ]
+    },
+    {
+      "id": "crusher",
+      "type": "crusher",
+      "name": "Primary Crusher",
+      "pos": [
+        117.65,
+        65.65
+      ],
+      "pos3": [
+        117.65,
+        1.77,
+        65.65
+      ]
+    },
+    {
+      "id": "dump",
+      "type": "dump",
+      "name": "Waste Dump",
+      "pos": [
+        112.45,
+        29.25
+      ],
+      "pos3": [
+        112.45,
+        -0.7,
+        29.25
+      ]
+    },
+    {
+      "id": "parking",
+      "type": "parking",
+      "name": "Ready Line",
+      "pos": [
+        83.85,
+        79.95
+      ],
+      "pos3": [
+        83.85,
+        0.32,
+        79.95
+      ]
+    },
+    {
+      "id": "fuel",
+      "type": "fuel",
+      "name": "Fuel Bay",
+      "pos": [
+        96.85,
+        57.85
+      ],
+      "pos3": [
+        96.85,
+        -0.28,
+        57.85
+      ]
+    }
+  ],
+  "junctions": [
+    {
+      "id": "j_1",
+      "name": "Junction 1",
+      "pos": [
+        -46.15,
+        -35.86,
+        17.55
+      ]
+    },
+    {
+      "id": "j_2",
+      "name": "Junction 2",
+      "pos": [
+        86.45,
+        -0.26,
+        69.55
+      ]
+    },
+    {
+      "id": "j_3",
+      "name": "Junction 3",
+      "pos": [
+        100.75,
+        0.49,
+        64.35
+      ]
+    }
+  ],
+  "roads": [
+    {
+      "id": "haul_1",
+      "name": "Waste Dump - Primary Crusher",
+      "type": "haul",
+      "from": "dump",
+      "to": "crusher",
+      "width_m": 15.0,
+      "grade_pct": 6.2,
+      "one_way": false,
+      "points": [
+        [
+          112.45,
+          -0.7,
+          29.25
+        ],
+        [
+          110.2,
+          -0.6,
+          33.63
+        ],
+        [
+          109.85,
+          -0.28,
+          38.59
+        ],
+        [
+          109.56,
+          0.06,
+          43.56
+        ],
+        [
+          108.73,
+          0.11,
+          48.47
+        ],
+        [
+          109.34,
+          0.5,
+          53.36
+        ],
+        [
+          112.31,
+          0.84,
+          57.31
+        ],
+        [
+          115.11,
+          1.46,
+          61.39
+        ],
+        [
+          117.65,
+          1.77,
+          65.65
+        ]
+      ]
+    },
+    {
+      "id": "haul_2",
+      "name": "Pit Floor - Junction 1",
+      "type": "haul",
+      "from": "ore_1",
+      "to": "j_1",
+      "width_m": 15.0,
+      "grade_pct": 3.8,
+      "one_way": false,
+      "points": [
+        [
+          -38.35,
+          -36.38,
+          -4.55
+        ],
+        [
+          -38.35,
+          -36.44,
+          0.5
+        ],
+        [
+          -38.37,
+          -36.08,
+          5.56
+        ],
+        [
+          -39.15,
+          -35.81,
+          10.51
+        ],
+        [
+          -42.09,
+          -35.71,
+          14.58
+        ],
+        [
+          -46.15,
+          -35.86,
+          17.55
+        ]
+      ]
+    },
+    {
+      "id": "haul_3",
+      "name": "East Bench - Pit Floor",
+      "type": "haul",
+      "from": "ore_2",
+      "to": "ore_1",
+      "width_m": 15.0,
+      "grade_pct": 2.1,
+      "one_way": false,
+      "points": [
+        [
+          14.95,
+          -37.32,
+          0.65
+        ],
+        [
+          12.18,
+          -37.24,
+          4.95
+        ],
+        [
+          8.82,
+          -37.2,
+          8.8
+        ],
+        [
+          4.15,
+          -36.84,
+          10.53
+        ],
+        [
+          -0.93,
+          -36.62,
+          9.84
+        ],
+        [
+          -5.98,
+          -36.34,
+          9.04
+        ],
+        [
+          -10.72,
+          -36.29,
+          7.11
+        ],
+        [
+          -15.67,
+          -36.34,
+          5.81
+        ],
+        [
+          -20.49,
+          -36.35,
+          4.17
+        ],
+        [
+          -24.87,
+          -36.34,
+          1.51
+        ],
+        [
+          -29.5,
+          -36.42,
+          -0.67
+        ],
+        [
+          -34.47,
+          -36.44,
+          -1.89
+        ],
+        [
+          -38.35,
+          -36.38,
+          -4.55
+        ]
+      ]
+    },
+    {
+      "id": "ramp_4",
+      "name": "Junction 1 - Junction 2",
+      "type": "ramp",
+      "from": "j_1",
+      "to": "j_2",
+      "width_m": 16.5,
+      "grade_pct": 13.1,
+      "one_way": false,
+      "points": [
+        [
+          -46.15,
+          -35.86,
+          17.55
+        ],
+        [
+          -49.67,
+          -35.26,
+          21.12
+        ],
+        [
+          -51.22,
+          -34.63,
+          25.02
+        ],
+        [
+          -46.26,
+          -34.01,
+          24.85
+        ],
+        [
+          -41.3,
+          -33.47,
+          24.14
+        ],
+        [
+          -36.86,
+          -32.59,
+          25.63
+        ],
+        [
+          -32.12,
+          -31.86,
+          26.66
+        ],
+        [
+          -27.18,
+          -31.05,
+          27.34
+        ],
+        [
+          -22.23,
+          -30.32,
+          27.95
+        ],
+        [
+          -17.26,
+          -29.6,
+          28.48
+        ],
+        [
+          -12.32,
+          -28.78,
+          28.99
+        ],
+        [
+          -7.5,
+          -28.17,
+          27.65
+        ],
+        [
+          -2.82,
+          -27.39,
+          28.07
+        ],
+        [
+          -5.36,
+          -26.63,
+          32.19
+        ],
+        [
+          -9.85,
+          -26.48,
+          34.27
+        ],
+        [
+          -14.82,
+          -26.43,
+          34.95
+        ],
+        [
+          -19.77,
+          -26.29,
+          35.68
+        ],
+        [
+          -24.78,
+          -26.15,
+          35.97
+        ],
+        [
+          -29.72,
+          -26.07,
+          36.82
+        ],
+        [
+          -34.73,
+          -25.99,
+          37.05
+        ],
+        [
+          -39.75,
+          -25.83,
+          37.05
+        ],
+        [
+          -44.76,
+          -25.73,
+          37.18
+        ],
+        [
+          -49.7,
+          -25.62,
+          38.05
+        ],
+        [
+          -54.38,
+          -25.36,
+          39.74
+        ],
+        [
+          -54.94,
+          -24.6,
+          43.78
+        ],
+        [
+          -50.03,
+          -23.95,
+          43.84
+        ],
+        [
+          -45.2,
+          -23.4,
+          44.6
+        ],
+        [
+          -40.54,
+          -22.7,
+          46.11
+        ],
+        [
+          -35.53,
+          -21.92,
+          46.15
+        ],
+        [
+          -30.51,
+          -21.16,
+          46.15
+        ],
+        [
+          -25.49,
+          -20.43,
+          46.15
+        ],
+        [
+          -20.48,
+          -19.68,
+          46.28
+        ],
+        [
+          -15.59,
+          -19.02,
+          47.34
+        ],
+        [
+          -10.58,
+          -18.26,
+          47.4
+        ],
+        [
+          -5.6,
+          -17.55,
+          47.73
+        ],
+        [
+          -0.76,
+          -16.86,
+          46.99
+        ],
+        [
+          4.17,
+          -16.41,
+          47.07
+        ],
+        [
+          8.71,
+          -15.3,
+          49.03
+        ],
+        [
+          13.04,
+          -14.61,
+          51.24
+        ],
+        [
+          18.05,
+          -13.93,
+          51.35
+        ],
+        [
+          23.07,
+          -13.11,
+          51.37
+        ],
+        [
+          27.98,
+          -12.39,
+          52.24
+        ],
+        [
+          32.73,
+          -11.47,
+          53.82
+        ],
+        [
+          37.36,
+          -10.74,
+          55.75
+        ],
+        [
+          42.15,
+          -10.05,
+          57.25
+        ],
+        [
+          47.11,
+          -9.22,
+          57.96
+        ],
+        [
+          51.74,
+          -8.6,
+          59.77
+        ],
+        [
+          55.63,
+          -7.59,
+          62.91
+        ],
+        [
+          59.82,
+          -6.72,
+          65.66
+        ],
+        [
+          63.44,
+          -5.23,
+          69.02
+        ],
+        [
+          66.99,
+          -4.02,
+          72.28
+        ],
+        [
+          68.83,
+          -2.66,
+          76.61
+        ],
+        [
+          70.91,
+          -1.38,
+          81.07
+        ],
+        [
+          75.16,
+          -0.55,
+          79.41
+        ],
+        [
+          78.77,
+          -0.63,
+          75.93
+        ],
+        [
+          82.38,
+          -0.23,
+          72.45
+        ],
+        [
+          86.45,
+          -0.26,
+          69.55
+        ]
+      ]
+    },
+    {
+      "id": "haul_5",
+      "name": "North-West Floor - Junction 1",
+      "type": "haul",
+      "from": "ore_3",
+      "to": "j_1",
+      "width_m": 15.0,
+      "grade_pct": 6.7,
+      "one_way": false,
+      "points": [
+        [
+          -74.75,
+          -37.92,
+          17.55
+        ],
+        [
+          -69.63,
+          -37.57,
+          16.58
+        ],
+        [
+          -65.32,
+          -37.44,
+          13.57
+        ],
+        [
+          -60.46,
+          -36.97,
+          12.26
+        ],
+        [
+          -56.04,
+          -36.84,
+          15.09
+        ],
+        [
+          -51.05,
+          -36.33,
+          16.2
+        ],
+        [
+          -46.15,
+          -35.86,
+          17.55
+        ]
+      ]
+    },
+    {
+      "id": "haul_6",
+      "name": "Junction 2 - Junction 3",
+      "type": "haul",
+      "from": "j_2",
+      "to": "j_3",
+      "width_m": 15.0,
+      "grade_pct": 4.9,
+      "one_way": false,
+      "points": [
+        [
+          86.45,
+          -0.26,
+          69.55
+        ],
+        [
+          91.46,
+          0.05,
+          68.36
+        ],
+        [
+          96.46,
+          0.42,
+          67.17
+        ],
+        [
+          100.75,
+          0.49,
+          64.35
+        ]
+      ]
+    },
+    {
+      "id": "spur_7",
+      "name": "Ready Line - Junction 2",
+      "type": "spur",
+      "from": "parking",
+      "to": "j_2",
+      "width_m": 15.0,
+      "grade_pct": 5.4,
+      "one_way": false,
+      "points": [
+        [
+          83.85,
+          0.32,
+          79.95
+        ],
+        [
+          84.92,
+          0.13,
+          74.68
+        ],
+        [
+          86.45,
+          -0.26,
+          69.55
+        ]
+      ]
+    },
+    {
+      "id": "haul_8",
+      "name": "Junction 3 - Primary Crusher",
+      "type": "haul",
+      "from": "j_3",
+      "to": "crusher",
+      "width_m": 15.0,
+      "grade_pct": 5.9,
+      "one_way": false,
+      "points": [
+        [
+          100.75,
+          0.49,
+          64.35
+        ],
+        [
+          104.15,
+          0.59,
+          60.97
+        ],
+        [
+          107.82,
+          0.54,
+          57.91
+        ],
+        [
+          112.34,
+          0.87,
+          57.8
+        ],
+        [
+          115.19,
+          1.47,
+          61.56
+        ],
+        [
+          117.65,
+          1.77,
+          65.65
+        ]
+      ]
+    },
+    {
+      "id": "spur_9",
+      "name": "Fuel Bay - Junction 3",
+      "type": "spur",
+      "from": "fuel",
+      "to": "j_3",
+      "width_m": 15.0,
+      "grade_pct": 10.2,
+      "one_way": false,
+      "points": [
+        [
+          96.85,
+          -0.28,
+          57.85
+        ],
+        [
+          99.2,
+          0.14,
+          60.84
+        ],
+        [
+          100.75,
+          0.49,
+          64.35
+        ]
+      ]
+    }
+  ],
+  "trucks": [
+    {
+      "id": "truck-0",
+      "callsign": "Truck 0",
+      "spawn": [
+        90.4,
+        81.6
+      ],
+      "heading_deg": 166.0,
+      "capacity_t": 55,
+      "model": "Komatsu HD465-7 (HD465-7E0)"
+    },
+    {
+      "id": "truck-1",
+      "callsign": "Truck 1",
+      "spawn": [
+        83.8,
+        80.0
+      ],
+      "heading_deg": 166.0,
+      "capacity_t": 55,
+      "model": "Komatsu HD465-7 (HD465-7E0)"
+    },
+    {
+      "id": "truck-2",
+      "callsign": "Truck 2",
+      "spawn": [
+        77.3,
+        78.3
+      ],
+      "heading_deg": 166.0,
+      "capacity_t": 55,
+      "model": "Komatsu HD465-7 (HD465-7E0)"
+    }
+  ],
+  "navgrid": "navgrid.json",
+  "design": {
+    "design_truck": {
+      "key": "komatsu_hd465",
+      "name": "Komatsu HD465-7 (HD465-7E0)",
+      "payload_t": 55,
+      "width_m": 4.24,
+      "length_m": 9.35,
+      "height_m": 4.4,
+      "wheelbase_m": 4.29,
+      "tire": "24.00R35",
+      "tire_diameter_m": 2.2,
+      "top_speed_kmh": 70.0,
+      "turning_diameter_m": 17.0,
+      "clearance_diameter_m": 19.0,
+      "source": "Komatsu HD465-7E0 product page (55 t nominal payload, komatsu.com); RitchieSpecs HD465-7 (overall width 13.92 ft, length 30.67 ft, height 14.42 ft, wheelbase 14.08 ft, 43.5 mph); distributor sheets: 24.00R35 tires, min turning radius 8.5 m, 70 km/h. Clearance diameter and tire OD (~2.2 m for 24.00R35) are estimates - official PDF not retrievable.",
+      "mid_axle_height_m": 1.1
+    },
+    "road_width_m": 15.0,
+    "ramp_width_m": 16.5,
+    "ramp_grade_pct": 9.0,
+    "max_road_grade_pct": 10.0,
+    "safety_berm_height_m": 1.1,
+    "references": {
+      "IC8758": "Kaufman & Ault (1977), Design of Surface Mine Haulage Roads - A Manual, USBM IC 8758. https://stacks.cdc.gov/view/cdc/8915",
+      "MSHA": "30 CFR 56.9300 - berms/guardrails at least mid-axle height of the largest self-propelled equipment that usually travels the roadway. https://www.law.cornell.edu/cfr/text/30/56.9300",
+      "Thompson": "Thompson, R.J. (2011) Mine haul road design and management: a review of current practice (SME); Thompson, Mining Haul Roads: Theory and Practice (CRC 2019). https://espace.curtin.edu.au/handle/20.500.11937/22673",
+      "CatHaulRoad": "Caterpillar haul road design guidance (2% constant cross-fall, curve widening tables). https://es.scribd.com/doc/52194520/CAT-Haul-Road-Design",
+      "Ritchie": "Modified Ritchie criterion, catch bench width W = 0.2*H + 4.5 m (Ryan & Pryor 2000, SME). https://cnitucson.com/publications/2000_ch3__Catch%20Bench_sme_tr_pp.pdf",
+      "WV": "W. Va. Code R. 38-3-5 haulageways: switchback grade < approach grade and <= 10%. https://www.law.cornell.edu/regulations/west-virginia/W-Va-C-S-R-SS-38-3-5",
+      "sim": "Team simulator spec (desmondzee/mining spec.md): kinematic truck wheelbase 5 m, max steer 30 deg, max speed 8 m/s.",
+      "Read&Stacey": "Read & Stacey (2009) Guidelines for Open Pit Slope Design (CSIRO): bench face 60-75 deg in competent rock, inter-ramp / overall 35-50 deg typical."
+    },
+    "notes": "Scanned terrain: pit geometry is as-scanned. Roads are least-cost paths on the navgrid with grades above 10% strongly penalised; widths follow the design truck spec.",
+    "as_built": {
+      "pit_depth_m": 49.2,
+      "road_max_grade_pct_20m": {
+        "haul_1": 8.4,
+        "haul_2": 3.3,
+        "haul_3": 4.5,
+        "ramp_4": 27.5,
+        "haul_5": 7.7,
+        "haul_6": 4.9,
+        "spur_7": 5.4,
+        "haul_8": 6.3,
+        "spur_9": 10.2
+      }
+    }
+  },
+  "scan": {
+    "pit_depth_m": 49.2,
+    "floor_y": -49.16,
+    "max_y": 7.93,
+    "hole_fraction": 0.468,
+    "tris": 1511971,
+    "collider_tris": 299999
+  }
+}

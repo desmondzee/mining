@@ -234,7 +234,8 @@ def write_preview(path, H, colors, spacing, world, px=800):
         x, y = to_px(s["pos"])
         col = SITE_COLORS.get(s["type"], (255, 255, 255))
         d.ellipse([x - 8, y - 8, x + 8, y + 8], fill=col, outline=(0, 0, 0), width=2)
-        d.text((x + 11, y - 8), s["name"], fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
+        tw = d.textlength(s["name"], font=font) if hasattr(d, "textlength") else 8 * len(s["name"])
+        d.text((x + 11, y - 8) if x + 11 + tw < px - 2 else (x - 11 - tw, y - 8), s["name"], fill=(255, 255, 255), font=font, stroke_width=2, stroke_fill=(0, 0, 0))
     for t in world["trucks"]:
         x, y = to_px(t["spawn"])
         d.rectangle([x - 3, y - 3, x + 3, y + 3], fill=(255, 220, 0), outline=(0, 0, 0))
@@ -332,3 +333,328 @@ def least_cost_path(cost, start, goal):
         path.append(divmod(int(k), w))
         k = prev[path[-1]]
     return path[::-1]
+
+
+# ---------------------------------------------------------------- mesh -> heightmap (worldlabs collider, scans)
+def ray_intersector(mesh):
+    """Embree (embreex) if installed (fast on millions of tris), else trimesh's pure-numpy intersector."""
+    try:
+        from trimesh.ray.ray_pyembree import RayMeshIntersector
+        return RayMeshIntersector(mesh), True
+    except Exception:
+        from trimesh.ray.ray_triangle import RayMeshIntersector
+        return RayMeshIntersector(mesh), False
+
+
+def raycast_grid(mesh, origin, cell, w, h):
+    """Top-surface heights by downward rays at cell centres (Y up).
+
+    Returns (H, tri): H[h, w] with NaN where a ray hit nothing (mesh holes / outside the scan),
+    tri[h, w] = index of the top-hit face or -1. Holes in the mesh just produce misses.
+    """
+    import time
+    cx = origin[0] + (np.arange(w) + 0.5) * cell
+    cz = origin[1] + (np.arange(h) + 0.5) * cell
+    X, Z = np.meshgrid(cx, cz)
+    top = float(mesh.vertices[:, 1].max()) + 5.0
+    orig = np.stack([X.ravel(), np.full(X.size, top), Z.ravel()], 1)
+    dirs = np.tile([0.0, -1.0, 0.0], (len(orig), 1))
+    t0 = time.time()
+    rmi, embree = ray_intersector(mesh)
+    loc, ray_idx, tri_idx = rmi.intersects_location(orig, dirs, multiple_hits=True)
+    Hf = np.full(X.size, -np.inf)
+    np.maximum.at(Hf, ray_idx, loc[:, 1])  # highest hit = top surface
+    tri = np.full(X.size, -1, np.int64)
+    best = loc[:, 1] >= Hf[ray_idx]
+    tri[ray_idx[best]] = tri_idx[best]
+    H = np.where(np.isfinite(Hf), Hf, np.nan).reshape(h, w)
+    print(f"  raycast {w}x{h} cells @ {cell} m on {len(mesh.faces)} tris in {time.time() - t0:.1f}s "
+          f"({'embree' if embree else 'numpy'}), hit {np.isfinite(H).mean():.0%}")
+    return H, tri.reshape(h, w)
+
+
+def fill_holes(H, gap_cells=3, median=3, extra=()):
+    """Fill NaN cells from the nearest valid cell (+ 3x3 median). Returns (H, hole, extra_filled).
+
+    hole = cells farther than gap_cells from any hit (real gaps / outside the scan) -> callers make them
+    impassable. `extra` arrays (same [h, w] leading shape, e.g. colours) are filled the same way.
+    """
+    from scipy import ndimage
+    valid = np.isfinite(H)
+    if not valid.any():
+        raise ValueError("no ray hit the mesh")
+    dist, (ir, ic) = ndimage.distance_transform_edt(~valid, return_indices=True)
+    H = H[ir, ic]
+    if median:
+        H = ndimage.median_filter(H, size=median)
+    return H, dist > gap_cells, [e[ir, ic] for e in extra]
+
+
+def centres_to_nodes(H):
+    """Cell-centred grid (h, w) -> node grid (h+1, w+1) spanning exactly the cell extent."""
+    P = np.pad(H, 1, mode="edge")
+    return 0.25 * (P[:-1, :-1] + P[1:, :-1] + P[:-1, 1:] + P[1:, 1:])
+
+
+def terrain_colors(H, sl, hole=None):
+    """Dirt -> rock by slope, darker when low; holes dark grey. Returns [h, w, 3] in 0..1."""
+    hn = (H - H.min()) / max(np.ptp(H), 1e-6)
+    rock = smoothstep((sl - 15) / 20)[..., None]
+    col = np.array([0.62, 0.52, 0.38]) * (1 - rock) + np.array([0.45, 0.43, 0.42]) * rock
+    col = col * (0.8 + 0.2 * hn[..., None])
+    if hole is not None:
+        col[hole] = (0.2, 0.2, 0.2)
+    return col
+
+
+# ---------------------------------------------------------------- auto site placement (worlds without authored layout)
+def place_sites_auto(H, cost, origin, cell, n_ore=3, margin_m=8.0, pad_m=20.0, avoid=None):
+    """Ore sites on the pit floor / low benches; crusher, dump, parking, fuel on flat high ground toward
+    the edges (away from the pit). `avoid` (bool grid, e.g. vegetation) is penalised. All sites lie in the largest passable component, >= margin_m from
+    impassable cells / the grid border. Returns sites (ids ore_1.., crusher, dump, parking, fuel)."""
+    from scipy import ndimage
+    comp = largest_component(cost > 0)
+    sl = slope_deg(H, cell)
+    flat = comp & (sl < 6)
+    clear = ndimage.distance_transform_edt(np.pad(flat, 1))[1:-1, 1:-1] * cell   # m to non-flat / edge
+    edge = ndimage.distance_transform_edt(np.pad(comp, 1))[1:-1, 1:-1] * cell    # m to impassable / edge
+    ok = comp & (edge >= margin_m)
+    if ok.sum() < 50:
+        ok = comp
+    lo, hi = np.percentile(H[comp], [2, 98])
+    hn = np.clip((H - lo) / max(hi - lo, 1e-6), 0, 1)
+    rr, cc = np.indices(H.shape)
+    low = comp & (hn < 0.2)
+    pc = (rr[low].mean(), cc[low].mean()) if low.any() else ((H.shape[0] - 1) / 2, (H.shape[1] - 1) / 2)
+    rad = np.hypot(rr - pc[0], cc - pc[1])
+    rad = rad / max(rad[comp].max(), 1)                       # 0 at pit centre .. 1 farthest passable cell
+    ext = max(H.shape) * cell
+    chosen = []
+
+    def pick(score, sep):
+        if avoid is not None:
+            score = score - 8.0 * avoid
+        for relax in (1.0, 0.6, 0.3, 0.0):
+            s = np.where(ok, score, -np.inf)
+            for rc, _ in chosen:
+                s[np.hypot(rr - rc[0], cc - rc[1]) * cell < sep * relax] = -np.inf
+            if np.isfinite(s).any():
+                break
+        rc = np.unravel_index(int(np.argmax(s)), s.shape)
+        chosen.append((rc, sep))
+        return rc
+
+    sites = []
+    clear_ore = np.minimum(clear, 12.0) / 12.0
+    targets = [0.0, 0.2, 0.35, 0.1]                       # floor first, then benches part-way up
+    compass = ["East", "North-East", "North", "North-West", "West", "South-West", "South", "South-East"]
+    for i in range(n_ore):
+        rc = pick(2.0 * clear_ore - 4.0 * np.abs(hn - targets[i % 4]) - 2.0 * (hn > 0.55), max(30.0, 0.12 * ext))
+        ang = np.degrees(np.arctan2(rc[0] - pc[0], rc[1] - pc[1]))  # 0 = east, CCW (rows = +z = north)
+        d = compass[int(round(ang / 45)) % 8]
+        name = "Pit Floor" if i == 0 else (f"{d} Floor" if hn[rc] < 0.12 else f"{d} Bench")
+        sites.append({"id": f"ore_{i+1}", "type": "ore", "name": name,
+                      "pos": cell_to_world(rc, origin, cell), "tonnes": [8000, 6000, 4500][i % 3]})
+    clear_pad = np.minimum(clear, pad_m) / pad_m
+    infra_sep = max(30.0, 0.12 * ext)
+    rc_crusher = pick(3 * clear_pad + 2.0 * hn + 0.5 * rad - 2.0 * (hn < 0.5), infra_sep)
+    rc_dump = pick(3 * clear_pad + 1.0 * hn + 2.0 * rad - 2.0 * (hn < 0.4), infra_sep)
+    rc_park = pick(3 * clear_pad + 2.0 * hn + 1.0 * rad - 2.0 * (hn < 0.5), infra_sep)
+    dpk = np.hypot(rr - rc_park[0], cc - rc_park[1]) * cell        # fuel bay 25-70 m from the ready line
+    near_other = np.zeros(H.shape, bool)                       # keep the fuel bay off the other pads
+    for rc, _ in chosen[:-1]:
+        near_other |= np.hypot(rr - rc[0], cc - rc[1]) * cell < 35.0
+    rc_fuel = pick(np.where((dpk >= 25) & (dpk <= 70), 3 * clear_pad + hn, -5 + clear_pad) - 10.0 * near_other, 20.0)
+    for sid, name, rc in [("crusher", "Primary Crusher", rc_crusher), ("dump", "Waste Dump", rc_dump),
+                          ("parking", "Ready Line", rc_park), ("fuel", "Fuel Bay", rc_fuel)]:
+        sites.append({"id": sid, "type": sid, "name": name, "pos": cell_to_world(rc, origin, cell)})
+    return sites
+
+
+def make_trucks(sites, roads, cost, origin, cell, truck=None, n=3):
+    """n trucks `truck-0..` lined up at the parking site, facing along the first road leaving it.
+    heading_deg: 0 = +z, clockwise (Unity eulerAngles.y) = atan2(dx, dz)."""
+    pk = next(s for s in sites if s["type"] == "parking")
+    p = np.array(pk["pos"], float)
+    out = None
+    for r in roads:
+        pts = np.array([[q[0], q[2]] for q in r["points"]])
+        if r["from"] == pk["id"]:
+            out = pts
+        elif r["to"] == pk["id"]:
+            out = pts[::-1]
+        if out is not None:
+            break
+    d = (out[min(4, len(out) - 1)] - p) if out is not None else np.array([0.0, 1.0])
+    d = d / max(np.linalg.norm(d), 1e-6)
+    heading = round(float(np.degrees(np.arctan2(d[0], d[1]))) % 360, 1)
+    side = np.array([d[1], -d[0]])
+    width = getattr(truck, "width_m", 4.0)
+    gap = max(6.0, 1.6 * width)
+    passable = largest_component(cost > 0)
+    pr, pc_ = np.nonzero(passable)
+    trucks, used = [], []
+    for i in range(n):
+        q = p + side * gap * (i - (n - 1) / 2)
+        r, c = world_to_cell(q, origin, cell)
+        ok = 0 <= r < cost.shape[0] and 0 <= c < cost.shape[1] and passable[r, c]
+        if not ok or any(np.hypot(*(q - u)) < gap * 0.9 for u in used):
+            dd = np.hypot(pr * cell - (q[1] - origin[1]), pc_ * cell - (q[0] - origin[0]))
+            for k in np.argsort(dd):
+                cand = np.array(cell_to_world((pr[k], pc_[k]), origin, cell))
+                if all(np.hypot(*(cand - u)) >= gap * 0.9 for u in used):
+                    q = cand
+                    break
+        used.append(q)
+        trucks.append({"id": f"truck-{i}", "callsign": f"Truck {i}",
+                       "spawn": [round(float(q[0]), 1), round(float(q[1]), 1)], "heading_deg": heading,
+                       "capacity_t": getattr(truck, "payload_t", 200), "model": getattr(truck, "name", None)})
+    return trucks
+
+
+# ---------------------------------------------------------------- grade-aware road network (least-cost tree)
+def grade_graph(H, cost, cell, max_grade=0.10, smooth=1.0, k1=40.0, k2=400.0):
+    """Directed 8-neighbour sparse graph. Edge weight = length * mean cell cost * grade penalty, where the
+    penalty grows steeply once |dh|/length exceeds max_grade (so paths follow ramps, not fall lines)."""
+    from scipy import sparse
+    from scipy.ndimage import gaussian_filter
+    Hs = gaussian_filter(H, smooth) if smooth else H
+    h, w = H.shape
+    idx = np.arange(h * w).reshape(h, w)
+    rows, cols, wts = [], [], []
+    for dr, dc in NB8:
+        r0, r1 = max(0, -dr), h - max(0, dr)
+        c0, c1 = max(0, -dc), w - max(0, dc)
+        a = (slice(r0, r1), slice(c0, c1))
+        b = (slice(r0 + dr, r1 + dr), slice(c0 + dc, c1 + dc))
+        ok = (cost[a] > 0) & (cost[b] > 0)
+        L = np.hypot(dr, dc) * cell
+        g = np.abs(Hs[b] - Hs[a]) / L
+        ex = np.maximum(g - max_grade, 0.0)
+        wt = L * 0.5 * (cost[a] + cost[b]) * (1.0 + k1 * ex + k2 * ex ** 2)
+        rows.append(idx[a][ok]); cols.append(idx[b][ok]); wts.append(wt[ok])
+    n = h * w
+    return sparse.csr_matrix((np.concatenate(wts), (np.concatenate(rows), np.concatenate(cols))), shape=(n, n))
+
+
+def build_road_network(H, cost, origin, cell, sites, road_width=15.0, ramp_width=16.5, max_grade=0.10,
+                       order=None, snap_m=12.0):
+    """Connect sites into a tree of roads by repeatedly joining the next site to the existing network along
+    its least-cost (grade-aware) path; joining mid-road splits that road at a new junction.
+
+    Returns (junctions, roads, road_cells_mask). Sites get pos3. roads follow CONTRACT "Roads and labels".
+    """
+    from scipy.sparse.csgraph import dijkstra
+    from scipy.ndimage import gaussian_filter1d
+    h, w = H.shape
+    G = grade_graph(H, cost, cell, max_grade)
+    by = {s["id"]: s for s in sites}
+    if order is None:
+        rank = {"crusher": 0, "dump": 1, "ore": 2, "parking": 3, "fuel": 4}   # parking / fuel join last (spurs)
+        order = [s["id"] for s in sorted(sites, key=lambda s: rank.get(s["type"], 5))]
+    cell_of = {sid: world_to_cell(by[sid]["pos"], origin, cell) for sid in order}
+    cell_of = {k: (min(max(r, 0), h - 1), min(max(c, 0), w - 1)) for k, (r, c) in cell_of.items()}
+    node_cell = {}            # node id -> flat cell index
+    node_pos = {}             # node id -> [x, z]
+    roads = []                # [from, to, [flat cells]]
+    junctions = {}
+    snap = max(1, int(round(snap_m / cell)))
+
+    def add_node(nid, flat, pos):
+        node_cell[nid], node_pos[nid] = flat, pos
+
+    def owner_map():
+        m = {}
+        for ri, (_, _, path) in enumerate(roads):
+            for i, f in enumerate(path):
+                m.setdefault(f, (ri, i))
+        for nid, f in node_cell.items():
+            m[f] = ("node", nid)
+        return m
+
+    first = order[0]
+    add_node(first, cell_of[first][0] * w + cell_of[first][1], by[first]["pos"])
+    for sid in order[1:]:
+        src = cell_of[sid][0] * w + cell_of[sid][1]
+        own = owner_map()
+        targets = np.fromiter(own.keys(), np.int64)
+        dist, pred = dijkstra(G, indices=src, return_predecessors=True)
+        dt = dist[targets]
+        if not np.isfinite(dt).any():
+            print(f"  no road from {sid} to the network")
+            continue
+        tgt = int(targets[int(np.argmin(dt))])
+        path = [tgt]
+        while path[-1] != src:
+            path.append(int(pred[path[-1]]))
+        path = path[::-1]                                  # src ... tgt
+        add_node(sid, src, by[sid]["pos"])
+        o = own[tgt]
+        if o[0] != "node" and tgt == src:                  # site sits on an existing road: split it there
+            ri, i = o
+            a, b, rp = roads[ri]
+            if 0 < i < len(rp) - 1:
+                roads[ri] = [a, sid, rp[:i + 1]]
+                roads.append([sid, b, rp[i:]])
+                continue
+            o = ("node", a if i == 0 else b)
+        if o[0] == "node":
+            join = o[1]
+        else:
+            ri, i = o
+            a, b, rp = roads[ri]
+            if i <= snap:                                  # near an endpoint: run on to it
+                path, join = path + rp[:i][::-1], a
+            elif len(rp) - 1 - i <= snap:
+                path, join = path + rp[i + 1:], b
+            else:                                          # split road ri at a new junction
+                join = f"j_{len(junctions) + 1}"
+                junctions[join] = True
+                add_node(join, rp[i], cell_to_world(divmod(rp[i], w), origin, cell))
+                roads[ri] = [a, join, rp[:i + 1]]
+                roads.append([join, b, rp[i:]])
+        if len(path) < 2:
+            path = [src, node_cell[join]]
+        roads.append([sid, join, path])
+
+    hfun = lambda xz: bilinear(H, origin, cell, xz, centred=True)
+    centre = np.zeros(h * w, bool)
+    out = []
+    for k, (a, b, path) in enumerate(roads):
+        centre[path] = True
+        xz = np.array([cell_to_world(divmod(f, w), origin, cell) for f in path], float)
+        xz[0], xz[-1] = node_pos[a], node_pos[b]
+        if len(xz) > 4:
+            sm = gaussian_filter1d(xz, sigma=2.0, axis=0, mode="nearest")
+            sm[0], sm[-1] = xz[0], xz[-1]
+            xz = sm
+        y = hfun(xz)
+        dh = float(abs(y[-1] - y[0]))
+        L = float(np.linalg.norm(np.diff(xz, axis=0), axis=1).sum())
+        types = {by[n]["type"] for n in (a, b) if n in by}
+        typ = "ramp" if dh >= 8 and dh / max(L, 1) > 0.03 else ("spur" if types & {"parking", "fuel"} and L < 120
+                                                                 else "haul")
+        name = lambda n: by[n]["name"] if n in by else f"Junction {n.split('_')[1]}"
+        rid = f"{typ}_{k + 1}"
+        out.append(road_entry(rid, f"{name(a)} - {name(b)}", typ, a, b, xz, hfun,
+                              ramp_width if typ == "ramp" else road_width))
+    for st in sites:
+        st["pos3"] = pos3(st["pos"], hfun)
+    jl = [{"id": j, "name": f"Junction {j.split('_')[1]}", "pos": pos3(node_pos[j], hfun)} for j in junctions]
+    # road surface mask (centreline buffered to half width), passable cells only
+    from scipy import ndimage
+    d = ndimage.distance_transform_edt(~centre.reshape(h, w)) * cell
+    mask = (d <= road_width / 2) & (cost > 0)
+    return jl, out, mask
+
+
+def road_grade_stats(roads, window=20.0):
+    """Max grade (%) over ~window m along each road, from its 3D points."""
+    res = {}
+    for r in roads:
+        p = np.asarray(r["points"], float)
+        s = np.concatenate([[0], np.cumsum(np.hypot(np.diff(p[:, 0]), np.diff(p[:, 2])))])
+        k = max(1, int(round(window / max(s[-1] / max(len(p) - 1, 1), 1e-6))))
+        g = [abs(p[i + k, 1] - p[i, 1]) / max(s[i + k] - s[i], 1e-6) for i in range(len(p) - k)] or [r["grade_pct"] / 100]
+        res[r["id"]] = round(100 * float(max(g)), 1)
+    return res
