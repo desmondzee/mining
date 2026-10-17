@@ -1,0 +1,45 @@
+name: mining
+
+services:
+  isaac-sim:
+    profiles: ["isaac"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        ISAAC_TAG: ${ISAAC_TAG:-6.2.0}
+    image: mining-isaac-sim:${ISAAC_TAG:-6.2.0}
+    container_name: mining-isaac-sim
+    devices:
+      - nvidia.com/gpu=all
+    network_mode: host
+    environment:
+      ACCEPT_EULA: "Y"
+      PRIVACY_CONSENT: "Y"
+      NVIDIA_DRIVER_CAPABILITIES: all
+    volumes:
+      - ../..:/mining:ro
+      - ../../data:/data:ro
+      - ../../downloads/isaac/cache:/cache:rw
+      - mining-isaac-cache-main:/isaac-sim/.cache:rw
+      - mining-isaac-cache-compute:/isaac-sim/.nv/ComputeCache:rw
+      - mining-isaac-cache-kit:/isaac-sim/kit/cache:rw
+      - mining-isaac-ovlogs:/isaac-sim/.nvidia-omniverse/logs:rw
+      - mining-isaac-config:/isaac-sim/.nvidia-omniverse/config:rw
+      - mining-isaac-data:/isaac-sim/.local/share/ov/data:rw
+    command: ["/mining/isaac/sim/main.py", "--brain", "127.0.0.1:9000", "--world", "/data/worlds/quarry", "--cache", "/cache"]
+    restart: unless-stopped
+
+volumes:
+  mining-isaac-cache-main:
+    name: mining-isaac-cache-main
+  mining-isaac-cache-compute:
+    name: mining-isaac-cache-compute
+  mining-isaac-cache-kit:
+    name: mining-isaac-cache-kit
+  mining-isaac-ovlogs:
+    name: mining-isaac-ovlogs
+  mining-isaac-config:
+    name: mining-isaac-config
+  mining-isaac-data:
+    name: mining-isaac-data
