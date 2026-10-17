@@ -75,7 +75,9 @@ aside {
   cursor: crosshair;
 }
 
-#trucks { list-style: none; padding: 0; margin: 12px 0 0; display: grid; gap: 6px; }
+#trucks { list-style: none; padding: 0; margin: 12px 0 16px; display: grid; gap: 6px; }
+
+#lidar { display: block; width: 100%; aspect-ratio: 4 / 3; border-radius: 6px; }
 
 #trucks li {
   display: grid;

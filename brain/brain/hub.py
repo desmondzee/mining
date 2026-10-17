@@ -1,16 +1,16 @@
 import asyncio
 
 
-class FrameHub:
+class LatestHub:
     def __init__(self) -> None:
         self._frames: dict[str, tuple[int, bytes]] = {}
         self._seq = 0
         self._cond = asyncio.Condition()
 
-    async def publish(self, camera: str, jpeg: bytes) -> None:
+    async def publish(self, key: str, data: bytes) -> None:
         async with self._cond:
             self._seq += 1
-            self._frames[camera] = (self._seq, jpeg)
+            self._frames[key] = (self._seq, data)
             self._cond.notify_all()
 
     def _newer(self, seen: dict[str, int]) -> bool:

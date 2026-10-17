@@ -1,16 +1,17 @@
 import asyncio
+import json
 import logging
 import os
 import struct
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .bridge import SimBridge
-from .hub import FrameHub
+from .hub import LatestHub
 from .world import World
 
 log = logging.getLogger(__name__)
@@ -26,8 +27,9 @@ class Goal(BaseModel):
 
 def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR) -> FastAPI:
     world = World()
-    hub = FrameHub()
-    bridge = SimBridge(world, hub)
+    video = LatestHub()
+    lidar = LatestHub()
+    bridge = SimBridge(world, video, lidar)
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -41,7 +43,8 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
 
     app = FastAPI(lifespan=lifespan)
     app.state.world = world
-    app.state.hub = hub
+    app.state.video = video
+    app.state.lidar = lidar
     app.state.bridge = bridge
 
     @app.get("/api/state")
@@ -64,15 +67,35 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     def delete_goal(truck_id: str):
         return set_goal(truck_id, None)
 
+    @app.get("/api/trucks/{truck_id}/lidar")
+    def get_lidar(truck_id: str):
+        scan = world.lidar.get(truck_id)
+        if scan is None:
+            raise HTTPException(404, f"no lidar scan for {truck_id}")
+        meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose}
+        return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
+
     @app.websocket("/ws/video")
     async def ws_video(ws: WebSocket):
         await ws.accept()
         seen: dict[str, int] = {}
         try:
             while True:
-                for camera, jpeg in await hub.wait_newer(seen):
+                for camera, jpeg in await video.wait_newer(seen):
                     name = camera.encode()
                     await ws.send_bytes(struct.pack("B", len(name)) + name + jpeg)
+        except (WebSocketDisconnect, RuntimeError):
+            pass
+
+    @app.websocket("/ws/lidar")
+    async def ws_lidar(ws: WebSocket, truck: str):
+        await ws.accept()
+        seen: dict[str, int] = {}
+        try:
+            while True:
+                for truck_id, msg in await lidar.wait_newer(seen):
+                    if truck_id == truck:
+                        await ws.send_bytes(msg)
         except (WebSocketDisconnect, RuntimeError):
             pass
 

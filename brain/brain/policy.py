@@ -31,7 +31,12 @@ def sector_ranges(depth: np.ndarray) -> tuple[float, float, float]:
     return tuple(float(t.min()) if t.size else math.inf for t in thirds)
 
 
-def act(truck: Truck, rgb: np.ndarray | None, depth: np.ndarray | None) -> Action:
+def act(
+    truck: Truck,
+    rgb: np.ndarray | None,
+    depth: np.ndarray | None,
+    points: np.ndarray | None = None,
+) -> Action:
     if truck.goal is None:
         return Action(0.0, 0.0, "idle")
 

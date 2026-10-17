@@ -12,7 +12,7 @@ def spec_rows():
 
 
 def code_value(path: str, name: str) -> float:
-    m = re.search(rf"\b{name}\s*=\s*([\d.\s*]+?)f?\s*[;,\n]", (ROOT / path).read_text())
+    m = re.search(rf"\b{name}\s*=\s*(-?[\d.\s*]+?)f?\s*[;,\n]", (ROOT / path).read_text())
     assert m, f"{name} not found in {path}"
     return eval(m.group(1), {"__builtins__": {}})
 

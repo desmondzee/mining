@@ -6,7 +6,7 @@ import time
 import numpy as np
 from PIL import Image, ImageDraw
 
-from .protocol import encode, encode_frame, read_message
+from .protocol import encode, encode_frame, encode_lidar, read_message
 
 FPS = 15
 CAM_W, CAM_H = 640, 360
@@ -17,6 +17,16 @@ MAX_SPEED = 8.0
 MAX_STEER_DEG = 30.0
 WHEELBASE = 5.0
 TRUCK_RADIUS = 2.5
+TRUCK_HEIGHT = 4.0
+WALL_HEIGHT = 15.0
+LIDAR_HZ = 10
+LIDAR_RANGE = 100.0
+LIDAR_HFOV = 120.0
+LIDAR_VMIN = -20.0
+LIDAR_VMAX = 10.0
+LIDAR_COLS = 240
+LIDAR_CHANNELS = 30
+LIDAR_HEIGHT = 3.0
 TRUCK_COLOURS = [(240, 180, 40), (60, 160, 240), (230, 80, 80), (120, 220, 120)]
 
 
@@ -42,8 +52,9 @@ class FakeQuarry:
         self.half = half_size
         self.bounds = [-half_size, -half_size, half_size, half_size]
         n_rocks = 40
+        radius = rng.uniform(1.5, 5.0, n_rocks)
         self.rocks = np.column_stack(
-            [rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2)), rng.uniform(1.5, 5.0, n_rocks)]
+            [rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2)), radius, radius * 1.5]
         )
         self.rocks = self.rocks[np.hypot(self.rocks[:, 0], self.rocks[:, 1] + 70) > 20]
         self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
@@ -54,26 +65,39 @@ class FakeQuarry:
             t.x = float(np.clip(t.x, -self.half + 1, self.half - 1))
             t.z = float(np.clip(t.z, -self.half + 1, self.half - 1))
 
-    def _obstacles_for(self, me: Truck) -> np.ndarray:
-        others = [[t.x, t.z, TRUCK_RADIUS] for t in self.trucks if t is not me]
-        return np.vstack([self.rocks, np.array(others).reshape(-1, 3)])
-
-    def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
-        offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
-        angles = math.radians(t.yaw) + offsets
+    def _ray_hits(self, t: Truck, angles: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         dx, dz = np.sin(angles), np.cos(angles)
-
-        obs = self._obstacles_for(t)
+        others = [[o.x, o.z, TRUCK_RADIUS, TRUCK_HEIGHT] for o in self.trucks if o is not t]
+        obs = np.vstack([self.rocks, np.array(others).reshape(-1, 4)])
         ox, oz, r = obs[:, 0] - t.x, obs[:, 1] - t.z, obs[:, 2]
         proj = dx[:, None] * ox + dz[:, None] * oz
         perp2 = (ox**2 + oz**2) - proj**2
         hit = (proj > 0) & (perp2 < r**2)
-        dist = np.where(hit, proj - np.sqrt(np.maximum(r**2 - perp2, 0)), np.inf).min(axis=1)
-
+        dist = np.where(hit, proj - np.sqrt(np.maximum(r**2 - perp2, 0)), np.inf)
         with np.errstate(divide="ignore"):
             wx = np.where(dx > 0, (self.half - t.x) / dx, np.where(dx < 0, (-self.half - t.x) / dx, np.inf))
             wz = np.where(dz > 0, (self.half - t.z) / dz, np.where(dz < 0, (-self.half - t.z) / dz, np.inf))
-        wall = np.minimum(wx, wz)
+        return dist, obs[:, 3], np.minimum(wx, wz)
+
+    def scan_lidar(self, t: Truck) -> np.ndarray:
+        az = np.radians(-LIDAR_HFOV / 2 + (np.arange(LIDAR_COLS) + 0.5) * LIDAR_HFOV / LIDAR_COLS)
+        el = np.radians(LIDAR_VMIN + (np.arange(LIDAR_CHANNELS) + 0.5) * (LIDAR_VMAX - LIDAR_VMIN) / LIDAR_CHANNELS)
+        dist, heights, wall = self._ray_hits(t, math.radians(t.yaw) + az)
+        horizontal = np.concatenate([dist, wall[:, None]], axis=1)[None]
+        tops = np.append(heights, WALL_HEIGHT)
+        cos_e, sin_e = np.cos(el)[:, None], np.sin(el)[:, None]
+        rng = horizontal / cos_e[..., None]
+        y = LIDAR_HEIGHT + rng * sin_e[..., None]
+        rng = np.where((y >= 0) & (y <= tops), rng, np.inf).min(axis=2)
+        with np.errstate(divide="ignore"):
+            rng = np.minimum(rng, np.where(sin_e < 0, -LIDAR_HEIGHT / sin_e, np.inf))
+        pts = np.stack([rng * cos_e * np.sin(az), rng * sin_e, rng * cos_e * np.cos(az)], axis=-1)
+        return pts[rng <= LIDAR_RANGE].astype(np.float32)
+
+    def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
+        offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
+        dist, _, wall = self._ray_hits(t, math.radians(t.yaw) + offsets)
+        dist = dist.min(axis=1)
         is_wall = wall < dist
         dist = np.minimum(dist, wall)
         dist = np.minimum(dist * np.cos(offsets), MAX_RANGE)
@@ -103,7 +127,7 @@ class FakeQuarry:
 
         img = Image.new("RGB", (OVERVIEW_PX, OVERVIEW_PX), (150, 120, 85))
         d = ImageDraw.Draw(img)
-        for x, z, r in self.rocks:
+        for x, z, r, _ in self.rocks:
             cx, cy = px(x, z)
             d.ellipse([cx - r * s, cy - r * s, cx + r * s, cy + r * s], fill=(110, 110, 115))
         for i, t in enumerate(self.trucks):
@@ -154,8 +178,14 @@ async def run(host: str, port: int, n_trucks: int) -> None:
         receiver = asyncio.create_task(receive_actions())
         try:
             next_tick = time.monotonic()
+            sim_time = next_lidar = 0.0
             while not receiver.done():
                 quarry.step(1 / FPS)
+                sim_time += 1 / FPS
+                if sim_time >= next_lidar:
+                    next_lidar += 1 / LIDAR_HZ
+                    for t in quarry.trucks:
+                        writer.write(encode_lidar(t.id, quarry.scan_lidar(t), {"x": t.x, "z": t.z, "yaw": t.yaw}))
                 writer.write(encode_frame("overview", quarry.render_overview()))
                 for t in quarry.trucks:
                     rgb, depth = quarry.render_truck(t)

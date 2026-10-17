@@ -19,6 +19,15 @@ public static class BrainProtocol
         public float speed;
     }
 
+    [Serializable]
+    public class LidarHeader
+    {
+        public string type = "lidar";
+        public string truck;
+        public int points;
+        public Pose pose;
+    }
+
     public static byte[] Encode(string headerJson, byte[] payload)
     {
         var header = Encoding.UTF8.GetBytes(headerJson);

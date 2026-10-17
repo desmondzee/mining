@@ -54,3 +54,14 @@ def test_rgba_and_empty_depth_as_sent_by_unity():
     rgb, depth = decode_frame(header, rgba.tobytes())
     np.testing.assert_array_equal(rgb, rgba[..., :3])
     assert depth is None
+
+
+def test_lidar_roundtrip():
+    from brain.protocol import decode_lidar, encode_lidar
+
+    pts = np.arange(12, dtype=np.float32).reshape(4, 3)
+    header, payload = roundtrip(encode_lidar("truck-0", pts, {"x": 1, "z": 2, "yaw": 3}))
+    assert header["type"] == "lidar" and header["points"] == 4
+    np.testing.assert_array_equal(decode_lidar(header, payload), pts)
+    with pytest.raises(ProtocolError):
+        decode_lidar(header, payload[:-4])

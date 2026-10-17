@@ -1,5 +1,7 @@
 from dataclasses import asdict, dataclass, field
 
+import numpy as np
+
 
 @dataclass
 class Truck:
@@ -18,10 +20,18 @@ class Truck:
 
 
 @dataclass
+class Scan:
+    seq: int
+    pose: dict
+    points: np.ndarray
+
+
+@dataclass
 class World:
     trucks: dict[str, Truck] = field(default_factory=dict)
     bounds: list[float] = field(default_factory=lambda: [-100.0, -100.0, 100.0, 100.0])
     cameras: list[str] = field(default_factory=list)
+    lidar: dict[str, Scan] = field(default_factory=dict)
     sim_connected: bool = False
 
     def truck(self, truck_id: str) -> Truck:

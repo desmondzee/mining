@@ -1,14 +1,18 @@
+import { createLidarView } from "./lidar.js";
+
 const COLOURS = ["#f0b428", "#3ca0f0", "#e65050", "#78dc78"];
 const feeds = document.getElementById("feeds");
 const map = document.getElementById("map");
 const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
 const simStatus = document.getElementById("sim-status");
+const lidarView = createLidarView(document.getElementById("lidar"));
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [] };
 let selected = null;
 const tiles = new Map();
 const decoder = new TextDecoder();
+let stopLidar = null;
 
 function wsUrl(path) {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${path}`;
@@ -16,14 +20,21 @@ function wsUrl(path) {
 
 function connect(path, onMessage, binary = false) {
   let delay = 500;
+  let ws;
+  let stopped = false;
   const open = () => {
-    const ws = new WebSocket(wsUrl(path));
+    ws = new WebSocket(wsUrl(path));
     if (binary) ws.binaryType = "arraybuffer";
     ws.onopen = () => { delay = 500; };
     ws.onmessage = onMessage;
-    ws.onclose = () => { setTimeout(open, delay); delay = Math.min(delay * 2, 5000); };
+    ws.onclose = () => {
+      if (stopped) return;
+      setTimeout(open, delay);
+      delay = Math.min(delay * 2, 5000);
+    };
   };
   open();
+  return () => { stopped = true; ws.close(); };
 }
 
 function truckColour(id) {
@@ -113,6 +124,21 @@ function drawMap() {
   }
 }
 
+function onLidar(ev) {
+  const n = new Uint8Array(ev.data, 0, 1)[0];
+  lidarView.update(new Float32Array(ev.data.slice(1 + n + 12)));
+}
+
+function select(id) {
+  if (id === selected) return;
+  selected = id;
+  if (stopLidar) stopLidar();
+  lidarView.clear();
+  stopLidar = connect(`/ws/lidar?truck=${encodeURIComponent(id)}`, onLidar, true);
+  renderTruckList();
+  drawMap();
+}
+
 const truckItems = new Map();
 
 function renderTruckList() {
@@ -122,7 +148,7 @@ function renderTruckList() {
       li = document.createElement("li");
       li.innerHTML = `<span class="swatch"></span><span><b></b> <span class="meta"></span></span><button>stop</button>`;
       li.querySelector("b").textContent = t.id;
-      li.onclick = () => { selected = t.id; renderTruckList(); drawMap(); };
+      li.onclick = () => select(t.id);
       li.querySelector("button").onclick = (e) => {
         e.stopPropagation();
         fetch(`/api/trucks/${encodeURIComponent(t.id)}/goal`, { method: "DELETE" });
@@ -138,7 +164,7 @@ function renderTruckList() {
 
 function onState(ev) {
   state = JSON.parse(ev.data);
-  if (!selected && state.trucks.length) selected = state.trucks[0].id;
+  if (!selected && state.trucks.length) select(state.trucks[0].id);
   simStatus.textContent = state.sim_connected ? "sim online" : "sim offline";
   simStatus.className = `pill ${state.sim_connected ? "on" : "off"}`;
   renderTruckList();

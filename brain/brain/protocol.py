@@ -43,6 +43,18 @@ def encode_frame(
     return encode(header, payload)
 
 
+def encode_lidar(truck: str, points: np.ndarray, pose: dict) -> bytes:
+    header = {"type": "lidar", "truck": truck, "points": len(points), "pose": pose}
+    return encode(header, points.astype("<f4", copy=False).tobytes())
+
+
+def decode_lidar(header: dict, payload: bytes) -> np.ndarray:
+    n = header["points"]
+    if len(payload) != n * 12:
+        raise ProtocolError(f"lidar payload is {len(payload)} bytes, expected {n * 12}")
+    return np.frombuffer(payload, "<f4").reshape(n, 3)
+
+
 def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray | None]:
     rgb_meta = header["rgb"]
     w, h = rgb_meta["w"], rgb_meta["h"]

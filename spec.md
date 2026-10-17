@@ -53,6 +53,35 @@
 | Depth format | float32 metres, perpendicular distance, row 0 = top, miss = range | |
 | Depth method | `RaycastCommand` grid against colliders | |
 
+## Lidar
+
+| Item | Value | Source |
+|---|---|---|
+| Method | `RaycastCommand` batch against colliders | |
+| Range (m) | 100 | `unity/Scripts/LidarSensor.cs:range` |
+| Horizontal FOV (deg) | 120 | `unity/Scripts/LidarSensor.cs:horizontalFov` |
+| Vertical min (deg) | -20 | `unity/Scripts/LidarSensor.cs:verticalMin` |
+| Vertical max (deg) | 10 | `unity/Scripts/LidarSensor.cs:verticalMax` |
+| Columns | 240 | `unity/Scripts/LidarSensor.cs:columns` |
+| Channels | 30 | `unity/Scripts/LidarSensor.cs:channels` |
+| Rate (Hz) | 10 | `unity/Scripts/LidarSensor.cs:rate` |
+| Resolution | 0.5° H × 1° V | |
+| Beam angles | cell centres: az = -h_fov/2 + (j + 0.5)·h_fov/columns, el = v_min + (i + 0.5)·(v_max - v_min)/channels | |
+| Max points per scan | 7200 | |
+| Point format | float32 x, y, z, little-endian, 12 bytes per point | |
+| Frame | sensor-local, Unity axes: x right, y up, z forward, metres | |
+| Mount | `LidarSensor` transform, unit scale; mask excludes own truck | |
+| Misses | dropped | |
+| Noise | none | |
+| Fake sim mount height (m) | 3 | `brain/brain/fakesim.py:LIDAR_HEIGHT` |
+| Fake sim range (m) | 100 | `brain/brain/fakesim.py:LIDAR_RANGE` |
+| Fake sim horizontal FOV (deg) | 120 | `brain/brain/fakesim.py:LIDAR_HFOV` |
+| Fake sim vertical min (deg) | -20 | `brain/brain/fakesim.py:LIDAR_VMIN` |
+| Fake sim vertical max (deg) | 10 | `brain/brain/fakesim.py:LIDAR_VMAX` |
+| Fake sim columns | 240 | `brain/brain/fakesim.py:LIDAR_COLS` |
+| Fake sim channels | 30 | `brain/brain/fakesim.py:LIDAR_CHANNELS` |
+| Fake sim rate (Hz) | 10 | `brain/brain/fakesim.py:LIDAR_HZ` |
+
 ## Fake sim
 
 | Item | Value | Source |
@@ -81,7 +110,7 @@
 
 | Item | Value | Source |
 |---|---|---|
-| Inputs | pose, goal, RGB, depth | |
+| Inputs | pose, goal, RGB, depth, latest lidar points | |
 | Outputs | throttle 0..1, steer -1..1 (positive = right) | |
 | Arrive radius (m) | 4 | `brain/brain/policy.py:ARRIVE_RADIUS` |
 | Stop distance (m) | 6 | `brain/brain/policy.py:STOP_DIST` |
@@ -102,6 +131,7 @@
 |---|---|---|---|
 | `hello` | sim → brain | `trucks`, `cameras`, `bounds` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | RGB(A) bytes, then depth float32 |
+| `lidar` | sim → brain | `truck`, `points`, `pose{x,z,yaw}` | `points` × 3 float32 |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
 
 ## Web
@@ -113,6 +143,9 @@
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |
+| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 f32 points` | |
+| Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
+| Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Read state | `GET /api/state` | |
 | Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` | |
