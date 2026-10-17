@@ -92,6 +92,18 @@ td code, p code, li code { font-family: var(--mono); font-size: 13px; }
 .repo a:hover { text-decoration: underline; }
 .repo .tag { font-family: var(--mono); font-size: 11px; color: var(--accent); text-transform: uppercase; letter-spacing: 0.06em; }
 .repo p { font-size: 14px; color: var(--muted); }
+.flow { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1.2fr) auto minmax(0, 1fr); grid-template-rows: repeat(3, auto); gap: 10px 12px; align-items: center; }
+.flow .node { display: grid; gap: 2px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); min-width: 0; }
+.flow .node:nth-child(-n+3) { grid-column: 1; }
+.flow .arrow { grid-row: 1 / 4; font-family: var(--mono); font-size: 22px; color: var(--accent); }
+.flow .key { grid-column: 3; grid-row: 1 / 4; border-color: var(--accent-fill); border-width: 2px; }
+.flow .node:last-child { grid-column: 5; grid-row: 1 / 4; }
+.flow .node span:last-child { font-size: 13px; color: var(--muted); }
+@media (max-width: 700px) {
+  .flow { grid-template-columns: 1fr; }
+  .flow .node, .flow .key, .flow .node:last-child, .flow .node:nth-child(-n+3) { grid-column: 1; grid-row: auto; }
+  .flow .arrow { grid-row: auto; transform: rotate(90deg); justify-self: center; }
+}
 ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72ch; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
@@ -109,6 +121,20 @@ ul.open { margin: 0; padding-left: 20px; display: grid; gap: 6px; max-width: 72c
       <span class="chip">Train: Cambridge 2×3090</span>
     </div>
   </header>
+
+  <section aria-labelledby="flow">
+    <h2 id="flow">How the parts connect</h2>
+    <div class="flow">
+      <div class="node"><span class="eyebrow">Unity</span><b>Top-down radar</b><span>64×64 px, 2 m/px, rotates with the truck</span></div>
+      <div class="node"><span class="eyebrow">Unity</span><b>Truck state</b><span>x, y, heading, v, loaded</span></div>
+      <div class="node"><span class="eyebrow">CV teammate</span><b>Boxes + distance</b><span>from the truck camera</span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node key"><span class="eyebrow">Planner (us)</span><b>BEV grid → A* or CNN</b><span>radar colours become channels; CV obstacles are added as disks</span></div>
+      <div class="arrow" aria-hidden="true">→</div>
+      <div class="node"><span class="eyebrow">Back to Unity</span><b>16 waypoints</b><span>one every 0.5 s; Unity drives along them</span></div>
+    </div>
+    <p class="hint">The LLM dispatcher sits above the planner. It picks the goal (which pit or dump) for each truck. The risk monitor reads the front radar distance and the truck speed, and it warns before the point of no return.</p>
+  </section>
 
   <section aria-labelledby="live">
     <h2 id="live">Live A* on a procedural mine</h2>
