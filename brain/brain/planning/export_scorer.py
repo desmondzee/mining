@@ -1,6 +1,6 @@
 """Convert a sim2d PathScorer checkpoint (.pt) to the numpy .npz the brain loads.
 
-Usage (needs torch): cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo.pt [../models/ppo.npz]
+Usage (needs torch): cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo_v3.pt [../models/ppo_v3.npz]
 """
 
 import argparse
