@@ -8,6 +8,7 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, SHOULDER_OUT, make_walkers
 from .protocol import encode, encode_frame, encode_lidar, read_message
 
 FPS = 15
@@ -31,19 +32,13 @@ LIDAR_COLS = 240
 LIDAR_CHANNELS = 30
 LIDAR_HEIGHT = 3.0
 ACTORS_HZ = 10
-PEDESTRIANS_PER_PATH = 3
-MIN_WALK_SPEED = 1.2
-MAX_WALK_SPEED = 1.6
-PEDESTRIAN_RADIUS = 0.3
-PEDESTRIAN_HEIGHT = 1.8
 PEDESTRIAN_PATHS = [
     [(-30, -40), (30, -40)],
     [(-10, -10), (10, -10), (10, 10), (-10, 10)],
     [(-50, 20), (-10, 60)],
     [(40, -20), (40, 40)],
 ]
-CROSSING_ROADS = 4
-CROSSING_EXTRA = 12.0
+FLAT_ROAD_WIDTH = 10.0
 EQUIPMENT_RADIUS = 5.0
 EQUIPMENT_HEIGHT = 5.0
 ROAD_COLOUR = (175, 160, 135)
@@ -68,44 +63,6 @@ class Truck:
         self.yaw = (self.yaw + math.degrees(yaw_rate * dt)) % 360.0
         self.x += math.sin(math.radians(self.yaw)) * self.speed * dt
         self.z += math.cos(math.radians(self.yaw)) * self.speed * dt
-
-
-class Pedestrian:
-    def __init__(self, pedestrian_id: str, path: list[tuple[float, float]], start: float = 0.0, speed: float = 1.4) -> None:
-        self.id, self.path, self.speed = pedestrian_id, path, speed
-        self.loop = len(path) > 2
-        self.direction = 1
-        segments = [(path[i], path[(i + 1) % len(path)]) for i in range(len(path) if self.loop else len(path) - 1)]
-        remaining = start * sum(math.dist(a, b) for a, b in segments)
-        for i, (a, b) in enumerate(segments):
-            length = math.dist(a, b)
-            if remaining <= length or i == len(segments) - 1:
-                f = min(remaining / length, 1.0) if length else 0.0
-                self.x, self.z = a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
-                self.yaw = math.degrees(math.atan2(b[0] - a[0], b[1] - a[1])) % 360.0
-                self.target = (i + 1) % len(path)
-                break
-            remaining -= length
-
-    def step(self, dt: float) -> None:
-        gx, gz = self.path[self.target]
-        dx, dz = gx - self.x, gz - self.z
-        dist = math.hypot(dx, dz)
-        if dist < 0.2:
-            self._advance()
-            return
-        self.yaw = math.degrees(math.atan2(dx, dz)) % 360.0
-        move = min(self.speed * dt, dist)
-        self.x += dx / dist * move
-        self.z += dz / dist * move
-
-    def _advance(self) -> None:
-        if self.loop:
-            self.target = (self.target + 1) % len(self.path)
-            return
-        if not 0 <= self.target + self.direction < len(self.path):
-            self.direction = -self.direction
-        self.target += self.direction
 
 
 def load_world(world_dir: str | Path) -> dict:
@@ -148,30 +105,6 @@ def ground_at(terrain: dict, x, z) -> np.ndarray:
     return h[r, c]
 
 
-def polyline_midpoint(pts: list[tuple[float, float]]) -> tuple[int, float, float]:
-    lengths = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
-    remaining = sum(lengths) / 2
-    for i, length in enumerate(lengths):
-        if remaining <= length or i == len(lengths) - 1:
-            f = remaining / length if length else 0.0
-            (ax, az), (bx, bz) = pts[i], pts[i + 1]
-            return i, ax + (bx - ax) * f, az + (bz - az) * f
-        remaining -= length
-
-
-def crossing_paths(roads: list[dict]) -> list[list[tuple[float, float]]]:
-    paths = []
-    for road in sorted(roads, key=lambda r: r["id"])[:CROSSING_ROADS]:
-        pts = [(p["x"], p["z"]) for p in road["points"]]
-        i, mx, mz = polyline_midpoint(pts)
-        (ax, az), (bx, bz) = pts[i], pts[i + 1]
-        seg = math.hypot(bx - ax, bz - az)
-        rx, rz = (bz - az) / seg, -(bx - ax) / seg
-        half = (road["width_m"] + CROSSING_EXTRA) / 2
-        paths.append([(mx - rx * half, mz - rz * half), (mx + rx * half, mz + rz * half)])
-    return paths
-
-
 def camera_pose(t: Truck, ground: float = 0.0) -> dict:
     return {"x": t.x, "y": ground + CAM_HEIGHT, "z": t.z, "yaw": t.yaw, "pitch": 0.0, "roll": 0.0, "hfov": FOV_DEG}
 
@@ -194,7 +127,7 @@ class FakeQuarry:
         if world:
             self.half = max(abs(v) for v in world["bounds"])
             self.bounds = world["bounds"]
-            self.paths = crossing_paths(world["roads"])
+            network = ([{**r, "points": [(p["x"], p["z"]) for p in r["points"]]} for r in world["roads"]], {s["id"]: s["type"] for s in world["sites"]})
             self.rocks = np.array(
                 [[x, z, EQUIPMENT_RADIUS, EQUIPMENT_HEIGHT, ROCK] for x, z in world["equipment"]], float
             ).reshape(-1, 5)
@@ -202,32 +135,25 @@ class FakeQuarry:
         else:
             self.half = half_size
             self.bounds = [-half_size, -half_size, half_size, half_size]
-            self.paths = PEDESTRIAN_PATHS
+            network = ([{"id": f"flat_{i}", "from": f"a{i}", "to": f"b{i}", "width_m": FLAT_ROAD_WIDTH, "points": p} for i, p in enumerate(PEDESTRIAN_PATHS)], {})
             n_rocks = 40
             radius = rng.uniform(1.5, 5.0, n_rocks)
             xz = rng.uniform(-half_size * 0.9, half_size * 0.9, (n_rocks, 2))
             rocks = np.column_stack([xz, radius, radius * 1.5, np.full(n_rocks, ROCK)])
-            keep = [math.hypot(x, z + 70) > 20 and path_distance(x, z) > r + 4 for x, z, r in rocks[:, :3]]
+            keep = [math.hypot(x, z + 70) > 20 and path_distance(x, z) > r + FLAT_ROAD_WIDTH / 2 + SHOULDER_OUT for x, z, r in rocks[:, :3]]
             self.rocks = rocks[keep]
             self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
-        self.pedestrians = [
-            Pedestrian(
-                f"pedestrian-{i * PEDESTRIANS_PER_PATH + k:02d}",
-                path,
-                k / PEDESTRIANS_PER_PATH,
-                float(rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED)),
-            )
-            for i, path in enumerate(self.paths)
-            for k in range(PEDESTRIANS_PER_PATH)
-        ]
+        self.areas, self.pedestrians = make_walkers(*network, prefix="pedestrian-")
+        self.paths = [a.polygon() for a in self.areas]
 
     def step(self, dt: float) -> None:
         for t in self.trucks:
             t.step(dt)
             t.x = float(np.clip(t.x, -self.half + 1, self.half - 1))
             t.z = float(np.clip(t.z, -self.half + 1, self.half - 1))
+        near = [(t.x, t.z, t.yaw, t.speed) for t in self.trucks]
         for p in self.pedestrians:
-            p.step(dt)
+            p.step(dt, trucks=near)
 
     def _obstacles(self, me: Truck) -> np.ndarray:
         trucks = [[o.x, o.z, TRUCK_RADIUS, TRUCK_HEIGHT, TRUCK] for o in self.trucks if o is not me]

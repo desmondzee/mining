@@ -235,11 +235,11 @@
 | Camera height (m) | 3.6 | `brain/brain/fakesim.py:CAM_HEIGHT` |
 | Rendering | per-column raycast, far-to-near layers, ground plane depth | |
 | Obstacles | rocks (cylinders, height 1.5 r), trucks, pedestrians, 15 m walls | |
-| Pedestrians per path | 3 | `brain/brain/fakesim.py:PEDESTRIANS_PER_PATH` |
-| Pedestrian min speed (m/s) | 1.2 | `brain/brain/fakesim.py:MIN_WALK_SPEED` |
-| Pedestrian max speed (m/s) | 1.6 | `brain/brain/fakesim.py:MAX_WALK_SPEED` |
-| Pedestrian radius (m) | 0.3 | `brain/brain/fakesim.py:PEDESTRIAN_RADIUS` |
-| Pedestrian height (m) | 1.8 | `brain/brain/fakesim.py:PEDESTRIAN_HEIGHT` |
+| Pedestrians | wander rules of "Pedestrian wander", `brain/brain/pedestrians.py` (byte-identical copy of `isaac/sim/pedestrians.py`), IDs `pedestrian-NN` | |
+| Pedestrian radius (m) | 0.3 | `brain/brain/pedestrians.py:PEDESTRIAN_RADIUS` |
+| Pedestrian height (m) | 1.8 | `brain/brain/pedestrians.py:PEDESTRIAN_HEIGHT` |
+| Flat world roads | the 4 flat pedestrian polylines as roads, one area each | |
+| Flat world road width (m) | 10 | `brain/brain/fakesim.py:FLAT_ROAD_WIDTH` |
 | Pedestrian colour | RGB (255, 120, 20) | |
 | Actors rate (Hz) | 10 | `brain/brain/fakesim.py:ACTORS_HZ` |
 | Modes | flat test world (default), world mode `--world <dir>` | |
@@ -264,19 +264,46 @@
 | Docker | `docker compose --profile fake up` runs `/app/data/worlds/quarry`; `FAKESIM_WORLD=` for the flat world | |
 | Data | `./data` mounted read-only at `/app/data` (brain and fakesim) | |
 
-| Pedestrian crossings | Value | Source |
+## Pedestrian wander
+
+Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to `brain/brain/pedestrians.py`; a test keeps them identical).
+
+| Item | Value | Source |
 |---|---|---|
-| Roads used | roads sorted by `id`, first N | |
-| Crossing count | 4 | `brain/brain/fakesim.py:CROSSING_ROADS` |
-| Position | road polyline arc-length midpoint | |
-| Direction | perpendicular to the segment containing the midpoint | |
-| Waypoint order | left → right of the road's from → to direction | |
-| Extra length beyond road width (m) | 12 | `brain/brain/fakesim.py:CROSSING_EXTRA` |
-| Length | `width_m` + extra, centred on the road | |
-| Walkers per crossing | 3 | `brain/brain/fakesim.py:PEDESTRIANS_PER_PATH` |
-| Start fractions | 0, 1/3, 2/3 | |
-| Mode | ping-pong | |
-| Sent as | hello `paths` | |
+| People | 12 | `isaac/sim/pedestrians.py:PEOPLE` |
+| Wander areas | 6 | `isaac/sim/pedestrians.py:AREA_COUNT` |
+| Area roads | shortest road routes from `parking` to every `ore` site (Dijkstra on road length); roads ranked by routes using them, then `id`; one area per road per round while the road has room | |
+| Area spacing along a road (m) | 40 | `isaac/sim/pedestrians.py:AREA_GAP` |
+| Road end clearance (m), at most a quarter of the road | 20 | `isaac/sim/pedestrians.py:END_CLEAR` |
+| Area half-length along the road (m) | 20 | `isaac/sim/pedestrians.py:WINDOW` |
+| Area shift when the road bends too much (m) | 10 | `isaac/sim/pedestrians.py:AREA_SHIFT` |
+| Quarry areas | spur_7 × 2, haul_6, haul_2, haul_4, ramp_3 (parking → ore_1/ore_2/ore_3 routes) | |
+| People per area | contiguous split, 2 each for 6 areas | |
+| Pace | seeded uniform (`random.Random(1)`) | |
+| Min pace (m/s) | 1.2 | `isaac/sim/pedestrians.py:MIN_PACE` |
+| Max pace (m/s) | 1.6 | `isaac/sim/pedestrians.py:MAX_PACE` |
+| Crossing / exiting pace factor | 1.25 | `isaac/sim/pedestrians.py:HURRY` |
+| Acceleration (m/s²), also braking to arrive | 1.5 | `isaac/sim/pedestrians.py:ACCEL` |
+| Turn rate (deg/s) | 240 | `isaac/sim/pedestrians.py:TURN_RATE` |
+| Shoulder band start beyond the road edge (m) | 1.5 | `isaac/sim/pedestrians.py:SHOULDER_IN` |
+| Shoulder band end beyond the road edge (m) | 6 | `isaac/sim/pedestrians.py:SHOULDER_OUT` |
+| Next goal | stroll on own shoulder, cross to the far shoulder, or stand on the road edge | |
+| Cross probability | 0.3 | `isaac/sim/pedestrians.py:P_CROSS` |
+| Cross shift along the road (m) | 4 | `isaac/sim/pedestrians.py:CROSS_SHIFT` |
+| Edge stand probability | 0.15 | `isaac/sim/pedestrians.py:P_EDGE` |
+| Edge stand inside the road edge (m) | 1 | `isaac/sim/pedestrians.py:EDGE_IN` |
+| After an edge stand or exit | cross or go back to a shoulder, never another road goal | |
+| Pause on a shoulder (s) | 2–6 | |
+| Pause skipped | 0.3 | `isaac/sim/pedestrians.py:SKIP_PAUSE` |
+| Edge stand (s) | 1.5–4, the only stop inside the road | |
+| Road corridor | distance to the road centreline < `width_m` / 2 | |
+| Corridor cap | exit to the nearest shoulder once time inside + time to leave would exceed `width_m` / pace + slack | |
+| Corridor slack (s) | 6 | `isaac/sim/pedestrians.py:CORRIDOR_SLACK` |
+| Truck reaction radius (m), person ahead of the truck | 15 | `isaac/sim/pedestrians.py:YIELD_RADIUS` |
+| Truck reaction min truck speed (m/s) | 0.5 | `isaac/sim/pedestrians.py:YIELD_SPEED` |
+| Attentive share | 2/3 (seeded per person); attentive people leave the road and wait on the shoulder for an approaching truck, the rest ignore trucks | |
+| Seed, per person `random.Random(1000 * seed + index)` | 1 | `isaac/sim/pedestrians.py:WALK_SEED` |
+| Sent as | `actors` `{id, x, z, yaw}` at 10 Hz; hello `paths` = one closed polygon per area (both shoulders) | |
 
 ## Truck dynamics
 
@@ -486,16 +513,11 @@
 | Slot-line shift search (m) | 10 | `isaac/sim/world.py:SPAWN_SEARCH` |
 | Slot-line shift step (m) | 0.5 | `isaac/sim/world.py:SPAWN_SEARCH_STEP` |
 | Excavator length (m) | 10 | `isaac/sim/world.py:EXCAVATOR_LENGTH` |
-| Crossing paths | 4 | `isaac/sim/world.py:CROSSING_COUNT` |
-| Crossing length beyond road width (m) | 12 | `isaac/sim/world.py:CROSSING_MARGIN` |
-| Pedestrians per path | 3 | `isaac/sim/world.py:PEDESTRIANS_PER_PATH` |
-| Min walking speed (m/s) | 1.2 | `isaac/sim/world.py:MIN_WALK_SPEED` |
-| Max walking speed (m/s) | 1.6 | `isaac/sim/world.py:MAX_WALK_SPEED` |
-| Pedestrian turn rate (deg/s) | 360 | `isaac/sim/pedestrians.py:TURN_RATE` |
+| Pedestrians | "Pedestrian wander" rules, ground height probed every step | |
 | Pedestrian height (m) | 1.8 | `isaac/sim/pedestrians.py:PEDESTRIAN_HEIGHT` |
 | Pedestrian radius (m) | 0.3 | `isaac/sim/pedestrians.py:PEDESTRIAN_RADIUS` |
 | Pedestrian IDs | `Pedestrian_NN` | |
-| Pedestrian visual | orange capsule | |
+| Pedestrian visual | "Isaac people" | |
 | Dry run | `--dry-run`: no Isaac imports, black JPEG frames, Warp raycasts when `warp` is importable, heightmap otherwise | |
 
 ## HUD
