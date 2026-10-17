@@ -2,14 +2,17 @@
 
 ## Part 1: prerecorded video (60 s voiceover + shot list)
 
-| Time | Voiceover | Shot |
+| Time | Voiceover | Shot (how to capture) |
 |---|---|---|
-| 0:00–0:08 | "Quarries move 39 billion tonnes of rock a year, almost all in trucks with a driver in every seat." | Drone scan of the real quarry, slow orbit (`/view` overview) |
-| 0:08–0:16 | "Autonomy exists, but it was built for giant 24/7 mines at about $2.3 million a truck. Mid-size quarries are left behind." | Close-up on a Komatsu HD465 cab camera |
-| 0:16–0:28 | "R² · Rocky Robotics retrofits the trucks a quarry already owns with a sensor pod: camera, lidar, compute." | The physical sensor pod, then the pod on a virtual truck |
-| 0:28–0:40 | "We turn a drone scan of any site into a simulator in ten seconds: haul roads, berms, grades and loading points, built to industry standards, running in NVIDIA Isaac Sim, where a vision policy learns to drive." | Scan → road ribbons appearing → truck and excavator cameras |
-| 0:40–0:52 | "A quarry driver is up to a third of truck running cost. Autonomy cuts haul cost 13–20%. A 10-truck quarry on two shifts pays us back in about a year." | Excavator digging at the face and dumping into a truck; trucks hauling |
-| 0:52–1:00 | "And you don't program it. You talk to it." | Phone radio push-to-talk screen, R² logo |
+| 0:00–0:07 | "Quarries move 39 billion tonnes of rock a year, almost all in trucks with a driver in every seat." | `/view` overview: idle auto-orbit over the drone-scanned quarry and forest (don't touch it for 12 s) |
+| 0:07–0:14 | "Autonomy exists, but it was built for giant 24/7 mines at about $2.3 million a truck. Mid-size quarries are left behind." | Press `1`: Komatsu HD465 cab cameras |
+| 0:14–0:22 | "R², Rocky Robotics, retrofits the trucks a quarry already owns with a sensor pod: cameras, lidar, compute." | The physical sensor pod on the table, then the dashboard lidar point cloud |
+| 0:22–0:34 | "Fly a drone over any site and in ten seconds it's a simulator: haul roads, berms, loading points, built to industry standards, running in NVIDIA Isaac Sim, where a vision policy learns to drive." | `/view` with `R` pressed (roads on): road ribbons over the scan, then `R` again to hide them |
+| 0:34–0:46 | "Then you just talk to it." (on the phone) "Excavator one, start digging." "Truck one, go unload at excavator one." | Phone push-to-talk screen; radio replies play; press `2`: the excavator digs at the face, swings and dumps over Truck One's bed |
+| 0:46–0:53 | "Give it a bad order and the driver talks back." (on the phone) "Truck one, start digging." Truck One: "I can't dig, I'm a haul truck. Want me to go to Excavator One?" | Phone radio log with the reply in Truck One's voice |
+| 0:53–1:00 | "A 10-truck quarry on two shifts pays it back in about a year. R². Mining autonomy." | R² logo end card + CC-BY credits |
+
+**Recording tips:** reset with RELEASE first. Record the screen at 1080p (Cmd-Shift-5). Mock trucks take 40–90 s to reach a face, so record the excavator and truck beat as one long take and cut it down. Capture the phone with screen recording and put it picture-in-picture.
 
 ## Part 2: live demo (about 3–4 min)
 
