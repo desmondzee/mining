@@ -33,8 +33,14 @@ CAND_DIM = 2 * N_ROLL + 3
 ARRIVE_RADIUS = 5.0
 LIDAR_HEIGHT = 3.0
 MIN_OBSTACLE_HEIGHT = 0.8
+WALL_SNAP_M = 1.0
 OBSTACLE_RADIUS = 4.0
 OBSTACLE_REACH = MAX_V * HORIZON + OBSTACLE_RADIUS + 2.0
+HIT_MARGIN = 0.5
+REPLAN_AFTER = 4.0
+STATIC_CELL_M = 2.0
+STATIC_AFTER = 1.5
+ROUTE_CHECK_AHEAD = 30
 
 Scorer = Callable[[np.ndarray, np.ndarray, np.ndarray], int]
 
@@ -47,14 +53,26 @@ class Decision:
     choice: int
     candidates: np.ndarray
     safe: np.ndarray
+    obstacles: np.ndarray
 
 
-def plan_route(nav: NavMap, start: tuple[float, float], goal: tuple[float, float]) -> np.ndarray | None:
-    cells = nav.astar(start, goal)
-    if cells is None:
+def plan_route(
+    nav: NavMap, start: tuple[float, float], goal: tuple[float, float], avoid: np.ndarray | None = None
+) -> np.ndarray | None:
+    if avoid is not None and len(avoid):
+        blocked = nav.cells_near(avoid, OBSTACLE_RADIUS + 1.0)
+        pts = nav.astar(start, goal, extra_blocked=blocked)
+        if pts is None:
+            pts = nav.astar(start, goal, inflate=False, extra_blocked=blocked)
+    else:
+        pts = nav.road_route(start, goal)
+        if pts is None:
+            pts = nav.astar(start, goal)
+        if pts is None:
+            pts = nav.astar(start, goal, inflate=False)
+    if pts is None:
         return None
-    pts = np.vstack([start, cells, goal])
-    return resample(chaikin(pts, 3), ROUTE_STEP)
+    return resample(chaikin(np.vstack([start, pts, goal]), 3), ROUTE_STEP)
 
 
 def ego(points: np.ndarray, x: float, z: float, yaw: float) -> np.ndarray:
@@ -76,7 +94,10 @@ def split_lidar(
         above = sensor_y + points[:, 1] - nav.ground_at(wx, wz) > MIN_OBSTACLE_HEIGHT
     local = points[above][:, [0, 2]]
     world = np.stack([wx[above], wz[above]], axis=1)
-    dynamic = world[~nav.inflated_at(world[:, 0], world[:, 1])]
+    wall = np.zeros(len(world), bool)
+    for ox, oz in ((0, 0), (WALL_SNAP_M, 0), (-WALL_SNAP_M, 0), (0, WALL_SNAP_M), (0, -WALL_SNAP_M)):
+        wall |= nav.blocked_at(world[:, 0] + ox, world[:, 1] + oz)
+    dynamic = world[~wall]
     near = dynamic[np.hypot(dynamic[:, 0] - x, dynamic[:, 1] - z) < OBSTACLE_REACH]
     return local, np.unique(np.round(near), axis=0)
 
@@ -108,6 +129,23 @@ def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.n
     return fine, fine[:, sub - 1 :: sub]
 
 
+def static_obstacles(seen: dict[tuple[int, int], float], obstacles: np.ndarray, now: float) -> np.ndarray:
+    cells = {tuple(c) for c in np.floor(obstacles / STATIC_CELL_M).astype(int).tolist()}
+    first = {c: seen.get(c, now) for c in cells}
+    seen.clear()
+    seen.update(first)
+    static = [c for c, t0 in first.items() if now - t0 >= STATIC_AFTER]
+    return (np.array(static, dtype=float) + 0.5) * STATIC_CELL_M if static else np.zeros((0, 2))
+
+
+def route_blocked(route: np.ndarray, route_idx: int, static: np.ndarray) -> bool:
+    if not len(static) or not len(route):
+        return False
+    ahead = route[route_idx : route_idx + ROUTE_CHECK_AHEAD]
+    d = np.linalg.norm(ahead[:, None, :] - static[None], axis=-1)
+    return bool((d < OBSTACLE_RADIUS + STATIC_CELL_M).any())
+
+
 def nearest_index(route: np.ndarray, start: int, x: float, z: float) -> int:
     lo = max(0, start - 5)
     seg = route[lo : start + 40]
@@ -131,7 +169,7 @@ def drive(
     ni = nearest_index(route, route_idx, x, z)
     end = route[-1]
     if math.hypot(end[0] - x, end[1] - z) < ARRIVE_RADIUS:
-        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, np.zeros((0, N_ROLL, 2)), np.zeros(0, bool)), ni
+        return Decision(0.0, 0.0, "arrived", HOLD_ACTION, np.zeros((0, N_ROLL, 2)), np.zeros(0, bool), np.zeros((0, 2))), ni
 
     yaw = math.radians(yaw_deg)
     fine, pts = rollout(x, z, yaw, speed)
@@ -143,7 +181,7 @@ def drive(
         diff = pts.astype(np.float32)[:, :, None, :] - obs[None, None]
         d2 = np.einsum("ctmk,ctmk->ctm", diff, diff)
         d0 = np.hypot(obs[:, 0] - x, obs[:, 1] - z) - OBSTACLE_RADIUS
-        limit = OBSTACLE_RADIUS + np.minimum(1.5, d0 - 0.05)
+        limit = OBSTACLE_RADIUS + np.minimum(HIT_MARGIN, d0 - 0.05)
         hit |= (d2 < np.square(np.maximum(limit, 0.0))[None, None, :]).any(axis=(1, 2))
         clear = np.sqrt(d2.min(axis=(1, 2))) - OBSTACLE_RADIUS
     safe = ~hit
@@ -185,4 +223,5 @@ def drive(
         status = "avoiding"
     else:
         status = "driving"
-    return Decision(float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe), ni
+    decision = Decision(float(CAND_SPEED[choice] / MAX_V), float(CAND_STEER[choice]), status, choice, pts, safe, obstacles)
+    return decision, ni

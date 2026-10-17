@@ -3,14 +3,34 @@ import os
 from functools import cache
 from pathlib import Path
 
-from .driver import LIDAR_HEIGHT, Decision, Scorer, drive, plan_route
+from .driver import (
+    LIDAR_HEIGHT,
+    REPLAN_AFTER,
+    Decision,
+    Scorer,
+    drive,
+    plan_route,
+    route_blocked,
+    static_obstacles,
+)
 from .navmap import NavMap, load
 
 log = logging.getLogger(__name__)
 
-DEFAULT_WORLD_DIR = Path(__file__).resolve().parents[3] / "data" / "worlds" / "default"
+DEFAULT_WORLD_DIR = Path(__file__).resolve().parents[3] / "data" / "worlds" / "quarry"
 
-__all__ = ["Decision", "NavMap", "drive", "lidar_height", "nav_map", "plan_route", "scorer"]
+__all__ = [
+    "REPLAN_AFTER",
+    "Decision",
+    "NavMap",
+    "drive",
+    "lidar_height",
+    "nav_map",
+    "plan_route",
+    "route_blocked",
+    "scorer",
+    "static_obstacles",
+]
 
 
 @cache
