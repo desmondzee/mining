@@ -32,3 +32,15 @@ def test_radio_apply():
 def test_rotations():
     np.testing.assert_allclose(E.rot_y(np.pi / 2) @ [0, 0, 1], [1, 0, 0], atol=1e-12)
     np.testing.assert_allclose(E.rot_x(np.pi / 2) @ [0, 0, 1], [0, -1, 0], atol=1e-12)
+
+
+def test_reset_restores_rest_pose_and_headings():
+    rig = E.DigRig("exc-0", digging=True)
+    for _ in range(90):
+        rig.step(1 / 30)
+    rig.material = 3.0
+    poller = E.RadioPoller("http://x", {"exc-0": rig})
+    poller.headings["exc-0"] = 40.0
+    poller.reset()
+    assert not rig.digging and rig.pose == [0.0] * 4 and rig.phase == rig.initial_phase and rig.material == 0.0
+    assert poller.headings == {}

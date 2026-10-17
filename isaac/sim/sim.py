@@ -77,6 +77,11 @@ class Sim:
             t.reset()
             self.follow[t.id].reset()
             self.follow[t.id].update(t, self.probe, 0.0)
+        if self.radio:
+            self.radio.reset()
+        else:
+            for rig in self.rigs.values():
+                rig.reset()
 
     def step(self, dt: float, now: float) -> None:
         if self.reset_requested:
