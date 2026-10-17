@@ -5,6 +5,17 @@ All rows: 50 episodes per row. Label "435 m / old default" means the old world d
 
 Columns: success / collision / stops_per_ep / time_to_goal_s / near_miss_rate.
 
+Seeds: every row in this file used evaluation seeds 1000-1049, with one world per run
+(`--worlds default` or `--worlds quarry`). The bc_v1 and bc_v2 training data used seeds
+0-1999 with `SIM2D_WORLDS=default,quarry`, so the seed numbers overlap. The scenarios do not:
+with two worlds, `reset()` takes one extra random draw to pick the world, so seed 1000 gives a
+different start, goal, load and traffic than in a one-world run. An evaluation with
+`--worlds default,quarry` at seeds 1000-1049 would replay bc_v1/bc_v2 training episodes exactly.
+bc_v3 data (50000-55999) and PPO workers (seeds 0-31) do not overlap.
+Training and evaluation share the same maps and site pairs, so these rows measure known routes,
+not new maps. From 2026-10-17 on, `sim2d.evaluate` starts at seed 900000 (`--seed 1000`
+reproduces these rows) and prints the seed range.
+
 ## Default world
 
 | label | code | policy | success | collision | stops_per_ep | time_to_goal_s | near_miss_rate | source |
