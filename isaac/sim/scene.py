@@ -17,6 +17,7 @@ from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, 
 from .excavators import JOINTS
 from .kinematics import quat_from_matrix
 from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix
+from .zoom import OverviewZoom
 
 APERTURE = 20.955
 PERSON_COLOUR = (1.0, 0.47, 0.08)
@@ -149,7 +150,9 @@ class IsaacRenderer:
         self.fx = self.make_fx(sim, args.fx)
 
         over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, CAM_W, CAM_H)
-        over.AddTransformOp().Set(gf(overview_matrix(world)))
+        self.zoom = OverviewZoom(overview_matrix(world), OVERVIEW_HFOV, CAM_W / CAM_H)
+        self.overview = (over.AddTransformOp(), over.GetFocalLengthAttr())
+        self.overview[0].Set(gf(self.zoom.matrix))
         cameras.insert(0, ("overview", "/World/Overview", CAM_W, CAM_H))
 
         self.views = {}
@@ -250,6 +253,9 @@ class IsaacRenderer:
         return TruckFx(self.stage, {"preset": preset, "trucks": trucks})
 
     def update(self, sim, dt: float) -> None:
+        if self.zoom.step(dt):
+            self.overview[0].Set(gf(self.zoom.matrix))
+            self.overview[1].Set(APERTURE / 2 / math.tan(math.radians(self.zoom.hfov / 2)))
         if self.fx is not None:
             self.fx.update(dt, sim.fx_state())
         for op, t in zip(self.trucks, sim.trucks):

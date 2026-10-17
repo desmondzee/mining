@@ -11,7 +11,7 @@ from . import policy
 from .detector import DetectorWorker
 from .hub import LatestHub
 from .hud import frame_meta, pack_meta
-from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, read_message
+from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, encode_view, read_message
 from .video import VideoHub
 from .world import Scan, World
 
@@ -58,6 +58,8 @@ class SimBridge:
                 kind = header.get("type")
                 if kind == "hello":
                     self._on_hello(header)
+                    for camera, view in self.world.views.items():
+                        writer.write(encode_view(camera, view["box"]))
                 elif kind == "frame":
                     await self._on_frame(header, payload, writer)
                 elif kind == "lidar":
@@ -77,6 +79,11 @@ class SimBridge:
                 self.world.pedestrians = []
             writer.close()
             log.info("sim disconnected (%s)", peer)
+
+    def send_view(self, camera: str, box: list[float] | None) -> None:
+        self.world.views[camera] = {"box": box}
+        if self._writer is not None:
+            self._writer.write(encode_view(camera, box))
 
     def _on_hello(self, header: dict) -> None:
         if "bounds" in header:
