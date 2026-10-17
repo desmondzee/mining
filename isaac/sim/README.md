@@ -26,7 +26,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | `--config` | `isaac/sim/config.json` | fps, renderer, lighting, RTX settings, extra views |
 | `--fps` | config `fps` (15) | camera frame rate; lidar and actors stay 10 Hz |
 | `--renderer` | config (`RealTimePathTracing`) | RTX mode |
-| `--fx` | `low` | `isaac.fx.TruckFx` preset when that package exists (`off`, `low`, `high`) |
+| `--fx` | `off` | `isaac.fx.TruckFx` Flow dust preset (`off`, `low`, `high`); Flow roughly halves fps with four cameras |
 | `--no-views` | off | drop the extra views |
 | `--dry-run` | off | no Isaac imports, black JPEG frames |
 | `--raycast` | `auto` | Warp depth/lidar/ground raycasts (`auto` = if `warp` imports); `off` uses the heightmap and sends no depth or lidar points |
@@ -86,10 +86,13 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 
 | Hook | Contract |
 |---|---|
-| Look | if `isaac.look` imports: `apply_look(stage, config["look"])` replaces the built-in sun/dome/scan settings |
-| Excavators | `Sim.excavator_state()` → `[{id, digging, phase, pose_deg [house, boom, stick, bucket], bucket {position, rotation}}]` (world frame); `RADIO_URL` polls `/api/radio/excavators` for `digging`/`holding` and heading |
-| Props | if `isaac/props/load.py` and `<world>/props.json` exist: `add_props(stage, props_json_dict, repo/assets)`, expected to add prims under `/World/Props` in the stage convention above; their meshes become a Warp raycast mesh (depth/lidar), entries with `obstacle {x,z,r}` go into hello `obstacles` |
-| Truck FX | if `isaac.fx` imports and `--fx` is not `off`: `TruckFx(stage, {"preset", "trucks": [{"id", "prim", "size"}]})`, then `fx.update(dt, [(truck_id, (x, y, z), yaw_deg, speed, [(x, y, z) × 4 wheel contacts FL, FR, RL, RR])])` once per frame, world.json frame |
+| Look | config `look` = preset name or `{preset, ...overrides}` (`false` = built-in sun/dome/scan): `apply_look(stage, preset, world_dir, cache/look)` after trucks and excavators exist; config `rtx` is applied after it |
+| Excavators | world.json equipment (radio controlled: `RADIO_URL` polls `/api/radio/excavators` for `digging`/`holding` and heading) plus config `extra_excavators` (always digging); 8 s teammate cycle; dump side = lower-terrain side, or toward a truck stopped within 16 m; `Sim.excavator_state()` |
+| Cab cameras | config `excavator_cameras` (`true` or id list): 640×360 sensor camera per excavator in the cab, riding the house swing, sent as `frame` with `cam`, listed in hello `cameras` |
+| Bucket material | config `material` `{enabled, lift_deg, model}`: `isaac.material.BucketMaterial` fed the rig's bucket matrix and phase, trucks under an excavator, `aim_points()` steer the dump swing; truck `frame` carries `load` 0..1 |
+| Props | config `props` `{skip, no_raycast}` (kinds): `isaac/props/load.py add_props` from `<world>/props.json` and `isaac/assets/props`; `prop_triangles` become a Warp raycast mesh (depth/lidar), entries with `obstacle {x,z,r}` go into hello `obstacles` |
+| Truck FX | `--fx low|high`: `TruckFx(stage, truck_ids, preset, load_or_bake(world, cache), **config["fx"])`, `fx.update(dt, [(id, isaac_pos, yaw, speed, None)], ground.height_at)` per frame |
+| Overview | config `overview_res` (default 1280×720); brain H.264 bitrate scales with pixels |
 
 ## Files
 

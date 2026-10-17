@@ -25,7 +25,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     p.add_argument("--cache", default=str(ROOT / "downloads/isaac/cache"))
     p.add_argument("--renderer", default="")
     p.add_argument("--fps", type=float, default=0.0)
-    p.add_argument("--fx", choices=["off", "low", "high"], default="low")
+    p.add_argument("--fx", choices=["off", "low", "high"], default="off")
     p.add_argument("--no-views", action="store_true")
     p.add_argument("--save-dir", default="")
     p.add_argument("--save-every", type=int, default=0)
