@@ -16,7 +16,7 @@ const STATE_BUFFER = 30;
 const UNIT_KEY = "quarry-hud-unit";
 const GT_KEY = "quarry-hud-ground-truth";
 const LABEL_MIN_H = 14;
-const MAX_PIXELS = 2.6e6;
+const MAX_PIXELS = 1.4e6;
 const DETAIL_WIDTH = 960;
 const HOLD_LEN = 14;
 const NEAR_LEN = 30;
@@ -161,7 +161,7 @@ class TileHud {
 
   resize() {
     const r = this.el.getBoundingClientRect();
-    let dpr = Math.min(window.devicePixelRatio || 1, 2);
+    let dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     if (r.width * r.height * dpr * dpr > MAX_PIXELS) dpr = Math.sqrt(MAX_PIXELS / (r.width * r.height));
     const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));
     if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
@@ -319,11 +319,13 @@ class TileHud {
     };
 
     ctx.save();
-    if (full && engaged) {
-      ctx.shadowColor = rgba(base, 0.55);
-      ctx.shadowBlur = 22 * u * this.s;
-    }
     outline();
+    if (full && engaged) {
+      ctx.lineJoin = "round";
+      ctx.lineWidth = 10 * u;
+      ctx.strokeStyle = rgba(base, 0.14);
+      ctx.stroke();
+    }
     ctx.fillStyle = makeGrad(base, 0.62, endAlpha);
     ctx.fill();
     ctx.restore();
