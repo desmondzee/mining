@@ -115,3 +115,13 @@ PORT=8081 SIM_PORT=9001 HOST=127.0.0.1 uv run brain &      # brain
 uv run fakesim --port 9001 &                                # fake sim (flat, ±100 m, its own rocks)
 BRAIN_URL=http://127.0.0.1:8081 radio/run.sh                # from the repo root
 ```
+
+## Docker (e.g. on Des's laptop)
+
+```bash
+ssh -N -L 8080:127.0.0.1:8080 watson     # keep running: brain tunnel
+zsh radio/add_keys.sh                    # once: ElevenLabs key -> radio/secrets/ (mounted read-only, never baked in)
+bash radio/docker-up.sh                  # builds + starts radio and a cloudflared tunnel, prints the phone URL
+```
+The container reaches the brain at `host.docker.internal:8080` (override with `BRAIN_URL=...`). Stop it with
+`docker compose -f radio/docker-compose.yml down`.
