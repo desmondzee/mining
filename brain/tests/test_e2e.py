@@ -159,3 +159,39 @@ def test_world_endpoint_and_preview(quarry, tmp_path, monkeypatch):
     assert r.status_code == 200 and r.content[:4] == b"\x89PNG"
     monkeypatch.setenv("WORLD_DIR", str(tmp_path))
     assert TestClient(create_app(sim_port=None, web_dir=None)).get("/api/world/preview").status_code == 404
+
+
+def test_reset_api_clears_trucks_and_tells_sim():
+    async def go():
+        app = create_app(sim_port=None, web_dir=None)
+        bridge, world = app.state.bridge, app.state.world
+        server = await asyncio.start_server(bridge.handle, "127.0.0.1", 0)
+        port = server.sockets[0].getsockname()[1]
+        reader, writer = await asyncio.open_connection("127.0.0.1", port)
+        writer.write(encode({"type": "hello", "trucks": ["truck-0", "truck-1"], "cameras": [], "bounds": [-100, -100, 100, 100]}))
+        await writer.drain()
+        await asyncio.wait_for(read_message(reader), 5)
+        for t in world.trucks.values():
+            t.set_goal((5.0, 6.0))
+            t.throttle, t.steer, t.speed = 0.7, 0.2, 3.0
+        client = TestClient(app)
+        body = await asyncio.to_thread(lambda: client.post("/api/reset").json())
+        msg, _ = await asyncio.wait_for(read_message(reader), 5)
+        writer.close()
+        server.close()
+        return body, msg, world
+
+    body, msg, world = asyncio.run(go())
+    assert body == {"trucks": ["truck-0", "truck-1"], "sim": True}
+    assert msg == {"type": "reset"}
+    for t in world.trucks.values():
+        assert t.goal is None and t.path == []
+        assert (t.throttle, t.steer, t.speed, t.status) == (0.0, 0.0, 0.0, "idle")
+
+
+def test_reset_api_without_sim():
+    app = create_app(sim_port=None, web_dir=None)
+    app.state.world.truck("truck-0").set_goal((1.0, 2.0))
+    r = TestClient(app).post("/api/reset")
+    assert r.json() == {"trucks": ["truck-0"], "sim": False}
+    assert app.state.world.trucks["truck-0"].goal is None

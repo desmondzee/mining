@@ -104,7 +104,7 @@ def run(args: argparse.Namespace) -> None:
         if camera == "overview":
             renderer.zoom.set(box)
 
-    bridge = Bridge(host, int(port), sim.hello, sim.command, on_view).start()
+    bridge = Bridge(host, int(port), sim.hello, sim.command, on_view, sim.request_reset).start()
     jpeg_pool = ThreadPoolExecutor(6)
     publisher = ThreadPoolExecutor(1)
     noise = float(config.get("noise_sigma", 0.0))

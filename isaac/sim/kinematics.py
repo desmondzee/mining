@@ -73,6 +73,12 @@ class Truck:
         self.throttle = 0.0
         self.steer = 0.0
         self.received = -math.inf
+        self.spawn = (x, y, z, yaw % 360.0)
+
+    def reset(self) -> None:
+        self.x, self.y, self.z, self.yaw = self.spawn
+        self.speed = self.throttle = self.steer = 0.0
+        self.received = -math.inf
 
     def command(self, throttle: float, steer: float, now: float) -> None:
         self.throttle = min(1.0, max(-1.0, float(throttle)))
@@ -100,6 +106,11 @@ class GroundFollow:
         self.tilt = np.array([1.0, 0.0, 0.0, 0.0])
         self.smooth_y: float | None = None
         self.contacts = np.zeros((4, 3))
+        self.tilt_init = False
+
+    def reset(self) -> None:
+        self.smooth_y = None
+        self.tilt = np.array([1.0, 0.0, 0.0, 0.0])
         self.tilt_init = False
 
     def sample(self, probe: Probe, xs: np.ndarray, zs: np.ndarray, ref: float | np.ndarray) -> np.ndarray:

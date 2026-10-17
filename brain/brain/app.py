@@ -160,6 +160,12 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
             return set_site(truck_id, min(known, key=lambda n: math.dist(known[n], (goal.x, goal.z))))
         return set_goal(truck_id, (goal.x, goal.z))
 
+    @app.post("/api/reset")
+    def post_reset():
+        for truck in world.trucks.values():
+            truck.halt()
+        return {"trucks": [t.id for t in world.trucks.values()], "sim": bridge.send_reset()}
+
     @app.get("/api/sites")
     def get_sites():
         if nav is None:

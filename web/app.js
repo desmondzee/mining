@@ -16,6 +16,7 @@ const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
 const barCamera = document.getElementById("bar-camera");
 const stopButton = document.getElementById("stop-all");
+const resetButton = document.getElementById("reset-fleet");
 const captionHint = document.getElementById("caption-hint");
 const SITE_COLOURS = { ore: "#7fa38f", crusher: "#b0736a", dump: "#8f86a8", parking: "#b59a5e", fuel: "#b5835e" };
 const lidarView = createLidarView(document.getElementById("lidar"));
@@ -454,24 +455,36 @@ async function stopAll() {
   ops.notice(rel.status === "fulfilled" ? "all stopped · trucks and excavators holding" : "trucks stopped · radio unreachable");
 }
 
-let armedAt = 0;
-let armTimer = 0;
-function armedStop() {
-  clearTimeout(armTimer);
-  if (Date.now() - armedAt < 2000) {
-    armedAt = 0;
-    stopButton.classList.remove("armed");
-    stopButton.textContent = "stop";
-    stopAll();
-  } else {
-    armedAt = Date.now();
-    stopButton.classList.add("armed");
-    stopButton.textContent = "stop all?";
-    armTimer = setTimeout(() => { stopButton.classList.remove("armed"); stopButton.textContent = "stop"; }, 2000);
-  }
+function armedAction(button, idle, armedLabel, run) {
+  let armedAt = 0;
+  let timer = 0;
+  return () => {
+    clearTimeout(timer);
+    if (Date.now() - armedAt < 2000) {
+      armedAt = 0;
+      button.classList.remove("armed");
+      button.textContent = idle;
+      run();
+    } else {
+      armedAt = Date.now();
+      button.classList.add("armed");
+      button.textContent = armedLabel;
+      timer = setTimeout(() => { button.classList.remove("armed"); button.textContent = idle; }, 2000);
+    }
+  };
 }
 
+async function resetFleet() {
+  const [rel, res] = await Promise.allSettled([radio.release(), fetch("/api/reset", { method: "POST" })]);
+  const ok = res.status === "fulfilled" && res.value.ok;
+  ops.notice(!ok ? "reset failed" : rel.status === "fulfilled" ? "fleet reset · trucks at spawn" : "trucks reset · radio unreachable");
+}
+
+const armedStop = armedAction(stopButton, "stop", "stop all?", stopAll);
+const armedReset = armedAction(resetButton, "reset", "reset fleet?", resetFleet);
+
 stopButton.addEventListener("click", armedStop);
+resetButton.addEventListener("click", armedReset);
 
 async function sendRadio(text) {
   try {
@@ -574,6 +587,7 @@ function commands(query = "") {
   cameraOrder().forEach((name, i) => out.push({ id: `camera:${name}`, group: "camera", title: `View ${name}`, keywords: "camera cam feed video", detail: shell.camera === name ? "current" : "", keys: i < 9 ? [String(i + 1)] : null, run: () => showCamera(name) }));
   if (zoom.zoomed) out.push({ id: "camera:unzoom", group: "camera", title: "Reset overview zoom", keywords: "zoom out overview camera view", keys: ["esc"], run: () => zoom.reset() });
   if (state.trucks.length) out.push({ id: "stop:all", group: "fleet", title: "Stop all", keywords: "everything trucks excavators halt release emergency estop", detail: "trucks · excavators · radio jobs", keys: ["⇧", "esc"], confirm: "Press ↵ again to stop everything", run: stopAll });
+  if (state.trucks.length) out.push({ id: "reset:fleet", group: "fleet", title: "Reset fleet", keywords: "respawn spawn restart trucks stop clear goals", detail: "trucks back to spawn", confirm: "Press ↵ again to reset the fleet", run: resetFleet });
   for (const t of state.trucks) {
     out.push({ id: `focus:${t.id}`, group: "fleet", title: `Focus ${t.id}`, keywords: "select follow truck", detail: t.status, run: () => focusTruck(t.id) });
     out.push({ id: `stop:${t.id}`, group: "fleet", title: `Stop ${t.id}`, keywords: "halt cancel goal truck", detail: t.goal_site ? siteName(t.goal_site) : "", run: () => stopTruck(t.id) });

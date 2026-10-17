@@ -89,3 +89,12 @@ def test_read_message_reads_brain_action():
     for _ in range(2):
         header, payload = ours.read_message(sock)
         assert header == {"type": "action", "truck": "truck-0", "throttle": 0.5, "steer": -0.25} and payload == b""
+
+
+def test_bridge_dispatches_reset():
+    from isaac.sim.bridge import Bridge
+
+    calls = []
+    bridge = Bridge("h", 1, dict, lambda *a: None, None, lambda: calls.append(1))
+    bridge.receive(FakeSock(brain.encode({"type": "reset"})))
+    assert calls == [1]

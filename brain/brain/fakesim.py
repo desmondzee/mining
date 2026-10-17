@@ -52,9 +52,14 @@ TRUCK_COLOURS = [(240, 180, 40), (60, 160, 240), (230, 80, 80), (120, 220, 120)]
 class Truck:
     def __init__(self, truck_id: str, x: float, z: float, yaw: float) -> None:
         self.id, self.x, self.z, self.yaw = truck_id, x, z, yaw
+        self.spawn = (x, z, yaw)
         self.speed = 0.0
         self.throttle = 0.0
         self.steer = 0.0
+
+    def reset(self) -> None:
+        self.x, self.z, self.yaw = self.spawn
+        self.speed = self.throttle = self.steer = 0.0
 
     def step(self, dt: float) -> None:
         target = self.throttle * MAX_SPEED
@@ -318,6 +323,9 @@ async def run(host: str, port: int, n_trucks: int, world_dir: str | None = None)
                 if header.get("type") == "action" and t:
                     t.throttle = float(header["throttle"])
                     t.steer = float(header["steer"])
+                elif header.get("type") == "reset":
+                    for truck in quarry.trucks:
+                        truck.reset()
                 elif header.get("type") == "view" and header.get("camera") == "overview":
                     quarry.view_box = header.get("box")
 

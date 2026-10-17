@@ -11,7 +11,7 @@ from . import policy
 from .detector import DetectorWorker
 from .hub import LatestHub
 from .hud import frame_meta, pack_meta
-from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, encode_view, read_message
+from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, encode_reset, encode_view, read_message
 from .video import VideoHub
 from .world import Scan, World
 
@@ -84,6 +84,12 @@ class SimBridge:
         self.world.views[camera] = {"box": box}
         if self._writer is not None:
             self._writer.write(encode_view(camera, box))
+
+    def send_reset(self) -> bool:
+        if self._writer is None:
+            return False
+        self._writer.write(encode_reset())
+        return True
 
     def _on_hello(self, header: dict) -> None:
         if "bounds" in header:

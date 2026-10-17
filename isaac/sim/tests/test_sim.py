@@ -52,3 +52,23 @@ def test_excavator_state(sim):
     assert len(state) == 3 and all(s["digging"] and s["bucket"] for s in state)
     b = sim.excavators[0]
     assert np.hypot(state[0]["bucket"]["position"][0] - b.x, state[0]["bucket"]["position"][2] - b.z) < 12
+
+
+def test_reset_puts_trucks_at_spawn_and_keeps_world_running(sim):
+    spawn = [(t.spawn[0], t.spawn[2], t.spawn[3]) for t in sim.trucks]
+    sim.reset_trucks()
+    for k in range(60):
+        sim.command("truck-0", 1.0, 0.3, k / 30)
+        sim.step(1 / 30, k / 30)
+    moved = sim.trucks[0]
+    assert np.hypot(moved.x - spawn[0][0], moved.z - spawn[0][1]) > 1 and moved.speed > 0
+    walkers = [(w.x, w.z) for w in sim.walkers]
+    sim.request_reset()
+    assert sim.reset_requested
+    sim.step(1 / 30, 3.0)
+    assert not sim.reset_requested
+    for t, (x, z, yaw) in zip(sim.trucks, spawn):
+        assert t.speed == 0.0 and t.throttle == 0.0 and t.steer == 0.0
+        assert np.hypot(t.x - x, t.z - z) < 0.05 and abs(t.yaw - yaw) < 0.5
+        assert abs(t.y - sim.height(t.x, t.z)) < 1.5
+    assert [(w.x, w.z) for w in sim.walkers] != walkers

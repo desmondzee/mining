@@ -28,6 +28,11 @@ class Truck:
         d["route"] = d.pop("path")
         return d
 
+    def halt(self) -> None:
+        self.set_goal(None)
+        self.throttle = self.steer = self.speed = 0.0
+        self.status = "idle"
+
     def set_goal(self, goal: tuple[float, float] | None, site: str | None = None) -> None:
         self.goal, self.goal_site = goal, site
         self.path, self.path_idx, self.ghost_paths = [], 0, []

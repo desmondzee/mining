@@ -53,6 +53,7 @@ class Sim:
             self.follow[t.id].update(t, self.probe, 0.0)
         self.rig = Rig(self.truck_size)
         self.time = 0.0
+        self.reset_requested = False
 
     def hello(self) -> dict:
         h = W.hello(self.world, [t.id for t in self.trucks], self.paths, [b.circle() for b in self.excavators] + W.prop_obstacles(self.world))
@@ -67,7 +68,19 @@ class Sim:
             if t.id == truck_id:
                 t.command(throttle, steer, now)
 
+    def request_reset(self) -> None:
+        self.reset_requested = True
+
+    def reset_trucks(self) -> None:
+        self.reset_requested = False
+        for t in self.trucks:
+            t.reset()
+            self.follow[t.id].reset()
+            self.follow[t.id].update(t, self.probe, 0.0)
+
     def step(self, dt: float, now: float) -> None:
+        if self.reset_requested:
+            self.reset_trucks()
         self.time += dt
         for t in self.trucks:
             t.step(dt, now)

@@ -33,7 +33,7 @@ before(async () => {
       STATE.views = { overview: { box } };
       return route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify({ box }) });
     }
-    if (path.startsWith("/api/trucks/") || path.startsWith("/radio/api/")) {
+    if (path === "/api/reset" || path.startsWith("/api/trucks/") || path.startsWith("/radio/api/")) {
       requests.push({ method: req.method(), path, body: req.postData() });
       return route.fulfill({ status: 200, contentType: "application/json", body: "{}" });
     }
@@ -132,6 +132,32 @@ test("shift escape twice stops everything", async () => {
   await page.keyboard.press("Shift+Escape");
   await page.waitForTimeout(150);
   assert.equal(requests.filter((r) => r.method === "DELETE").length, 3);
+});
+
+test("reset needs two presses and resets the fleet", async () => {
+  requests.length = 0;
+  await page.locator("#reset-fleet").click();
+  assert.equal(await page.locator("#reset-fleet").textContent(), "reset fleet?");
+  assert.equal(requests.length, 0);
+  await page.locator("#reset-fleet").click();
+  await page.waitForTimeout(150);
+  assert.equal(await page.locator("#reset-fleet").textContent(), "reset");
+  assert.ok(requests.some((r) => r.method === "POST" && r.path === "/api/reset"));
+  assert.ok(requests.some((r) => r.method === "POST" && r.path === "/radio/api/radio/release"));
+});
+
+test("palette offers Reset fleet behind a confirm", async () => {
+  await page.keyboard.press("/");
+  await page.locator("#palette.open").waitFor();
+  await page.keyboard.type("reset fleet");
+  assert.match(await page.locator('[role="option"][aria-selected="true"]').locator(".label").innerText(), /^Reset fleet$/);
+  requests.length = 0;
+  await page.keyboard.press("Enter");
+  assert.equal(requests.length, 0);
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => document.getElementById("palette").hidden);
+  await page.waitForTimeout(150);
+  assert.ok(requests.some((r) => r.method === "POST" && r.path === "/api/reset"));
 });
 
 test("ops layout keeps overview and map visible and swaps the primary truck", async () => {

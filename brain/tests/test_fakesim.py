@@ -142,3 +142,15 @@ def test_overview_zoom_renders_subregion_at_full_resolution(quarry):
     assert xs.mean() == pytest.approx(OVERVIEW_PX / 2, abs=2) and ys.mean() == pytest.approx(OVERVIEW_PX / 2, abs=2)
     quarry.view_box = None
     np.testing.assert_array_equal(quarry.render_overview(), full)
+
+
+def test_truck_reset_returns_to_spawn():
+    q = FakeQuarry(2)
+    t = q.trucks[1]
+    spawn = (t.x, t.z, t.yaw)
+    t.throttle, t.steer = 1.0, 0.3
+    for _ in range(60):
+        t.step(1 / 15)
+    assert t.speed > 0 and (t.x, t.z) != spawn[:2]
+    t.reset()
+    assert (t.x, t.z, t.yaw) == spawn and (t.speed, t.throttle, t.steer) == (0.0, 0.0, 0.0)

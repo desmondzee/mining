@@ -35,6 +35,10 @@ def encode_view(camera: str, box: list[float] | None) -> bytes:
     return encode({"type": "view", "camera": camera, "box": box})
 
 
+def encode_reset() -> bytes:
+    return encode({"type": "reset"})
+
+
 def encode_frame(
     camera: str,
     rgb: np.ndarray,
