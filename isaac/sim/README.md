@@ -24,7 +24,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | `--brain` | `127.0.0.1:9000` | brain sim socket |
 | `--world` | `data/worlds/quarry` | world directory (`world.json` + GLBs) |
 | `--config` | `isaac/sim/config.json` | fps, renderer, lighting, RTX settings, extra views |
-| `--fps` | config `fps` (30) | camera frame rate; lidar and actors stay 10 Hz |
+| `--fps` | config `fps` (15) | camera frame rate; lidar and actors stay 10 Hz |
 | `--renderer` | config (`RealTimePathTracing`) | RTX mode |
 | `--fx` | `low` | `isaac.fx.TruckFx` preset when that package exists (`off`, `low`, `high`) |
 | `--no-views` | off | drop the extra views |
@@ -38,7 +38,12 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 
 | Key | Meaning |
 |---|---|
-| `fps` | camera rate |
+| `fps` | camera rate (default 15; fresh frames, measured 26 fps achievable for 4 cameras with other Isaac containers running) |
+| `tiled` | overview + truck cameras in one 2 × 2 tiled render product |
+| `step` | `step_nowait` (`rep.orchestrator.step(wait_for_render=False)`, frames lag the pose by one tick; the sim sends the previous tick's pose/cam/depth with them), `step`, `step_dt0`, `update` (stale frames) |
+| `rt_subframes` | RTX subframes per step |
+| `lidar_frame` | `sensor` (default, tilts with the truck like Unity `tiltSensors`) or `level` (sensor origin, gravity-aligned axes) |
+| `look` | preset passed to `isaac.look.apply_look(stage, preset)` when that package exists (then `sun`/`dome`/`scan` are skipped) |
 | `renderer` | `RealTimePathTracing`, `RaytracedLighting`, `PathTracing` |
 | `noise_sigma` | Gaussian RGB noise (8-bit units), 0 = off |
 | `sun` | distant light: `intensity`, `elevation`/`azimuth` (deg, azimuth = world yaw toward the sun), `angle`, `color` |
@@ -46,7 +51,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | `scan` | scan material: `tint` (multiplies the texture), `roughness`, `specular` |
 | `surround` | `tint` baked into the surround vertex colours |
 | `rtx` | carb settings applied at start (motion blur, DOF, AA/DLSS, tonemapper, exposure) |
-| `views` | extra cameras sent as `frame` with `truck: ""` and a `cam` pose |
+| `views` | extra cameras sent as `frame` with `truck: ""` and a `cam` pose (default none) |
 
 | View field | Modes | Meaning |
 |---|---|---|
@@ -68,10 +73,21 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | Cameras | USD camera looks down local -Z: columns (right, up, -forward) of the world frame, swapped (`usdbuild.camera_matrix`) |
 | GLB assets | `collider.glb`, `surround.glb` are world frame; `visual.glb` is node transforms then `scan_transform.matrix`; truck/excavator GLBs are X-flipped (Unity import), scaled, origin bottom centre |
 
+## Live cut-over (watson)
+
+| Step | Command |
+|---|---|
+| Stop fake sim | `docker stop mining-fakesim-1` |
+| Start Isaac on 9000 | `cd ~/Documents/mining && mkdir -p downloads/isaac/cache && chmod 777 downloads/isaac/cache && docker compose -f isaac/docker/compose.yml --profile isaac up -d --build` |
+| Check | `docker logs -f mining-isaac-sim` until `connected to brain at 127.0.0.1:9000`; `curl -s 127.0.0.1:8080/api/state` shows `truck_model: komatsu_hd465` |
+| Roll back | `docker compose -f isaac/docker/compose.yml --profile isaac down && docker start mining-fakesim-1` |
+
 ## Hooks
 
 | Hook | Contract |
 |---|---|
+| Look | if `isaac.look` imports: `apply_look(stage, config["look"])` replaces the built-in sun/dome/scan settings |
+| Excavators | `Sim.excavator_state()` → `[{id, digging, phase, pose_deg [house, boom, stick, bucket], bucket {position, rotation}}]` (world frame); `RADIO_URL` polls `/api/radio/excavators` for `digging`/`holding` and heading |
 | Props | if `isaac/props/load.py` and `<world>/props.json` exist: `add_props(stage, props_json_dict, repo/assets)`, expected to add prims under `/World/Props` in the stage convention above; their meshes become a Warp raycast mesh (depth/lidar), entries with `obstacle {x,z,r}` go into hello `obstacles` |
 | Truck FX | if `isaac.fx` imports and `--fx` is not `off`: `TruckFx(stage, {"preset", "trucks": [{"id", "prim", "size"}]})`, then `fx.update(dt, [(truck_id, (x, y, z), yaw_deg, speed, [(x, y, z) × 4 wheel contacts FL, FR, RL, RR])])` once per frame, world.json frame |
 

@@ -4,7 +4,7 @@
   "rt_subframes": 1,
   "look": "default",
   "step": "step_nowait",
-  "lidar_frame": "level",
+  "lidar_frame": "sensor",
   "renderer": "RealTimePathTracing",
   "noise_sigma": 0.0,
   "sun": {"intensity": 1600.0, "elevation": 35.0, "azimuth": 265.0, "angle": 0.53, "color": [1.0, 0.92, 0.8]},

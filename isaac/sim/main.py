@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "level") == "level")
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
         renderer = DryRenderer(sim)
@@ -166,10 +166,10 @@ def run(args: argparse.Namespace) -> None:
         views = {name: cam_field(p, r, hfov[name]) for name, (p, r) in renderer.view_poses.items()}
         if live:
             if sim.time >= next_actors:
-                next_actors = sim.time + 1 / ACTORS_HZ
+                next_actors = max(next_actors + 1 / ACTORS_HZ, sim.time - 1 / ACTORS_HZ)
                 bridge.send(encode_actors(sim.actors()))
             if sim.time >= next_lidar:
-                next_lidar = sim.time + 1 / LIDAR_HZ
+                next_lidar = max(next_lidar + 1 / LIDAR_HZ, sim.time - 1 / LIDAR_HZ)
                 for t, points in zip(sim.trucks, sim.lidars()):
                     bridge.send(encode_lidar(t.id, points, t.pose()))
         t3 = time.monotonic()
