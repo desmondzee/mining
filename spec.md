@@ -292,3 +292,19 @@
 | Read state | `GET /api/state` | |
 | Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` | |
+
+## Radio
+
+| Item | Value | Source |
+|---|---|---|
+| Port | 8090, bound to 127.0.0.1 unless `HOST` is set | |
+| Brain poll rate (Hz) | 5 | `radio/server.py:POLL_HZ` |
+| Goals | brain routes (`roads` + per-truck `route`): one `{"site"}` per leg; otherwise chained `{"x","z"}` waypoints | |
+| Brain-cleared goal counts as reached within (m) | 6 | `radio/server.py:BRAIN_CLEAR_M` |
+| Max command length (chars) | 300 | `radio/server.py:MAX_COMMAND_CHARS` |
+| Max WebSocket message (bytes) | 512 | `radio/server.py:WS_MAX_MSG` |
+| Max audio upload (KB) | 600 (`RADIO_MAX_AUDIO_KB`) | |
+| STT per session / global (per min) | 10 / 30 | |
+| Commands per session / global (per min) | 20 / 60 | |
+| TTS syntheses global (per min) | 60 | |
+| Login attempts per IP / global (per min) | 5 / 20 | |
