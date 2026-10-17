@@ -19,6 +19,7 @@ function draw(tile, frame) {
   c.getContext("2d").drawImage(frame, 0, 0);
   frame.close();
   tile.frames++;
+  tile.el.classList.add("live");
 }
 
 function decoderFor(tile, codec) {
