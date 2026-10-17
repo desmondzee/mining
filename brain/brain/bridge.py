@@ -102,7 +102,7 @@ class SimBridge:
     async def _on_lidar(self, header: dict, payload: bytes) -> None:
         truck_id = header["truck"]
         self._scan_seq += 1
-        scan = Scan(self._scan_seq, header["pose"], decode_lidar(header, payload))
+        scan = Scan(self._scan_seq, header["pose"], decode_lidar(header, payload), header.get("sensor"))
         self.world.lidar[truck_id] = scan
         await self.lidar.publish(truck_id, lidar_message(truck_id, scan))
 
@@ -132,7 +132,7 @@ class SimBridge:
         truck.speed = float(header.get("speed", truck.speed))
 
         scan = self.world.lidar.get(truck_id)
-        action = policy.act(truck, rgb, depth, scan.points if scan else None)
+        action = policy.act(truck, rgb, depth, scan.points if scan else None, sensor=scan.sensor if scan else None)
         truck.throttle, truck.steer, truck.status = action.throttle, action.steer, action.status
         if action.status == "arrived":
             truck.set_goal(None)

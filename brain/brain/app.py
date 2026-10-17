@@ -175,7 +175,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         scan = world.lidar.get(truck_id)
         if scan is None:
             raise HTTPException(404, f"no lidar scan for {truck_id}")
-        meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose}
+        meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose, "sensor": scan.sensor}
         return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
 
     def find_view(camera: str) -> dict:

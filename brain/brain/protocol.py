@@ -65,8 +65,10 @@ def decompress_points(data: bytes) -> np.ndarray:
     return np.cumsum(planes, axis=1, dtype=np.int16).T.astype(np.float32) / 100
 
 
-def encode_lidar(truck: str, points: np.ndarray, pose: dict) -> bytes:
+def encode_lidar(truck: str, points: np.ndarray, pose: dict, sensor: dict | None = None) -> bytes:
     header = {"type": "lidar", "truck": truck, "points": len(points), "format": "int16cm", "pose": pose}
+    if sensor is not None:
+        header["sensor"] = sensor
     return encode(header, pack_points(points))
 
 

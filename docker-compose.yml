@@ -16,6 +16,7 @@ services:
       DETECTOR_MODEL: ${DETECTOR_MODEL-/app/models/yolo11n.onnx}
       DETECTOR_CLASSES: ${DETECTOR_CLASSES:-}
       DETECTOR_THREADS: ${DETECTOR_THREADS:-4}
+      MAX_SPEED: ${MAX_SPEED:-5.0}
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro
