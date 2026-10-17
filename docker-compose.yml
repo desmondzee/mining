@@ -8,6 +8,10 @@ services:
     ports:
       - "127.0.0.1:8080:8080"
       - "127.0.0.1:9000:9000"
+    environment:
+      WORLD_DIR: /app/data/worlds/quarry
+    volumes:
+      - ./data:/app/data:ro
     restart: unless-stopped
 
   fakesim:
@@ -15,6 +19,8 @@ services:
     build:
       context: .
       dockerfile: brain/Dockerfile
-    command: ["fakesim", "--host", "brain", "--port", "9000", "--trucks", "3"]
+    command: ["fakesim", "--host", "brain", "--port", "9000", "--trucks", "3", "--world", "${FAKESIM_WORLD-/app/data/worlds/quarry}"]
+    volumes:
+      - ./data:/app/data:ro
     depends_on: [brain]
     restart: unless-stopped

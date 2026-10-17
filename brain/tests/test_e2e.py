@@ -79,3 +79,57 @@ def test_lidar_api_and_policy_input():
     assert r.status_code == 200 and json.loads(r.headers["x-lidar"])["points"] == len(pts)
     np.testing.assert_allclose(np.frombuffer(r.content, "<f4").reshape(-1, 3), pts, atol=0.006)
     assert TestClient(app).get("/api/trucks/nope/lidar").status_code == 404
+
+
+def quarry_app():
+    from pathlib import Path
+
+    from brain.fakesim import load_world
+
+    world_dir = Path(__file__).resolve().parents[2] / "data" / "worlds" / "quarry"
+    app = create_app(sim_port=None, web_dir=None, world_dir=world_dir)
+    q = FakeQuarry(3, world=load_world(world_dir))
+    app.state.bridge._on_hello(q.hello())
+    for t in q.trucks:
+        truck = app.state.world.truck(t.id)
+        truck.x, truck.z, truck.yaw = t.x, t.z, t.yaw
+    return app, TestClient(app)
+
+
+def test_site_goal_routes_over_roads():
+    app, client = quarry_app()
+    r = client.post("/api/trucks/truck-0/goal", json={"site": "crusher"})
+    body = r.json()
+    assert r.status_code == 200 and body["goal_site"] == "crusher"
+    assert body["goal"] == [-159.86, 22.84] and body["route"][-1] == [-159.86, 22.84]
+    assert len(body["route"]) > 20
+    assert client.post("/api/trucks/truck-0/goal", json={"site": "nope"}).status_code == 404
+    assert client.post("/api/trucks/truck-0/goal", json={}).status_code == 422
+    state = client.get("/api/state").json()
+    assert {"roads", "sites", "junctions", "world_seq"} <= set(state)
+    assert state["trucks"][0]["route"] == body["route"]
+    cleared = client.delete("/api/trucks/truck-0/goal").json()
+    assert cleared["goal"] is None and cleared["goal_site"] is None and cleared["route"] == []
+
+
+def test_xy_goal_snaps_to_nearest_node():
+    _, client = quarry_app()
+    body = client.post("/api/trucks/truck-1/goal", json={"x": 80, "z": 50}).json()
+    assert body["goal_site"] == "ore_2" and body["goal"] == [81.56, 57.64]
+
+
+def test_xy_goal_without_roads_is_straight_line():
+    app = create_app(sim_port=None, web_dir=None)
+    app.state.world.truck("truck-0")
+    body = TestClient(app).post("/api/trucks/truck-0/goal", json={"x": 5, "z": 6}).json()
+    assert body["goal"] == [5, 6] and body["goal_site"] is None and body["route"] == []
+
+
+def test_world_endpoint_and_preview():
+    _, client = quarry_app()
+    w = client.get("/api/world").json()
+    assert len(w["roads"]) == 8 and len(w["sites"]) == 7 and len(w["junctions"]) == 2
+    assert w["preview"] and w["preview_bounds"] == w["bounds"]
+    r = client.get("/api/world/preview")
+    assert r.status_code == 200 and r.content[:4] == b"\x89PNG"
+    assert TestClient(create_app(sim_port=None, web_dir=None)).get("/api/world/preview").status_code == 404

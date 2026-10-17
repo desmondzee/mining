@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -21,11 +22,24 @@ DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
 
 class Goal(BaseModel):
-    x: float
-    z: float
+    x: float | None = None
+    z: float | None = None
+    site: str | None = None
 
 
-def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR) -> FastAPI:
+def load_world_meta(world_dir: Path | None) -> dict:
+    try:
+        return json.loads((world_dir / "world.json").read_text())
+    except (OSError, TypeError, ValueError):
+        return {}
+
+
+def create_app(
+    sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR, world_dir: Path | None = None
+) -> FastAPI:
+    meta = load_world_meta(world_dir)
+    preview = world_dir / meta["assets"]["preview"] if meta.get("assets", {}).get("preview") else None
+    preview = preview if preview and preview.is_file() else None
     world = World()
     video = LatestHub()
     lidar = LatestHub()
@@ -51,21 +65,46 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     def get_state():
         return world.snapshot()
 
-    def set_goal(truck_id: str, goal: tuple[float, float] | None) -> dict:
+    @app.get("/api/world")
+    def get_world():
+        return {**world.network(), "preview": preview is not None, "preview_bounds": meta.get("bounds")}
+
+    @app.get("/api/world/preview")
+    def get_preview():
+        if preview is None:
+            raise HTTPException(404, "no world preview")
+        return FileResponse(preview)
+
+    def find_truck(truck_id: str):
         if truck_id not in world.trucks:
             raise HTTPException(404, f"unknown truck {truck_id}")
-        truck = world.trucks[truck_id]
-        truck.goal = goal
-        truck.status = "driving" if goal else "idle"
-        return truck.to_dict()
+        return world.trucks[truck_id]
 
     @app.post("/api/trucks/{truck_id}/goal")
     def post_goal(truck_id: str, goal: Goal):
-        return set_goal(truck_id, (goal.x, goal.z))
+        truck = find_truck(truck_id)
+        graph = world.graph
+        site = goal.site
+        if site is None:
+            if goal.x is None or goal.z is None:
+                raise HTTPException(422, "goal needs site or x and z")
+            if graph is None:
+                truck.set_goal((goal.x, goal.z))
+                return truck.to_dict()
+            site = graph.nearest_node(goal.x, goal.z)
+        if graph is None or site not in graph.nodes:
+            raise HTTPException(404, f"unknown site {site}")
+        route = graph.route(truck.x, truck.z, site, truck.yaw)
+        if route is None:
+            raise HTTPException(409, f"no route to {site}")
+        truck.set_goal(graph.nodes[site], site, route)
+        return truck.to_dict()
 
     @app.delete("/api/trucks/{truck_id}/goal")
     def delete_goal(truck_id: str):
-        return set_goal(truck_id, None)
+        truck = find_truck(truck_id)
+        truck.set_goal(None)
+        return truck.to_dict()
 
     @app.get("/api/trucks/{truck_id}/lidar")
     def get_lidar(truck_id: str):
@@ -104,7 +143,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         await ws.accept()
         try:
             while True:
-                await ws.send_json(world.snapshot())
+                await ws.send_json(world.snapshot(network=False))
                 await asyncio.sleep(1 / STATE_HZ)
         except (WebSocketDisconnect, RuntimeError):
             pass
@@ -120,7 +159,8 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     web_dir = Path(os.environ.get("WEB_DIR", DEFAULT_WEB_DIR))
-    app = create_app(sim_port=int(os.environ.get("SIM_PORT", 9000)), web_dir=web_dir)
+    world_dir = Path(os.environ["WORLD_DIR"]) if os.environ.get("WORLD_DIR") else None
+    app = create_app(sim_port=int(os.environ.get("SIM_PORT", 9000)), web_dir=web_dir, world_dir=world_dir)
     uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 8080)))
 
 

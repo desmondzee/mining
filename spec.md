@@ -180,6 +180,40 @@
 | Pedestrian height (m) | 1.8 | `brain/brain/fakesim.py:PEDESTRIAN_HEIGHT` |
 | Pedestrian colour | RGB (255, 120, 20) | |
 | Actors rate (Hz) | 10 | `brain/brain/fakesim.py:ACTORS_HZ` |
+| Modes | flat test world (default), world mode `--world <dir>` | |
+
+## Fake sim world
+
+| Item | Value | Source |
+|---|---|---|
+| Option | `fakesim --world ../data/worlds/quarry`; empty = flat world | |
+| Input | `<dir>/world.json` | |
+| Bounds | `world.json` `bounds`, walls at bounds | |
+| Ground | flat, y = 0 | |
+| Roads | `roads[]` with `points` reduced to x, z | |
+| Sites | `sites[]` `{id, type, name}`, x, z from `pos` | |
+| Junctions | `junctions[]`, x, z from `pos` | |
+| Trucks | `trucks[]` by `slot`, `spawn`, yaw = `heading_deg` | |
+| Obstacles | `equipment[]` as cylinders, no rocks | |
+| Equipment radius (m) | 5 | `brain/brain/fakesim.py:EQUIPMENT_RADIUS` |
+| Equipment height (m) | 5 | `brain/brain/fakesim.py:EQUIPMENT_HEIGHT` |
+| Overview | roads drawn at `width_m` | |
+| Docker | `docker compose --profile fake up` runs `/app/data/worlds/quarry`; `FAKESIM_WORLD=` for the flat world | |
+| Data | `./data` mounted read-only at `/app/data` (brain and fakesim) | |
+
+| Pedestrian crossings | Value | Source |
+|---|---|---|
+| Roads used | roads sorted by `id`, first N | |
+| Crossing count | 4 | `brain/brain/fakesim.py:CROSSING_ROADS` |
+| Position | road polyline arc-length midpoint | |
+| Direction | perpendicular to the segment containing the midpoint | |
+| Waypoint order | left → right of the road's from → to direction | |
+| Extra length beyond road width (m) | 12 | `brain/brain/fakesim.py:CROSSING_EXTRA` |
+| Length | `width_m` + extra, centred on the road | |
+| Walkers per crossing | 3 | `brain/brain/fakesim.py:PEDESTRIANS_PER_PATH` |
+| Start fractions | 0, 1/3, 2/3 | |
+| Mode | ping-pong | |
+| Sent as | hello `paths` | |
 
 ## Truck dynamics
 
@@ -207,6 +241,41 @@
 | Full-steer heading error (deg) | 45 | `brain/brain/policy.py:STEER_GAIN_DEG` |
 | Depth band | rows 35 %–65 %, split into left / centre / right thirds | |
 | Statuses | `idle`, `driving`, `avoiding`, `arrived` | |
+| Goal without roads | straight line to `goal`, heading error / full-steer error | |
+| Goal with roads | pure pursuit along `route`, depth avoidance overrides steer | |
+
+## Routing
+
+| Item | Value | Source |
+|---|---|---|
+| Module | `brain/brain/routing.py` | |
+| Graph nodes | hello `sites` ∪ `junctions`, by `id` | |
+| Graph edges | hello `roads`, length = polyline length, to → from allowed unless `one_way` | |
+| Search | Dijkstra by length, from all nodes to the goal | |
+| Entry | projection of truck position onto road polylines; candidates within margin of the nearest | |
+| Entry margin (m) | 10 | `brain/brain/routing.py:ENTRY_MARGIN` |
+| Entry cost | distance to road + along-road distance to exit node + graph distance to goal | |
+| Wrong-way entry penalty (m) | 30 | `brain/brain/routing.py:UTURN_PENALTY` |
+| Wrong-way test | road direction vs truck yaw > 90° | |
+| Route | entry point, road points toward the exit node, road points of each edge, goal node position | |
+| Min route point spacing (m) | 0.5 | `brain/brain/routing.py:MIN_SPACING` |
+| `{x,z}` goal with roads | snapped to nearest node (site or junction) | |
+| Unreachable goal | HTTP 409 | |
+| Steering | pure pursuit, δ = atan(2·L·sin α / d), steer = δ / max steer | |
+| Lookahead (m) | 12 | `brain/brain/policy.py:LOOKAHEAD` |
+| Pursuit wheelbase L (m) | 5 | `brain/brain/policy.py:WHEELBASE` |
+| Pursuit max steer (deg) | 30 | `brain/brain/policy.py:MAX_STEER_DEG` |
+| Target behind (α ≥ 90°) | full steer toward target | |
+| Final point inside min turn circle (R = L / tan max steer) | steer 0 until reachable | |
+| Obstacles beyond the goal | depth ranges ≥ goal distance ignored | |
+| Within approach distance | slow-band avoidance slows only, no swerve; stop band unchanged | |
+| Progress | arc length `route_s`, monotonic, nearest point within window | |
+| Progress window ahead (m) | 25 | `brain/brain/policy.py:PROGRESS_WINDOW` |
+| Progress window behind (m) | 5 | `brain/brain/policy.py:PROGRESS_BACK` |
+| Arrival | remaining ≤ lookahead and within arrive radius of the last route point | |
+| Approach slow-down distance (m) | 20 | `brain/brain/policy.py:APPROACH_DIST` |
+| Approach min throttle | 0.3 | `brain/brain/policy.py:APPROACH_MIN_THROTTLE` |
+| On arrival | `goal`, `goal_site`, `route` cleared, status `arrived` then `idle` | |
 
 ## Sim protocol (TCP)
 
@@ -218,7 +287,7 @@
 
 | Message | Direction | Header | Payload |
 |---|---|---|---|
-| `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]` | none |
+| `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]`; optional `roads[{id,from,to,width_m,one_way,points[{x,z}]}]` (points from → to), `sites[{id,type,name,x,z}]`, `junctions[{id,x,z}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
@@ -236,7 +305,18 @@
 | Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 int16 cm points` | |
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
-| Map | rocks, pedestrian paths, pedestrians, trucks, goals | |
-| Read state | `GET /api/state` | |
-| Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
-| Clear goal | `DELETE /api/trucks/{id}/goal` | |
+| Map | preview background, roads (scaled by `width_m`), sites (labelled, coloured by type), junctions, obstacles, pedestrian paths, pedestrians, truck routes, goals, trucks | |
+| Map extent | hello `bounds` | |
+| Map canvas (px) | 800 × 800, CSS-scaled | |
+| Map click | `POST` `{x,z}` for the selected truck (brain snaps to a node when roads exist) | |
+| Send to | per-truck site select, `POST` `{site}` | |
+| Truck list | status, speed, `goal_site` | |
+| Read state | `GET /api/state`: `bounds`, `roads`, `sites`, `junctions`, `world_seq`, `cameras`, `truck_model`, `obstacles`, `paths`, `pedestrians`, `trucks[{id,x,z,yaw,speed,goal,goal_site,route,route_s,status,throttle,steer}]` | |
+| State stream | `/ws/state` = `/api/state` without `roads`, `sites`, `junctions`; refetch `/api/world` when `world_seq` changes | |
+| World | `GET /api/world` → `{bounds, roads, sites, junctions, preview, preview_bounds}` | |
+| World preview | `GET /api/world/preview` → `WORLD_DIR/world.json` `assets.preview` (PNG, top-down, north up, aligned to `bounds`), 404 if unset | |
+| Preview shown | when `preview_bounds` = hello `bounds` and roads exist | |
+| `WORLD_DIR` | brain env, Docker `/app/data/worlds/quarry` | |
+| Set goal | `POST /api/trucks/{id}/goal` `{"site"}` or `{"x","z"}` | |
+| Goal fields | `goal` [x, z], `goal_site` node id or null, `route` [[x, z], …] | |
+| Clear goal | `DELETE /api/trucks/{id}/goal` (clears `goal`, `goal_site`, `route`) | |

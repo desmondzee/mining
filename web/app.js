@@ -8,9 +8,14 @@ const truckList = document.getElementById("trucks");
 const simStatus = document.getElementById("sim-status");
 const summary = document.getElementById("summary");
 const PEDESTRIAN_COLOUR = "#ff7814";
+const SITE_COLOURS = { ore: "#4cc3a0", crusher: "#e5534b", dump: "#b36ae2", parking: "#f0b428", fuel: "#f08c28" };
+const PX = map.width / 400;
 const lidarView = createLidarView(document.getElementById("lidar"));
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [] };
+let network = { roads: [], sites: [], junctions: [] };
+let worldSeq = null;
+let preview = null;
 let selected = null;
 const tiles = new Map();
 const decoder = new TextDecoder();
@@ -99,22 +104,78 @@ function metresToPx(m) {
   return (m / (state.bounds[2] - state.bounds[0])) * map.width;
 }
 
+async function loadWorld() {
+  const w = await (await fetch("/api/world")).json();
+  network = { roads: w.roads, sites: w.sites, junctions: w.junctions };
+  preview = null;
+  const aligned = w.preview_bounds && w.preview_bounds.every((v, i) => Math.abs(v - w.bounds[i]) < 0.01);
+  if (w.preview && aligned && w.roads.length) {
+    const img = new Image();
+    img.onload = () => { preview = img; drawMap(); };
+    img.src = `/api/world/preview?seq=${worldSeq}`;
+  }
+  for (const li of truckItems.values()) fillSiteSelect(li.querySelector("select"));
+  drawMap();
+}
+
+function polyline(points) {
+  ctx.beginPath();
+  points.forEach((p, i) => { const [x, y] = toCanvas(p[0], p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+}
+
+function drawNetwork() {
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.strokeStyle = preview ? "rgba(235, 225, 205, 0.28)" : "rgba(190, 175, 150, 0.35)";
+  for (const r of network.roads) {
+    ctx.lineWidth = Math.max(metresToPx(r.width_m), 2 * PX);
+    polyline(r.points.map((p) => [p.x, p.z]));
+    ctx.stroke();
+  }
+  ctx.fillStyle = "#d8d2c4";
+  for (const j of network.junctions) {
+    const [cx, cy] = toCanvas(j.x, j.z);
+    ctx.beginPath(); ctx.arc(cx, cy, 3 * PX, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.font = `${11 * PX}px system-ui, sans-serif`;
+  ctx.textAlign = "center";
+  network.sites.forEach((s, i) => {
+    const [cx, cy] = toCanvas(s.x, s.z);
+    ctx.fillStyle = SITE_COLOURS[s.type] || "#ccc";
+    ctx.strokeStyle = "#000";
+    ctx.lineWidth = 1.5 * PX;
+    ctx.beginPath(); ctx.rect(cx - 5 * PX, cy - 5 * PX, 10 * PX, 10 * PX); ctx.fill(); ctx.stroke();
+    const dy = (i % 2 ? 18 : -10) * PX;
+    ctx.lineWidth = 3 * PX;
+    ctx.strokeText(s.name, cx, cy + dy);
+    ctx.fillText(s.name, cx, cy + dy);
+  });
+}
+
 function drawMap() {
   ctx.clearRect(0, 0, map.width, map.height);
-  ctx.strokeStyle = "#3a342c";
-  ctx.lineWidth = 1;
-  for (let i = 1; i < 10; i++) {
-    const p = (i / 10) * map.width;
-    ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, map.height); ctx.stroke();
-    ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(map.width, p); ctx.stroke();
+  if (preview) {
+    ctx.globalAlpha = 0.6;
+    ctx.drawImage(preview, 0, 0, map.width, map.height);
+    ctx.globalAlpha = 1;
+  } else {
+    ctx.strokeStyle = "#3a342c";
+    ctx.lineWidth = PX;
+    for (let i = 1; i < 10; i++) {
+      const p = (i / 10) * map.width;
+      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, map.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(map.width, p); ctx.stroke();
+    }
   }
+  drawNetwork();
   ctx.fillStyle = "#6e6e73";
   for (const o of state.obstacles) {
     const [cx, cy] = toCanvas(o.x, o.z);
-    ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.5), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.5 * PX), 0, Math.PI * 2); ctx.fill();
   }
-  ctx.strokeStyle = "rgba(255, 120, 20, 0.45)";
-  ctx.setLineDash([3, 3]);
+  ctx.strokeStyle = "rgba(255, 120, 20, 0.6)";
+  ctx.lineWidth = PX;
+  ctx.setLineDash([3 * PX, 3 * PX]);
   for (const path of state.paths) {
     if (path.length < 2) continue;
     ctx.beginPath();
@@ -126,7 +187,7 @@ function drawMap() {
   ctx.fillStyle = PEDESTRIAN_COLOUR;
   for (const p of state.pedestrians) {
     const [cx, cy] = toCanvas(p.x, p.z);
-    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 3.5 * PX, 0, Math.PI * 2); ctx.fill();
   }
   for (const t of state.trucks) {
     const colour = truckColour(t.id);
@@ -134,17 +195,24 @@ function drawMap() {
     if (t.goal) {
       const [gx, gy] = toCanvas(t.goal[0], t.goal[1]);
       ctx.strokeStyle = colour;
-      ctx.setLineDash([4, 4]);
-      ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(gx, gy); ctx.stroke();
-      ctx.setLineDash([]);
-      ctx.beginPath(); ctx.arc(gx, gy, 6, 0, Math.PI * 2); ctx.stroke();
+      ctx.lineWidth = 2 * PX;
+      if (t.route && t.route.length) {
+        polyline([[t.x, t.z], ...t.route]);
+        ctx.stroke();
+      } else {
+        ctx.setLineDash([4 * PX, 4 * PX]);
+        ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(gx, gy); ctx.stroke();
+        ctx.setLineDash([]);
+      }
+      ctx.beginPath(); ctx.arc(gx, gy, 7 * PX, 0, Math.PI * 2); ctx.stroke();
     }
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate((t.yaw * Math.PI) / 180);
     ctx.fillStyle = colour;
     ctx.strokeStyle = t.id === selected ? "#fff" : "#000";
-    ctx.lineWidth = 2;
+    ctx.lineWidth = 2 * PX;
+    ctx.scale(PX, PX);
     ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(-7, 8); ctx.closePath();
     ctx.fill(); ctx.stroke();
     ctx.restore();
@@ -169,14 +237,34 @@ function select(id) {
 
 const truckItems = new Map();
 
+function sendGoal(id, body) {
+  fetch(`/api/trucks/${encodeURIComponent(id)}/goal`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function fillSiteSelect(sel) {
+  sel.replaceChildren(new Option("send to…", ""), ...network.sites.map((s) => new Option(s.name, s.id)));
+  sel.hidden = !network.sites.length;
+}
+
 function renderTruckList() {
   for (const t of state.trucks) {
     let li = truckItems.get(t.id);
     if (!li) {
       li = document.createElement("li");
-      li.innerHTML = `<span class="swatch"></span><span><b></b> <span class="meta"></span></span><button>stop</button>`;
+      li.innerHTML = `<span class="swatch"></span><span><b></b> <span class="meta"></span></span><select></select><button>stop</button>`;
       li.querySelector("b").textContent = t.id;
       li.onclick = () => select(t.id);
+      const sel = li.querySelector("select");
+      fillSiteSelect(sel);
+      sel.onclick = (e) => e.stopPropagation();
+      sel.onchange = () => {
+        if (sel.value) sendGoal(t.id, { site: sel.value });
+        sel.value = "";
+      };
       li.querySelector("button").onclick = (e) => {
         e.stopPropagation();
         fetch(`/api/trucks/${encodeURIComponent(t.id)}/goal`, { method: "DELETE" });
@@ -186,17 +274,27 @@ function renderTruckList() {
     }
     li.className = t.id === selected ? "selected" : "";
     li.querySelector(".swatch").style.background = truckColour(t.id);
-    li.querySelector(".meta").textContent = `${t.status} · ${t.speed.toFixed(1)} m/s`;
+    const dest = t.goal_site ? ` · → ${siteName(t.goal_site)}` : "";
+    li.querySelector(".meta").textContent = `${t.status} · ${t.speed.toFixed(1)} m/s${dest}`;
   }
+}
+
+function siteName(id) {
+  const s = network.sites.find((n) => n.id === id);
+  return s ? s.name : id;
 }
 
 function onState(ev) {
   state = JSON.parse(ev.data);
+  if (state.world_seq !== worldSeq) {
+    worldSeq = state.world_seq;
+    loadWorld();
+  }
   if (!selected && state.trucks.length) select(state.trucks[0].id);
   simStatus.textContent = state.sim_connected ? "sim online" : "sim offline";
   simStatus.className = `pill ${state.sim_connected ? "on" : "off"}`;
   const model = state.truck_model ? ` · ${state.truck_model}` : "";
-  summary.textContent = `${state.trucks.length} trucks · ${state.pedestrians.length} pedestrians · ${state.obstacles.length} rocks${model}`;
+  summary.textContent = `${state.trucks.length} trucks · ${state.pedestrians.length} pedestrians · ${state.obstacles.length} obstacles${model}`;
   renderTruckList();
   drawMap();
 }
@@ -205,11 +303,7 @@ map.addEventListener("click", (e) => {
   if (!selected) return;
   const r = map.getBoundingClientRect();
   const [x, z] = toWorld(((e.clientX - r.left) / r.width) * map.width, ((e.clientY - r.top) / r.height) * map.height);
-  fetch(`/api/trucks/${encodeURIComponent(selected)}/goal`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ x, z }),
-  });
+  sendGoal(selected, { x, z });
 });
 
 connect("/ws/video", onVideo, true);
