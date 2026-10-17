@@ -19,6 +19,12 @@ Joints (USD xformOps written by build_stage.py, Isaac model frame +X fwd, +Y lef
     bucket  xformOp:rotateY:joint   + = bucket curl
     truck   BedHinge xformOp:rotateY:tip = -tip_deg (rig.json: +angle about glTF -X raises the front)
 No dirt/dust here (owned by another teammate).
+
+[exc-aim] Per-excavator scripted cycle: world.json equipment[].exc_keys_deg / exc_period_s (written by
+envgen/exc_aim.py: dig at the toe of the face, dump with the bucket pin 1.5 m over the truck bed at the face's
+load_point, 2-link IK on the rig.json pins). Same keys as the browser preview, so Isaac matches it. Falls back to
+rig.json dig_cycle / DEFAULT_KEYS when a machine has none. world.json is found via Animator(world_json=...),
+$WORLD_JSON, or next to / one level above the stage's root layer (data/worlds/<id>/isaac/world.usda).
 """
 from __future__ import annotations
 
@@ -83,12 +89,37 @@ def _norm_id(s: str) -> str:
     return str(s).replace("-", "_")
 
 
+def _load_equipment(stage: Usd.Stage, world_json: str | None) -> dict:
+    """[exc-aim] {normalised exc id: equipment dict} from world.json (empty if not found)."""
+    cands = [world_json, os.environ.get("WORLD_JSON")]
+    try:
+        d = os.path.dirname(stage.GetRootLayer().realPath or "")
+        if d:
+            cands += [os.path.join(d, "world.json"), os.path.join(os.path.dirname(d), "world.json")]
+    except Exception:
+        pass
+    for c in cands:
+        if c and os.path.exists(c):
+            try:
+                with open(c) as f:
+                    return {_norm_id(e["id"]): e for e in json.load(f).get("equipment", []) if "id" in e}
+            except (OSError, ValueError, KeyError):
+                continue
+    return {}
+
+
 class ExcavatorAnim:
-    def __init__(self, prim: Usd.Prim, keys, period: float):
+    def __init__(self, prim: Usd.Prim, keys, period: float, equipment: dict | None = None):
         self.prim = prim
         self.id = (prim.GetAttribute("mine:id").Get() if prim.HasAttribute("mine:id") else None) or prim.GetName()
         self.face = prim.GetAttribute("mine:face").Get() if prim.HasAttribute("mine:face") else None
         self.keys, self.period = keys, period
+        e = (equipment or {}).get(_norm_id(self.id))          # [exc-aim] scripted dig-at-face / dump-over-bed keys
+        if e and isinstance(e.get("exc_keys_deg"), list) and len(e["exc_keys_deg"]) > 1:
+            self.keys = [list(map(float, k)) for k in e["exc_keys_deg"]]
+            self.period = float(e.get("exc_period_s", period))
+            if e.get("exc_aim", {}).get("warnings"):
+                print(f"[exc-aim] {self.id}: " + "; ".join(e["exc_aim"]["warnings"]))
         self.attrs = {}
         path = prim.GetPath()
         for j in JOINTS:
@@ -167,9 +198,10 @@ class BedAnim:
 
 
 class Animator:
-    def __init__(self, stage: Usd.Stage, root: str = "/World"):
+    def __init__(self, stage: Usd.Stage, root: str = "/World", world_json: str | None = None):
         self.stage = stage
         self.keys, self.period = _load_cycle()
+        self.equipment = _load_equipment(stage, world_json)   # [exc-aim]
         self.excavators: dict[str, ExcavatorAnim] = {}
         self.beds: dict[str, BedAnim] = {}
         self.links: list["RadioLink"] = []
@@ -179,7 +211,7 @@ class Animator:
         eq = self.stage.GetPrimAtPath(f"{root}/Equipment")
         for p in (eq.GetChildren() if eq else []):
             try:
-                a = ExcavatorAnim(p, self.keys, self.period)
+                a = ExcavatorAnim(p, self.keys, self.period, self.equipment)
             except ValueError:
                 continue
             self.excavators.setdefault(_norm_id(a.id), a)
@@ -303,9 +335,9 @@ class RadioLink:
 _default: Animator | None = None
 
 
-def init(stage: Usd.Stage, root: str = "/World") -> Animator:
+def init(stage: Usd.Stage, root: str = "/World", world_json: str | None = None) -> Animator:
     global _default
-    _default = Animator(stage, root)
+    _default = Animator(stage, root, world_json)
     return _default
 
 
