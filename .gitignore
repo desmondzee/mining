@@ -1,12 +1,23 @@
 .venv/
 __pycache__/
 .pytest_cache/
+.ruff_cache/
+.mypy_cache/
 *.pyc
+*.log
+.env
+.env.*
 .DS_Store
+.idea/
+.vscode/
 
 unity/**/Library/
 unity/**/Temp/
 unity/**/Logs/
 unity/**/obj/
 unity/**/UserSettings/
+unity/**/MemoryCaptures/
 unity/**/Build/
+unity/**/Builds/
+unity/**/*.csproj
+unity/**/*.sln
