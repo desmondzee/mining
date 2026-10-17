@@ -1,0 +1,12 @@
+{
+  "name": "quarry-web-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test *.test.mjs",
+    "test:e2e": "node --test palette.e2e.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.48.2"
+  }
+}
