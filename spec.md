@@ -521,7 +521,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
 | Encoder overload | latest frame wins, frames arriving while encoding are dropped | |
 | Browser decode | WebCodecs `VideoDecoder`, Annex B (no `description`), `web/video.js` | |
-| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| u16 LE meta_len \| meta JSON \| JPEG`, latest frame per camera; used when `VideoDecoder` lacks `avc1.42e01e` | |
+| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| u16 LE meta_len \| meta JSON \| JPEG`, latest frame per camera; the dashboard default; H.264 with `?codec=h264` on the page URL when `VideoDecoder` has `avc1.42e01e` | |
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |

@@ -96,6 +96,7 @@ async function h264Supported() {
 }
 
 export async function videoFeed(tileFor, onJpeg) {
-  if (!(await h264Supported())) return { codec: "jpeg", path: "/ws/video?codec=jpeg", onMessage: onJpeg };
+  const want = new URLSearchParams(location.search).get("codec");
+  if (want !== "h264" || !(await h264Supported())) return { codec: "jpeg", path: "/ws/video?codec=jpeg", onMessage: onJpeg };
   return { codec: "h264", path: "/ws/video", onMessage: (ev) => onH264(tileFor, ev) };
 }
