@@ -209,6 +209,14 @@ class World:
             self.sites[s["id"]] = Site(s["id"], t, name, x, z, spoken, sorted(aliases, key=len, reverse=True),
                                        point, slots)
         self.trucks = {t["id"]: t for t in self.raw.get("trucks", [])}
+        # exact stopping poses (load/dump points, parking slots): (x, z, heading_deg) -- the mock snaps onto these
+        self.poses: list[tuple[float, float, float]] = []
+        for s in self.raw["sites"]:
+            for k in ("load_point", "dump_point"):
+                if k in s and "pos3" in s[k]:
+                    self.poses.append((s[k]["pos3"][0], s[k]["pos3"][2], float(s[k].get("heading_deg", 0.0))))
+            for sl in s.get("slots", []):
+                self.poses.append((sl["pos3"][0], sl["pos3"][2], float(sl.get("heading_deg", 0.0))))
         # excavators (radio-only state): one per ore face, from world.equipment
         self.excavators: dict[str, dict] = {}
         for e in self.raw.get("equipment", []):
@@ -219,6 +227,9 @@ class World:
                                         "heading_deg": e.get("heading_deg", 0.0), "name": e.get("name", e["id"]),
                                         "pos3": [round(v, 2) for v in p3]}
         self._build_graph()
+
+    def pose_at(self, pt: tuple[float, float]) -> tuple[float, float, float] | None:
+        return next((p for p in self.poses if math.dist(pt, p[:2]) < 0.1), None)
 
     def exc_for_face(self, site_id: str | None) -> str | None:
         return next((eid for eid, e in self.excavators.items() if e["face"] == site_id), None)
@@ -486,11 +497,15 @@ class MockBrain:
     LOOKAHEAD_MIN, LOOKAHEAD_MAX = 6.0, 10.0
     ARRIVE_M = 4.0
     KTURN_SPEED, KTURN_EDGE_M = 1.5, 4.0
+    SNAP_S = 1.0  # ease onto the exact final pose (load/dump point, slot) over this long
 
     def __init__(self, world: World):
         self.trucks: dict[str, dict] = {}
         self.paths: dict[str, dict] = {}
         self.kturn: dict[str, int] = {}
+        self.final: dict[str, tuple[float, float, float]] = {}  # tid -> exact final pose of the current leg
+        self.goal_raw: dict[str, tuple[float, float]] = {}  # goal as posted (before corridor clamp)
+        self.snap_left: dict[str, float] = {}
         self.set_world(world)
         for i, (tid, t) in enumerate(sorted(world.trucks.items()) or [(f"truck-{i}", None) for i in range(3)]):
             if t:
@@ -598,6 +613,12 @@ class MockBrain:
                 self._plan(t)
                 p = self.paths[t["id"]]
             gx, gz = p["pts"][-1]
+            fin = self.final.get(t["id"])
+            if fin and math.dist(self.goal_raw.get(t["id"], (math.inf, math.inf)), fin[:2]) < 0.1 and (
+                    t["id"] in self.snap_left or min(math.hypot(gx - t["x"], gz - t["z"]),
+                                                     math.hypot(fin[0] - t["x"], fin[1] - t["z"])) < self.ARRIVE_M):
+                self._snap(t, fin, dt)
+                return
             if math.hypot(gx - t["x"], gz - t["z"]) < self.ARRIVE_M:
                 throttle, steer, t["status"], target_v = 0.0, 0.0, "arrived", 0.0
                 self.kturn.pop(t["id"], None)
@@ -660,6 +681,20 @@ class MockBrain:
                 self.kturn[t["id"]] = -turn
         t["x"], t["z"] = cx, cz
 
+    def _snap(self, t: dict, fin: tuple[float, float, float], dt: float) -> None:
+        """Final waypoint reached: glide onto the exact goal position and heading instead of stopping short."""
+        left = self.snap_left.get(t["id"], self.SNAP_S)
+        k = 1.0 if left <= dt else dt / left
+        t["x"] += (fin[0] - t["x"]) * k
+        t["z"] += (fin[1] - t["z"]) * k
+        t["yaw"] = (t["yaw"] + ((fin[2] - t["yaw"] + 180) % 360 - 180) * k) % 360
+        self.snap_left[t["id"]] = max(0.0, left - dt)
+        t["speed"], t["throttle"], t["steer"], t["status"] = 0.0, 0.0, 0.0, "arrived"
+        self.kturn.pop(t["id"], None)
+
+    def set_final(self, tid: str, x: float, z: float, heading_deg: float) -> None:
+        self.final[tid] = (x, z, heading_deg)
+
     async def state(self) -> dict:
         return {"sim_connected": True, "mock": True, "trucks": [dict(t, goal=list(t["goal"]) if t["goal"] else None) for t in self.trucks.values()]}
 
@@ -669,11 +704,16 @@ class MockBrain:
         # a goal off the road (map click) is pulled onto the nearest corridor point so the truck can actually arrive
         self.trucks[tid]["goal"] = self.corridor.clamp(x, z, margin=1.0) if self.corridor.segs else (x, z)
         self.trucks[tid]["status"] = "driving"
+        self.goal_raw[tid] = (x, z)
+        self.snap_left.pop(tid, None)
 
     async def clear_goal(self, tid: str) -> None:
         if tid in self.trucks:
             self.trucks[tid]["goal"] = None
             self.trucks[tid]["status"] = "idle"
+        self.final.pop(tid, None)
+        self.goal_raw.pop(tid, None)
+        self.snap_left.pop(tid, None)
 
 
 # --------------------------------------------------------------------------- parsing
@@ -697,6 +737,8 @@ EXC_ALL_RE = re.compile(rf"\b(?:all|every|each|both)\s+(?:the\s+|of\s+the\s+)?{E
 EXC_HOLD_RE = re.compile(r"\b(hold|holding|stop|stopped|pause|paused|halt|freeze|stand ?by|wait|cease|quit|shut down|stand down)\b")
 EXC_DIG_RE = re.compile(r"\b(dig|digs|digging|start|starts|begin|resume|work|working|commence)\b")
 EXC_GOTO_RE = re.compile(r"\b(go|goes|send|head|drive|move|proceed|unload|haul|hauling|bring|over to|load at|report to|meet)\b")
+TRUCK_DIG_RE = re.compile(r"\b(dig|digs|digging|excavate|excavating|scoop|scooping)\b")
+EXC_ADDR_RE = re.compile(rf"^(?:the\s+)?(?:{EXCW}\s*(?:number\s*)?#?-?\s*{NUM_RE}\b|exc-\d+\b)")
 EXC_HAUL_RE = re.compile(r"\b(haul|hauling|haulage|cycle|cycling|shuttle|ferry)\b|\bfrom\s+(?:the\s+)?(?:\w+\s+)?(?:excavators?|diggers?|shovels?|exc-)")
 VOCAB = ["truck", "trucks", "excavator", "excavators", "digger", "diggers", "shovel", "lower", "middle", "upper", "face",
          "bench", "crusher", "dump", "waste", "ready", "line", "fuel", "bay", "haul", "stop", "status", "report",
@@ -852,11 +894,58 @@ class Parser:
     def parse_regex(self, text: str) -> list[dict]:
         t = exc_norm(norm(text))
         calls = self._parse_text(t)
+        fixed = t
         if not calls:  # unscripted speech: snap near-miss words to the radio vocabulary and retry
             fixed = fuzzy_fix(t)
             if fixed != t:
                 calls = self._parse_text(fixed)
+        if not calls:  # a unit was named but the order made no sense: that unit talks back
+            calls = self.clarify_regex(t) or (self.clarify_regex(fixed) if fixed != t else [])
         return calls
+
+    # ---- in-character clarifications (regex path)
+    @staticmethod
+    def _clarify(unit: str, message: str) -> dict:
+        return {"name": "clarify", "args": {"unit": unit, "message": message}}
+
+    def _bad_truck(self, seg: str) -> dict | None:
+        """'truck five go to the dump' with only three trucks -> dispatch says so (instead of picking an idle truck)."""
+        if self._segment_trucks(seg)[0]:
+            return None
+        for m in TRUCK_RE.finditer(LITERAL_ID_RE.sub(" ", seg)):
+            for w in re.split(r"\s*(?:,|and|&|\+)\s*(?:trucks?\s*)?", m.group(1)):
+                v = num_value(w)
+                if w.strip() != "for" and v is not None and not self.truck_from_number(v):
+                    n = len(self.truck_ids())
+                    top = NUM_NAMES[n].lower() if n < len(NUM_NAMES) else str(n)
+                    return self._clarify("dispatch", f"Control, we only have trucks one to {top}.")
+        for m in LITERAL_ID_RE.finditer(seg):
+            if f"truck-{m.group(1)}" not in self.truck_ids():
+                n = len(self.truck_ids())
+                top = NUM_NAMES[n].lower() if n < len(NUM_NAMES) else str(n)
+                return self._clarify("dispatch", f"Control, we only have trucks one to {top}.")
+        return None
+
+    def _exc_cant_drive(self, eid: str) -> dict:
+        face = self.world.sites.get(self.world.excavators[eid].get("face") or "")
+        return self._clarify(eid, f"{exc_callsign(eid)} here, I stay at {face.name if face else 'my face'}. Want me to start digging?")
+
+    def clarify_regex(self, t: str) -> list[dict]:
+        if bad := self._bad_truck(t):
+            return [bad]
+        trucks, _ = self._segment_trucks(t)
+        if trucks:
+            cs = callsign(trucks[0])
+            if TRUCK_DIG_RE.search(TRUCK_RE.sub(" ", t)):
+                return [self._clarify(trucks[0], f"{cs} here, I haul, I don't dig. Want me at an excavator?")]
+            return [self._clarify(trucks[0], f"{cs} here, say again? I can go to a face, an excavator, the crusher, "
+                                             "the dump, fuel or the ready line.")]
+        excs = self._segment_excavators(t)
+        if excs:
+            if EXC_GOTO_RE.search(t):
+                return [self._exc_cant_drive(excs[0])]
+            return [self._clarify(excs[0], f"{exc_callsign(excs[0])} here, I can start digging or hold. Say again?")]
+        return []
 
     def _parse_text(self, t: str) -> list[dict]:
         exc_ahead = rf"(?:{EXCW}\b|exc-\d|the\s+(?:\w+\s+){{1,2}}{EXCW}\b)"
@@ -869,7 +958,15 @@ class Parser:
             seg = (seg or "").strip(" ,")
             if not seg:
                 continue
+            if bad := self._bad_truck(seg):
+                calls.append(bad)
+                continue
             excs = self._segment_excavators(seg)
+            if (excs and not carry and not self._segment_trucks(seg)[0] and EXC_ADDR_RE.search(seg)
+                    and EXC_GOTO_RE.search(seg) and not EXC_HOLD_RE.search(seg) and not STATUS_RE.search(seg)
+                    and not EXC_DIG_RE.search(seg)):
+                calls.append(self._exc_cant_drive(excs[0]))  # "excavator two drive to the crusher"
+                continue
             if excs is not None and (self._segment_trucks(seg)[0] or (
                     not EXC_HOLD_RE.search(seg) and not STATUS_RE.search(seg) and not EXC_DIG_RE.search(seg)
                     and EXC_GOTO_RE.search(seg))):
@@ -992,6 +1089,12 @@ class Parser:
             fn("status", "Trucks report their status over the radio.", {"trucks": trucks}, ["trucks"]),
             fn("dig", "Excavators start digging (loading trucks) at their ore face.", {"excavators": excs}, ["excavators"]),
             fn("hold", "Excavators stop digging and hold.", {"excavators": excs}, ["excavators"]),
+            fn("clarify", "The addressed machine's driver talks back on the radio when the order is impossible, "
+               "ambiguous or nonsensical for that machine. No machine moves.",
+               {"unit": {"type": "string", "enum": ids + self.exc_ids + ["dispatch"],
+                         "description": "who answers: the addressed truck/excavator, or 'dispatch' if it is unknown"},
+                "message": {"type": "string", "description": "short in-character radio reply, under 20 words"}},
+               ["unit", "message"]),
         ]
 
     def system_prompt(self) -> str:
@@ -1020,7 +1123,12 @@ class Parser:
             "no tool if nothing plausible matches.\n\n"
             "Rules: 'haul X to Y' / 'cycle' / 'run loads' -> haul (default to_site = crusher). 'return', 'ready line', "
             "'park' -> return_to_parking. 'stop', 'hold', 'halt', 'all stop' -> stop. 'status', 'report', 'where are you' "
-            "-> status (no trucks named = all). If nothing is a truck or excavator command, call no tool."
+            "-> status (no trucks named = all). If nothing is a truck or excavator command, call no tool.\n\n"
+            "If the order is impossible, ambiguous or nonsensical for that machine (e.g. a truck told to dig, an excavator "
+            "told to drive to the crusher, an unknown truck number, an unknown place, missing destination), call clarify "
+            "with a short, friendly, in-character radio reply from that machine's driver that says what it can do instead, "
+            "e.g. 'Truck One here, I can't dig, I'm a haul truck. Want me to go to Excavator One?' Keep it under 20 words. "
+            "Unknown truck/excavator number -> unit='dispatch'. Never move a different machine instead."
         )
 
 
@@ -1325,6 +1433,12 @@ class Radio:
         start = (t["x"], t["z"]) if t else goal
         wps = simplify(start, self.world.road_path(start, goal)) or [Waypoint(goal[0], goal[1], True, True)]
         ctl.target = site_id
+        if self.brain.mode == "mock":  # mock only: let it park exactly on load/dump points and slots
+            pose = self.world.pose_at(goal)
+            if pose:
+                self.brain.set_final(ctl.id, *pose)
+            else:
+                self.brain.final.pop(ctl.id, None)
         if self.brain_routing:
             ctl.route = []
             await self.post_leg(ctl, site_id, goal)
@@ -1432,6 +1546,10 @@ class Radio:
             exc_replied: set[str] = set()
             for call in calls:
                 name, a = call["name"], call.get("args") or {}
+                if name == "clarify":
+                    replies.append(self.clarify_reply(a))
+                    actions.append({"tool": "clarify", "unit": replies[-1][1] or "dispatch"})
+                    continue
                 if name in ("dig", "hold", "exc_status"):
                     excs = self.parser.norm_excavators(a.get("excavators"))
                     actions.append({"tool": name, "excavators": excs})
@@ -1524,6 +1642,21 @@ class Radio:
                     elif name == "status":
                         replies += [(exc_callsign(e), e, self.exc_status_text(e)) for e in sorted(self.exc_state)]
         return actions, replies
+
+    def clarify_reply(self, a: dict) -> tuple[str, str | None, str]:
+        """(from, unit id, text) for a clarify call; unknown unit -> dispatch voice."""
+        unit = str(a.get("unit") or "").strip().lower()
+        msg = re.sub(r"\s+", " ", str(a.get("message") or "")).strip()[:200] or "Say again, over."
+        if unit and unit != "dispatch":
+            if re.search(r"exc|digger|shovel", unit):
+                got = self.parser.norm_excavators([unit])
+                if got:
+                    return exc_callsign(got[0]), got[0], msg
+            else:
+                got = self.parser.norm_trucks([unit])
+                if len(got) == 1:
+                    return callsign(got[0]), got[0], msg
+        return "Control", None, msg
 
     def resolve_exc(self, ref, tid: str) -> str | None:
         """Excavator id from a tool arg; 'nearest' = nearest digging excavator (else nearest) to the truck."""
