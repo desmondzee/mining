@@ -24,6 +24,27 @@ def heading_error(truck: Truck, gx: float, gz: float) -> float:
     return (bearing - truck.yaw + 180.0) % 360.0 - 180.0
 
 
+def sensor_rotation(yaw: float, pitch: float, roll: float) -> np.ndarray:
+    y, p, r = (math.radians(a) for a in (yaw, pitch, roll))
+    ry = np.array([[math.cos(y), 0, math.sin(y)], [0, 1, 0], [-math.sin(y), 0, math.cos(y)]])
+    rx = np.array([[1, 0, 0], [0, math.cos(p), -math.sin(p)], [0, math.sin(p), math.cos(p)]])
+    rz = np.array([[math.cos(r), -math.sin(r), 0], [math.sin(r), math.cos(r), 0], [0, 0, 1]])
+    return ry @ rx @ rz
+
+
+def planner_points(
+    points: np.ndarray, sensor: dict, truck: Truck, ground: float, lidar_height: float
+) -> np.ndarray:
+    """Re-express sensor-frame points as the planner expects them: a level sensor lidar_height above
+    the ground at the truck centre, facing the truck heading."""
+    rot = sensor_rotation(sensor["yaw"], sensor.get("pitch", 0.0), sensor.get("roll", 0.0))
+    world = points @ rot.T + [sensor["x"], sensor["y"], sensor["z"]]
+    dx, dz = world[:, 0] - truck.x, world[:, 2] - truck.z
+    s, c = math.sin(math.radians(truck.yaw)), math.cos(math.radians(truck.yaw))
+    y = world[:, 1] - ground - lidar_height
+    return np.stack([dx * c - dz * s, y, dx * s + dz * c], axis=1).astype(np.float32)
+
+
 def sector_ranges(depth: np.ndarray) -> tuple[float, float, float]:
     h, w = depth.shape
     band = depth[int(h * 0.35) : int(h * 0.65)]
@@ -38,6 +59,7 @@ def act(
     depth: np.ndarray | None,
     points: np.ndarray | None = None,
     now: float | None = None,
+    sensor: dict | None = None,
 ) -> Action:
     truck.planner = "learned" if planning.scorer() is not None else "rules"
     if truck.goal is None:
@@ -49,6 +71,9 @@ def act(
 
     nav = planning.nav_map()
     if truck.path and nav is not None:
+        ground = float(nav.ground_at(truck.x, truck.z))
+        if points is not None and sensor is not None and math.isfinite(ground):
+            points = planner_points(points, sensor, truck, ground, planning.lidar_height())
         d = planning.follow(truck, nav, points, planning.scorer(), planning.lidar_height(), now)
         return Action(d.throttle, d.steer, d.status)
 

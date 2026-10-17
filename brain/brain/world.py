@@ -40,6 +40,7 @@ class Scan:
     seq: int
     pose: dict
     points: np.ndarray
+    sensor: dict | None = None
 
 
 @dataclass

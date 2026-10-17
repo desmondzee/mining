@@ -163,6 +163,11 @@ class Sim:
     def actors(self) -> list[dict]:
         return [w.state() for w in self.walkers]
 
+    def lidar_pose(self, index: int) -> tuple[np.ndarray, np.ndarray]:
+        t = self.trucks[index]
+        r = self.rotation(t)
+        return self.position(t) + r @ self.rig.lidar, yaw_matrix(t.yaw) if self.lidar_level else r
+
     def camera_pose(self, index: int) -> tuple[np.ndarray, np.ndarray]:
         t = self.trucks[index]
         r = self.rotation(t)

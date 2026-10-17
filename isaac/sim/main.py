@@ -84,7 +84,7 @@ def run(args: argparse.Namespace) -> None:
 
     from isaac.sim.bridge import Bridge
     from isaac.sim.protocol import encode_actors, encode_frame, encode_jpeg, encode_lidar
-    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
+    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HFOV, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
     sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
@@ -170,8 +170,8 @@ def run(args: argparse.Namespace) -> None:
                 bridge.send(encode_actors(sim.actors()))
             if sim.time >= next_lidar:
                 next_lidar = max(next_lidar + 1 / LIDAR_HZ, sim.time - 1 / LIDAR_HZ)
-                for t, points in zip(sim.trucks, sim.lidars()):
-                    bridge.send(encode_lidar(t.id, points, t.pose()))
+                for i, (t, points) in enumerate(zip(sim.trucks, sim.lidars())):
+                    bridge.send(encode_lidar(t.id, points, t.pose(), cam_field(*sim.lidar_pose(i), LIDAR_HFOV)))
         t3 = time.monotonic()
         if pending is not None:
             pending.result()
