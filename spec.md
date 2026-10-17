@@ -297,7 +297,7 @@
 | Item | Value | Source |
 |---|---|---|
 | Inputs | pose, goal, RGB, depth, latest lidar points | |
-| Outputs | throttle 0..1, steer -1..1 (positive = right) | |
+| Outputs | throttle -1..1 (negative only for dead-end reverse; Isaac and fake sim honour it), steer -1..1 (positive = right) | |
 | Arrive radius (m) | 4 | `brain/brain/policy.py:ARRIVE_RADIUS` |
 | Stop distance (m) | 6 | `brain/brain/policy.py:STOP_DIST` |
 | Slow distance (m) | 15 | `brain/brain/policy.py:SLOW_DIST` |
@@ -334,6 +334,10 @@
 | Speed cap default (m/s) | 5.0 | `brain/brain/policy.py:MAX_SPEED` |
 | Speed near goal (m/s) | 3.0 | `brain/brain/policy.py:GOAL_SPEED` |
 | Near goal distance (m) | 25.0 | `brain/brain/policy.py:GOAL_SLOW_DIST` |
+| Dead-end recovery | no safe forward candidate for the stuck time: straight reverse (status `reversing`, throttle −speed / 8) while the nav grid 3 m behind is clear for the whole width, up to the reverse distance, then replan; no rear lidar, so other vehicles behind are not checked | `brain/brain/recovery.py` |
+| Stuck time (s) | 3.0 | `brain/brain/recovery.py:STUCK_AFTER` |
+| Reverse speed (m/s) | 1.5 | `brain/brain/recovery.py:REVERSE_SPEED` |
+| Reverse distance (m) | 10.0 | `brain/brain/recovery.py:REVERSE_DIST` |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
