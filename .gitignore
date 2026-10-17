@@ -21,3 +21,14 @@ unity/**/Build/
 unity/**/Builds/
 unity/**/*.csproj
 unity/**/*.sln
+
+downloads/
+unity/Assets/Models/People/
+unity/Assets/Models/People.meta
+unity/Assets/Scenes/
+unity/Assets/Scenes.meta
+unity/Assets/Prefabs/
+unity/Assets/Prefabs.meta
+unity/Assets/Generated/
+unity/Assets/Generated.meta
+unity/Captures/

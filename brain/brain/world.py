@@ -35,6 +35,10 @@ class World:
     bounds: list[float] = field(default_factory=lambda: [-100.0, -100.0, 100.0, 100.0])
     cameras: list[str] = field(default_factory=list)
     lidar: dict[str, Scan] = field(default_factory=dict)
+    obstacles: list[dict] = field(default_factory=list)
+    paths: list[list[dict]] = field(default_factory=list)
+    pedestrians: list[dict] = field(default_factory=list)
+    truck_model: str = ""
     sim_connected: bool = False
 
     def truck(self, truck_id: str) -> Truck:
@@ -47,5 +51,9 @@ class World:
             "sim_connected": self.sim_connected,
             "bounds": self.bounds,
             "cameras": self.cameras,
+            "truck_model": self.truck_model,
+            "obstacles": self.obstacles,
+            "paths": self.paths,
+            "pedestrians": self.pedestrians,
             "trucks": [t.to_dict() for t in self.trucks.values()],
         }

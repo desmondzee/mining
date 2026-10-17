@@ -4,7 +4,7 @@ using System.Text;
 public static class BrainProtocol
 {
     [Serializable] public class Size { public int w; public int h; }
-    [Serializable] public class RgbMeta { public int w; public int h; public bool flip; public int channels = 4; }
+    [Serializable] public class RgbMeta { public int w; public int h; public bool flip; public int channels = 4; public string format = "raw"; public int bytes; }
     [Serializable] public class Pose { public float x; public float z; public float yaw; }
 
     [Serializable]
@@ -17,6 +17,18 @@ public static class BrainProtocol
         public Size depth = new Size();
         public Pose pose = new Pose();
         public float speed;
+    }
+
+    [Serializable] public class MapPoint { public float x; public float z; }
+    [Serializable] public class MapPath { public MapPoint[] points; }
+    [Serializable] public class Obstacle { public float x; public float z; public float r; }
+    [Serializable] public class PedestrianState { public string id; public float x; public float z; public float yaw; }
+
+    [Serializable]
+    public class ActorsMsg
+    {
+        public string type = "actors";
+        public PedestrianState[] pedestrians;
     }
 
     [Serializable]

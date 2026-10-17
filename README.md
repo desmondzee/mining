@@ -12,7 +12,8 @@ Unity player / fakesim ── TCP :9000 ──▶ brain ── HTTP/WS :8080 ─
 | `brain/` | FastAPI server: sim bridge, policy, frame fan-out |
 | `brain/brain/fakesim.py` | Unity stand-in speaking the same protocol |
 | `web/` | Camera grid and goal map |
-| `unity/` | Unity scripts and setup |
+| `unity/` | Unity project |
+| `tools/fetch_rocketbox.py` | downloads Rocketbox people into the Unity project |
 
 ## Run on watson
 

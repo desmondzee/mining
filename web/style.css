@@ -30,6 +30,7 @@ h1 { font-size: 16px; margin: 0; }
 h2 { font-size: 13px; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .05em; color: var(--muted); }
 
 .pill { font-size: 12px; padding: 2px 8px; border-radius: 999px; }
+.summary { color: var(--muted); font-size: 12px; margin-left: auto; }
 .pill.on { background: color-mix(in srgb, var(--ok) 20%, transparent); color: var(--ok); }
 .pill.off { background: color-mix(in srgb, var(--bad) 20%, transparent); color: var(--bad); }
 

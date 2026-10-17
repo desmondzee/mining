@@ -11,6 +11,9 @@ public class BrainClient : MonoBehaviour
     public string host = "127.0.0.1";
     public int port = 9000;
     public Vector4 bounds = new Vector4(-100, -100, 100, 100);
+    public string truckModel = "";
+    public Transform obstacles;
+    public float actorsRate = 10f;
 
     public static BrainClient Instance { get; private set; }
 
@@ -20,6 +23,9 @@ public class BrainClient : MonoBehaviour
     readonly BlockingCollection<byte[]> outbox = new BlockingCollection<byte[]>(64);
     readonly ConcurrentDictionary<string, ActionMsg> actions = new ConcurrentDictionary<string, ActionMsg>();
     Thread worker;
+    byte[] hello;
+    PedestrianWalker[] walkers;
+    float nextActors;
     volatile bool running;
     volatile bool connected;
 
@@ -29,7 +35,17 @@ public class BrainClient : MonoBehaviour
     public static void RegisterCamera(string name) { lock (cameras) if (!cameras.Contains(name)) cameras.Add(name); }
 
     [Serializable] public class ActionMsg { public string type; public string truck; public float throttle; public float steer; [NonSerialized] public float receivedAt; }
-    [Serializable] class HelloMsg { public string type = "hello"; public string[] trucks; public string[] cameras; public float[] bounds; }
+    [Serializable]
+    class HelloMsg
+    {
+        public string type = "hello";
+        public string[] trucks;
+        public string[] cameras;
+        public float[] bounds;
+        public string truck_model;
+        public BrainProtocol.Obstacle[] obstacles;
+        public BrainProtocol.MapPath[] paths;
+    }
 
     void Awake()
     {
@@ -39,17 +55,32 @@ public class BrainClient : MonoBehaviour
         if (p != null) port = int.Parse(p);
     }
 
-    void OnEnable()
+    void Start()
     {
+        walkers = FindObjectsByType<PedestrianWalker>(FindObjectsSortMode.InstanceID);
+        hello = Hello();
         running = true;
         worker = new Thread(Run) { IsBackground = true, Name = "BrainClient" };
         worker.Start();
     }
 
-    void OnDisable()
+    void OnDestroy()
     {
         running = false;
         worker?.Join(1000);
+    }
+
+    void Update()
+    {
+        if (!connected || Time.time < nextActors) return;
+        nextActors = Time.time + 1f / actorsRate;
+        var msg = new BrainProtocol.ActorsMsg { pedestrians = new BrainProtocol.PedestrianState[walkers.Length] };
+        for (int i = 0; i < walkers.Length; i++)
+        {
+            var t = walkers[i].transform;
+            msg.pedestrians[i] = new BrainProtocol.PedestrianState { id = walkers[i].name, x = t.position.x, z = t.position.z, yaw = t.eulerAngles.y };
+        }
+        Send(BrainProtocol.Encode(JsonUtility.ToJson(msg), null));
     }
 
     public void Send(byte[] message)
@@ -75,7 +106,6 @@ public class BrainClient : MonoBehaviour
                     var stream = client.GetStream();
                     Debug.Log($"[BrainClient] connected to {host}:{port}");
                     while (outbox.TryTake(out _)) { }
-                    var hello = Hello();
                     stream.Write(hello, 0, hello.Length);
                     connected = true;
 
@@ -123,9 +153,30 @@ public class BrainClient : MonoBehaviour
 
     byte[] Hello()
     {
-        var msg = new HelloMsg { bounds = new[] { bounds.x, bounds.y, bounds.z, bounds.w } };
+        var msg = new HelloMsg { bounds = new[] { bounds.x, bounds.y, bounds.z, bounds.w }, truck_model = truckModel };
         lock (trucks) msg.trucks = trucks.ToArray();
         lock (cameras) msg.cameras = cameras.ToArray();
+
+        var rocks = new List<BrainProtocol.Obstacle>();
+        if (obstacles != null)
+            foreach (var r in obstacles.GetComponentsInChildren<Renderer>())
+                rocks.Add(new BrainProtocol.Obstacle { x = r.bounds.center.x, z = r.bounds.center.z, r = Mathf.Max(r.bounds.extents.x, r.bounds.extents.z) });
+        msg.obstacles = rocks.ToArray();
+
+        var paths = new List<BrainProtocol.MapPath>();
+        var seen = new HashSet<Transform>();
+        foreach (var w in walkers)
+        {
+            if (w.path == null || !seen.Add(w.path)) continue;
+            var points = new BrainProtocol.MapPoint[w.path.childCount];
+            for (int i = 0; i < points.Length; i++)
+            {
+                var p = w.path.GetChild(i).position;
+                points[i] = new BrainProtocol.MapPoint { x = p.x, z = p.z };
+            }
+            paths.Add(new BrainProtocol.MapPath { points = points });
+        }
+        msg.paths = paths.ToArray();
         return BrainProtocol.Encode(JsonUtility.ToJson(msg), null);
     }
 
