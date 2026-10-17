@@ -149,6 +149,8 @@ class TileHud {
       });
     }
     this.steer = 0;
+    this.ro = new ResizeObserver(() => { this.measure(); this.dirty = true; });
+    this.ro.observe(el);
   }
 
   get focused() {
@@ -159,8 +161,14 @@ class TileHud {
     if (this.last[key] !== text) { this.last[key] = text; el.textContent = text; }
   }
 
-  resize() {
+  measure() {
     const r = this.el.getBoundingClientRect();
+    this.rect = { width: r.width, height: r.height };
+  }
+
+  resize() {
+    if (!this.rect) this.measure();
+    const r = this.rect;
     let dpr = Math.min(window.devicePixelRatio || 1, 1.5);
     if (r.width * r.height * dpr * dpr > MAX_PIXELS) dpr = Math.sqrt(MAX_PIXELS / (r.width * r.height));
     const w = Math.max(1, Math.round(r.width * dpr)), h = Math.max(1, Math.round(r.height * dpr));

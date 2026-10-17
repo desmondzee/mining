@@ -303,6 +303,18 @@ function drawMap() {
   requestAnimationFrame(() => { mapQueued = false; paintMap(); });
 }
 
+let previewCache = null;
+function scaledPreview(w, h) {
+  w = Math.max(1, Math.round(w)); h = Math.max(1, Math.round(h));
+  if (!previewCache || previewCache.src !== preview || previewCache.canvas.width !== w || previewCache.canvas.height !== h) {
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    canvas.getContext("2d").drawImage(preview, 0, 0, w, h);
+    previewCache = { src: preview, canvas };
+  }
+  return previewCache.canvas;
+}
+
 function paintMap() {
   if (document.hidden) return;
   ctx.clearRect(0, 0, map.width, map.height);
@@ -310,7 +322,7 @@ function paintMap() {
   const [x1, y1] = toCanvas(state.bounds[2], state.bounds[1]);
   if (preview) {
     ctx.globalAlpha = palette.previewAlpha;
-    ctx.drawImage(preview, x0, y0, x1 - x0, y1 - y0);
+    ctx.drawImage(scaledPreview(x1 - x0, y1 - y0), x0, y0);
     ctx.globalAlpha = 1;
   } else {
     ctx.strokeStyle = palette.grid;
