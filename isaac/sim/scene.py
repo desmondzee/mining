@@ -104,17 +104,6 @@ class IsaacRenderer:
         surround = world.asset("surround")
         if surround and surround.exists():
             self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4), config.get("surround", {}).get("tint")))
-        try:
-            from isaac.look import apply_look
-        except ImportError:
-            apply_look = None
-        if apply_look is None:
-            self.tune_scan(config.get("scan", {}))
-            self.lights(world, config)
-        else:
-            print(f"look: isaac.look.apply_look preset {config.get('look', 'default')}", flush=True)
-            apply_look(stage, config.get("look", "default"))
-
         ex_matrix, _ = W.model_box(W.REPO / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         ex_usd = convert_rig(W.REPO / W.EXCAVATOR_GLB, cache, "excavator", ex_matrix, JOINTS)
         self.excavators = []
@@ -146,6 +135,7 @@ class IsaacRenderer:
             local[:3, 3] = TO_ISAAC[:3, :3] @ sim.rig.camera
             cam.AddTransformOp().Set(gf(local))
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
+        self.look = self.make_look(world, cache, config)
         self.fx = self.make_fx(sim, args.fx)
         self.material = self.make_material(world, sim, config.get("material", {}))
         self.loads = {}
@@ -194,6 +184,27 @@ class IsaacRenderer:
         omni.timeline.get_timeline_interface().play()
         for _ in range(WARMUP):
             app.update()
+
+    def make_look(self, world, cache: Path, config: dict):
+        look = config.get("look", "day")
+        apply_look = None
+        if look:
+            try:
+                from isaac.look import apply_look
+            except ImportError:
+                pass
+        if apply_look is None:
+            self.tune_scan(config.get("scan", {}))
+            self.lights(world, config)
+            return None
+        overrides = dict(look) if isinstance(look, dict) else {}
+        preset = overrides.pop("preset", "day") if isinstance(look, dict) else look
+        print(f"look: isaac.look.apply_look preset {preset}", flush=True)
+        result = apply_look(self.stage, preset, world.dir, cache, **overrides)
+        settings = carb.settings.get_settings()
+        for key, value in config.get("rtx", {}).items():
+            settings.set(key, value)
+        return result
 
     def reference(self, path: str, usd: Path) -> None:
         self.stage.DefinePrim(path, "Xform").GetReferences().AddReference(str(usd))
@@ -285,6 +296,8 @@ class IsaacRenderer:
         self.loads = {t: round(self.material.load(t), 3) for t in trucks}
 
     def update(self, sim, dt: float) -> None:
+        if self.look is not None:
+            self.look.update(dt)
         with Sdf.ChangeBlock():
             if self.fx is not None:
                 self.fx.update(dt, sim.fx_state())

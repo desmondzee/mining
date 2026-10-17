@@ -2,7 +2,7 @@
   "fps": 15,
   "tiled": false,
   "rt_subframes": 1,
-  "look": "default",
+  "look": "day",
   "overview_res": [1280, 720],
   "material": {"enabled": true, "lift_deg": 0.0},
   "extra_excavators": [],
