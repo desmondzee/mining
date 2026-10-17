@@ -46,7 +46,7 @@ class Config:
     dump_radius: float = 30.0
     stop_speed: float = 0.3
     stop_s: float = 1.5
-    max_dust: int = 48
+    max_dust: int = 0
     dust_every: float = 0.12
     seed: int = 0
 

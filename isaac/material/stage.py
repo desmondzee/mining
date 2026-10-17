@@ -7,7 +7,7 @@ from . import geometry as G
 from .model import Model
 
 ROOT = "/World/Material"
-DEFAULT_COLOUR = (0.30, 0.24, 0.18)
+DEFAULT_COLOUR = (0.20, 0.15, 0.11)
 ROCK_DARKEN = 0.75
 DUST_COLOUR = (0.55, 0.47, 0.38)
 DUST_OPACITY = 0.14
@@ -124,7 +124,7 @@ class BucketMaterial:
                 self.bed_ops.append(UsdGeom.Xform.Define(stage, path).AddTransformOp())
             self.beds.append(grid_mesh(stage, path + "/mound", m.bed_points()[k], self.bed_faces, bed_mat, self.colour, 200 + k))
         self.instancer = self.make_instancer(np.array(self.colour) * ROCK_DARKEN)
-        self.dust = self.make_dust()
+        self.dust = self.make_dust() if m.cfg.max_dust else None
         self.last_bed = np.full(len(trucks_cfg), -1.0)
 
     def pile_faces(self) -> np.ndarray:
@@ -181,14 +181,15 @@ class BucketMaterial:
 
     @staticmethod
     def quats(q: np.ndarray) -> Vt.QuathArray:
-        return Vt.QuathArray([Gf.Quath(float(w), float(x), float(y), float(z)) for w, x, y, z in q])
+        return Vt.QuathArray.FromNumpy(np.ascontiguousarray(q[:, [1, 2, 3, 0]], np.float16))
 
     def update(self, dt: float, excavators: list, trucks: list) -> None:
         m = self.model
         m.update(dt, excavators, trucks)
+        heaps = m.bucket_points()
         for i in range(len(m.exc_ids)):
             self.bucket_ops[i].Set(gf(m.matrix[i]))
-            self.buckets[i].GetPointsAttr().Set(vec3(m.bucket_points()[i]))
+            self.buckets[i].GetPointsAttr().Set(vec3(heaps[i]))
             if not np.isnan(m.pile_pos[i, 0]):
                 t = np.eye(4)
                 t[:3, 3] = m.pile_pos[i]
@@ -208,6 +209,8 @@ class BucketMaterial:
         self.instancer.GetPositionsAttr().Set(vec3(pos))
         self.instancer.GetScalesAttr().Set(vec3(np.repeat(scale[:, None], 3, 1)))
         self.instancer.GetOrientationsAttr().Set(self.quats(quat))
+        if self.dust is None:
+            return
         dpos, dsize = m.dust()
         self.dust.GetPositionsAttr().Set(vec3(np.where(dsize[:, None] > 0, dpos, HIDDEN)))
         self.dust.GetScalesAttr().Set(vec3(np.repeat(dsize[:, None], 3, 1)))

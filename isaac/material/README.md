@@ -48,7 +48,7 @@ numpy 4x4 with column vectors or a `Gf.Matrix4d` (row vectors) both work.
 | Stream | numpy ballistic particles (pool 768), rendered as a PointInstancer of 3 procedural rocks with spin |
 | Landing | particles into a truck bed footprint below the load surface deposit with a 3 × 3 kernel; on the ground they feed the face pile |
 | Bed load | height field over the derived floor; 37° repose relaxation while active; empties by sliding toward the tail |
-| Dust | ≤ 48 translucent puffs at spills and impacts |
+| Dust | optional translucent puffs (`max_dust`, default 0: dust is left to `isaac/fx`) |
 
 ## Files
 

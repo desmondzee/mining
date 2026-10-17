@@ -521,3 +521,4 @@
 | Bed load | height field over the HD465 body floor (derived from the GLB dump body), 3 × 3 deposit kernel, repose relaxation, child prim of the truck | |
 | No truck under the bucket | material lands at the face pile; the next dig takes from the pile first | |
 | Colour | per excavator `colour`, or `face_colour(world_dir, x, z)` from `minimap.png` | |
+| Dust puffs (off by default) | 0 | `isaac/material/model.py:Config.max_dust` |
