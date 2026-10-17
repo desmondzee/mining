@@ -54,6 +54,8 @@ namespace MineSim.EditorTools
             public PedestrianMode pedestrians = PedestrianMode.RoadCrossings;
             public bool frameOverviewCamera = true;
             public bool addGoals = true;
+            public bool radioExcavators = true;
+            public string radioUrl = "http://127.0.0.1:8090";
         }
 
         const string PrefKey = "MineSim.QuarryIntegration.Options";
@@ -261,6 +263,28 @@ namespace MineSim.EditorTools
                 }
                 Object.DestroyImmediate(goalsTmp.gameObject);
 
+                // 8b. radio link (read-only: polls the radio for excavator digging/holding; never touches trucks/brain/goals)
+                if (o.radioExcavators && o.placeExcavators)
+                {
+                    if (integ == null)
+                    {
+                        integ = new GameObject(IntegrationRootName);
+                        Undo.RegisterCreatedObjectUndo(integ, "Integration root");
+                    }
+                    var link = integ.GetComponent<MineRadioLink>();
+                    if (link == null) link = Undo.AddComponent<MineRadioLink>(integ);
+                    Undo.RecordObject(link, "Radio link");
+                    link.radioUrl = string.IsNullOrEmpty(o.radioUrl) ? "http://127.0.0.1:8090" : o.radioUrl.Trim();
+                    link.enabled = true;
+                    EditorUtility.SetDirty(link);
+                    Line(log, true, $"MineRadioLink on {IntegrationRootName}: polls {link.radioUrl}/api/radio/excavators (override: -radio-url / RADIO_URL); read-only, excavator animation only");
+                }
+                else if (integ != null)
+                {
+                    var link = integ.GetComponent<MineRadioLink>();
+                    if (link != null) Undo.DestroyObjectImmediate(link);
+                }
+
                 // 9. compatibility checks
                 CheckSensors(world, log);
 
@@ -379,6 +403,14 @@ namespace MineSim.EditorTools
                 float len = e.lengthM > 0.5f ? e.lengthM : o.excavatorLength;
                 var go = BuildExcavator(model, e.id, len);
                 go.transform.SetParent(root.transform, false);
+                if (o.radioExcavators)
+                {
+                    // animated by the radio (swing/dig): not static, so the transform may rotate at runtime
+                    go.isStatic = false;
+                    var rig = go.AddComponent<MineExcavatorRig>();
+                    rig.excavatorId = e.id;
+                    rig.digging = false;
+                }
                 float heading;
                 if (e.hasHeading) heading = e.headingDeg;
                 else
@@ -394,7 +426,8 @@ namespace MineSim.EditorTools
             }
             Line(log, true, $"{entries.Count} excavator(s) placed{(fallback ? " (fallback: behind each ore site, no 'equipment' in world.json)" : " from 'equipment'")}, " +
                             $"model {(model != null ? AssetDatabase.GetAssetPath(model) : "PLACEHOLDER (no excavator model found; run 'Copy Excavator Model Into Project' with glTFast installed)")}, " +
-                            $"length {o.excavatorLength} m, static BoxCollider (seen by lidar/depth)");
+                            $"length {o.excavatorLength} m, BoxCollider (seen by lidar/depth)" +
+                            (o.radioExcavators ? ", MineExcavatorRig (swings while the radio says 'digging')" : ""));
             return root.transform;
         }
 
@@ -873,6 +906,9 @@ namespace MineSim.EditorTools
             o.excavatorYawOffset = EditorGUILayout.FloatField("Model yaw offset (deg)", o.excavatorYawOffset);
             o.excavatorBackoff = EditorGUILayout.FloatField("Fallback backoff (m)", o.excavatorBackoff);
             o.excavatorsAsBrainObstacles = EditorGUILayout.Toggle("Excavators = brain obstacles", o.excavatorsAsBrainObstacles);
+            o.radioExcavators = EditorGUILayout.Toggle("Radio-controlled excavators", o.radioExcavators);
+            using (new EditorGUI.DisabledScope(!o.radioExcavators))
+                o.radioUrl = EditorGUILayout.TextField("Radio URL", o.radioUrl);
 
             EditorGUILayout.Space();
             EditorGUILayout.LabelField("Scene", EditorStyles.boldLabel);

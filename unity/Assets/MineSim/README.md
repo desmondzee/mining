@@ -131,6 +131,15 @@ Where the goal coordinates come from:
 - From Python, read `data/worlds/<id>/world.json` directly. Same frame: contract (x, z) = Unity (x, z) = brain (x, z).
 
 
+## Radio-controlled excavators
+The radio service (`radio/server.py`) owns each excavator's state (`digging` / `holding`), set by voice commands. Unity only mirrors it:
+- `MineExcavatorRig` (on each `Excavator_<id>` under `MineEquipment`, `excavatorId` = world.json equipment id, e.g. `exc-0`). The model is one mesh, so the whole excavator animates: while `digging` it runs an 8 s cycle (dig at the face side, eased swing, dump at the truck side, swing back), +-60 deg about its base heading, with a small dig bob on a child pivot (`dig_pivot`/`pivot`/`boom` if present, else the `model` child). On `holding` it eases back to its base heading and stops. Amplitude, period and bob are in the inspector. Its BoxCollider rotates with it; no physics, no Rigidbody. Other code can read `rig.Digging`.
+- `MineRadioLink` (on the `MineIntegration` root) polls `GET {radioUrl}/api/radio/excavators` every 0.5 s on a background thread (plain HTTP/1.1 over `TcpClient`, so Unity's "Allow downloads over HTTP" setting is irrelevant) and sets `digging` on the rig with the matching id. Expected body: `[{"id":"exc-0","face":"ore_1","state":"digging","heading_deg":352.5,"pos3":[x,y,z]}, ...]` (a `{"items":[...]}` or `{"excavators":[...]}` object also works). Only `id` and `state` are used.
+- URL, highest priority first: command line `-radio-url http://host:8090`, env `RADIO_URL`, the inspector field (set from **Integration Options > Radio URL**, default `http://127.0.0.1:8090`). Only `http://` is supported (no https; use the LAN/localhost URL, not a TLS tunnel).
+- If the radio is down or the endpoint is missing, it logs one warning, keeps the last state (excavators start in `holding`) and retries every 2 s. It is harmless to leave on.
+- The integration adds both by default (option **Radio-controlled excavators**). Turn it off to get static excavators and no link.
+- **Read-only with respect to the policy and trucks**: the link only reads the radio and only writes `MineExcavatorRig.digging`. It never sends goals or actions, never touches `TruckAgent`, `BrainClient`, `MineGoals` or truck transforms. Truck dispatch stays with the radio/brain.
+
 ## Files
 - `Assets/MineSim/Editor/MineWorldImporter.cs`: menu and builder. `MineImporterHooks.cs`: TMP/Splines hooks. `MineGlbMeshReader.cs`: GLB geometry reader for scan colliders
 - `Assets/MineSim/Editor/Integrations/{TMP,Splines}/`, `Assets/MineSim/Runtime/Integrations/InputSystem/`: optional package assemblies
@@ -138,9 +147,10 @@ Where the goal coordinates come from:
 - `Assets/MineSim/Editor/Look/MineLookMenu.cs`: *Apply Cinematic Look* and helper menus
 - `Assets/MineSim/Editor/MineQuarryIntegration.cs`: *Integrate World Into Open Scene*, *Integration Options...*, *Copy Excavator Model Into Project*
 - `Assets/MineSim/Runtime/MineGroundFollow.cs`, `MineGoals.cs`: ground following for TruckAgent, goal coordinates (read-only data)
+- `Assets/MineSim/Runtime/MineExcavatorRig.cs`, `MineRadioLink.cs`: excavator dig/hold animation, read-only radio poller
 - `Assets/MineSim/Runtime/`: `MineWorldData` (world.json model) + `MiniJson`, `MineWorldRoot`, `MineSiteMarker`, `MineJunction`, `MineRoad`, `MineRoadGraph`, `MineLabel`, `MineBillboard`, `MineLabelToggle`, `MineInput`, `MineDesignSpec`, `MineAssetNote`
 
 
 ## Control ownership
 
-Nothing in MineSim drives the trucks. Throttle and steer come only from the team's brain/policy (or RL) over BrainClient. MineSim never posts goals or actions. `MineGroundFollow` only corrects the truck's height and tilt to the terrain, and `MineGoals` only exposes coordinates (load/dump points, slots) that the policy or RL code may read.
+Nothing in MineSim drives the trucks. Throttle and steer come only from the team's brain/policy (or RL) over BrainClient. MineSim never posts goals or actions. `MineRadioLink` only reads excavator states from the radio and animates the excavators. `MineGroundFollow` only corrects the truck's height and tilt to the terrain, and `MineGoals` only exposes coordinates (load/dump points, slots) that the policy or RL code may read.
