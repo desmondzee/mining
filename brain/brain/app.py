@@ -1,4 +1,5 @@
 import asyncio
+import time
 import json
 import logging
 import math
@@ -13,6 +14,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from . import hud, planning, radio_proxy
+from .compact import pack_state
 from .bridge import SimBridge
 from .hub import LatestHub
 from .video import VideoHub
@@ -186,12 +188,21 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         except (WebSocketDisconnect, RuntimeError):
             pass
 
+    state_cache = {"t": 0.0, "text": ""}
+
+    def packed_state() -> str:
+        now = time.monotonic()
+        if now - state_cache["t"] >= 1 / STATE_HZ / 2:
+            state_cache["text"] = pack_state(hud.augment(world.snapshot(network=False), heightmap))
+            state_cache["t"] = now
+        return state_cache["text"]
+
     @app.websocket("/ws/state")
     async def ws_state(ws: WebSocket):
         await ws.accept()
         try:
             while True:
-                await ws.send_json(hud.augment(world.snapshot(network=False), heightmap))
+                await ws.send_text(packed_state())
                 await asyncio.sleep(1 / STATE_HZ)
         except (WebSocketDisconnect, RuntimeError):
             pass
