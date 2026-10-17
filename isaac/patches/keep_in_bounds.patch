@@ -1,0 +1,175 @@
+diff --git a/isaac/sim/kinematics.py b/isaac/sim/kinematics.py
+index 6d1466b..74bf702 100644
+--- a/isaac/sim/kinematics.py
++++ b/isaac/sim/kinematics.py
+@@ -15,8 +15,14 @@ HEIGHT_SMOOTH = 0.06
+ SNAP_DISTANCE = 4.0
+ MAX_TILT_DEG = 25.0
+ TILT_SMOOTH = 0.15
++BOUNDS_MARGIN = 5.0
++FOOTPRINT_HALF_WIDTH = 2.12
++FOOTPRINT_HALF_LENGTH = 4.7
++SLIDE_SPEED = 0.5
++MIN_SLIDE = 0.2
+ 
+ Probe = Callable[[np.ndarray, np.ndarray, np.ndarray, np.ndarray], np.ndarray]
++Passable = Callable[[np.ndarray, np.ndarray], np.ndarray]
+ 
+ 
+ def yaw_matrix(yaw: float) -> np.ndarray:
+@@ -66,13 +72,75 @@ def look_rotation(forward: np.ndarray, up: np.ndarray) -> np.ndarray:
+     return np.column_stack([x, np.cross(z, x), z])
+ 
+ 
++def grid_passable(raw: dict) -> Passable:
++    w, h, cell = int(raw["width"]), int(raw["height"]), float(raw["cell_m"])
++    ox, oz = (float(v) for v in raw["origin"])
++    cost = np.asarray(raw["cost"], np.float32).reshape(h, w)
++
++    def passable(xs: np.ndarray, zs: np.ndarray) -> np.ndarray:
++        c = np.floor((np.asarray(xs, float) - ox) / cell).astype(int)
++        r = np.floor((np.asarray(zs, float) - oz) / cell).astype(int)
++        inside = (r >= 0) & (c >= 0) & (r < h) & (c < w)
++        out = np.zeros(np.shape(c), bool)
++        out[inside] = cost[r[inside], c[inside]] >= 0
++        return out
++
++    return passable
++
++
++class KeepInBounds:
++    def __init__(
++        self,
++        bounds: list[float],
++        passable: Passable | None = None,
++        margin: float = BOUNDS_MARGIN,
++        half_width: float = FOOTPRINT_HALF_WIDTH,
++        half_length: float = FOOTPRINT_HALF_LENGTH,
++    ) -> None:
++        xmin, zmin, xmax, zmax = (float(v) for v in bounds)
++        self.lo = np.array([xmin + margin, zmin + margin])
++        self.hi = np.array([xmax - margin, zmax - margin])
++        self.passable = passable
++        self.half_width, self.half_length = half_width, half_length
++
++    def corners(self, x: float, z: float, yaw: float) -> np.ndarray:
++        s, c = math.sin(math.radians(yaw)), math.cos(math.radians(yaw))
++        fwd, right = np.array([s, c]), np.array([c, -s])
++        return np.array([x, z]) + np.array([fwd * a + right * b for a in (self.half_length, -self.half_length) for b in (self.half_width, -self.half_width)])
++
++    def blocked(self, x: float, z: float, yaw: float) -> int:
++        pts = self.corners(x, z, yaw)
++        out = int(np.sum(np.any((pts < self.lo) | (pts > self.hi), axis=1)))
++        if self.passable is not None:
++            out = max(out, int(np.sum(~self.passable(pts[:, 0], pts[:, 1]))))
++        return out
++
++    def resolve(self, prev: tuple[float, float, float], nxt: tuple[float, float, float]) -> tuple[tuple[float, float, float], str]:
++        before = self.blocked(*prev)
++
++        def ok(p: tuple[float, float, float]) -> bool:
++            n = self.blocked(*p)
++            return n == 0 or (before > 0 and n <= before)
++
++        x, z = np.clip(nxt[0], self.lo[0], self.hi[0]), np.clip(nxt[1], self.lo[1], self.hi[1])
++        if ok((x, z, nxt[2])):
++            return (float(x), float(z), nxt[2]), "ok" if (x, z) == (nxt[0], nxt[1]) else "slide"
++        dx, dz = x - prev[0], z - prev[1]
++        for p in ((prev[0] + dx, prev[1] + dz, prev[2]), (prev[0] + dx, prev[1], prev[2]), (prev[0], prev[1] + dz, prev[2])):
++            if math.hypot(p[0] - prev[0], p[1] - prev[1]) > max(1e-6, MIN_SLIDE * math.hypot(dx, dz)) and ok(p):
++                return (float(p[0]), float(p[1]), p[2]), "slide"
++        return prev, "blocked"
++
++
+ class Truck:
+-    def __init__(self, truck_id: str, x: float, z: float, yaw: float, y: float = 0.0) -> None:
++    def __init__(self, truck_id: str, x: float, z: float, yaw: float, y: float = 0.0, guard: KeepInBounds | None = None) -> None:
+         self.id, self.x, self.y, self.z, self.yaw = truck_id, x, y, z, yaw % 360.0
+         self.speed = 0.0
+         self.throttle = 0.0
+         self.steer = 0.0
+         self.received = -math.inf
++        self.guard = guard
++        self.guard_status = "ok"
+ 
+     def command(self, throttle: float, steer: float, now: float) -> None:
+         self.throttle = min(1.0, max(0.0, float(throttle)))
+@@ -84,9 +152,16 @@ class Truck:
+         throttle, steer = (self.throttle, self.steer) if live else (0.0, 0.0)
+         self.speed += (throttle * MAX_SPEED - self.speed) * min(1.0, dt * ACCEL)
+         yaw_rate = self.speed / WHEELBASE * math.tan(math.radians(steer * MAX_STEER_DEG))
+-        self.yaw = (self.yaw + math.degrees(yaw_rate) * dt) % 360.0
+-        self.x += math.sin(math.radians(self.yaw)) * self.speed * dt
+-        self.z += math.cos(math.radians(self.yaw)) * self.speed * dt
++        yaw = (self.yaw + math.degrees(yaw_rate) * dt) % 360.0
++        x = self.x + math.sin(math.radians(yaw)) * self.speed * dt
++        z = self.z + math.cos(math.radians(yaw)) * self.speed * dt
++        if self.guard is not None:
++            (x, z, yaw), self.guard_status = self.guard.resolve((self.x, self.z, self.yaw), (x, z, yaw))
++            if self.guard_status == "blocked":
++                self.speed = 0.0
++            elif self.guard_status == "slide":
++                self.speed *= SLIDE_SPEED
++        self.x, self.z, self.yaw = x, z, yaw
+ 
+     def pose(self) -> dict:
+         return {"x": self.x, "z": self.z, "yaw": self.yaw}
+diff --git a/isaac/sim/sim.py b/isaac/sim/sim.py
+index ae5dcd2..d054ff4 100644
+--- a/isaac/sim/sim.py
++++ b/isaac/sim/sim.py
+@@ -1,10 +1,11 @@
++import json
+ from pathlib import Path
+ 
+ import numpy as np
+ 
+ from . import world as W
+ from .glb import read_glb
+-from .kinematics import GroundFollow, Truck, yaw_matrix
++from .kinematics import GroundFollow, KeepInBounds, Truck, grid_passable, yaw_matrix
+ from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
+ from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
+ from .views import View, view_pose
+@@ -13,7 +14,7 @@ PEDESTRIAN_PROBE = 30.0
+ 
+ 
+ class Sim:
+-    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None) -> None:
++    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, keep_in_bounds: bool = False) -> None:
+         self.views = [View.from_dict(v) for v in views or []]
+         self.world = W.load_world(world_dir)
+         self.truck_matrix, self.truck_size = W.truck_box(repo)
+@@ -38,6 +39,11 @@ class Sim:
+         for w in self.walkers:
+             w.y = height(w.x, w.z)
+         self.trucks = [Truck(t.id, t.x, t.z, t.yaw, height(t.x, t.z)) for t in W.spawn_trucks(self.world, self.truck_size, height)]
++        if keep_in_bounds:
++            nav = self.world.dir / "navgrid.json"
++            guard = KeepInBounds(self.world.bounds, grid_passable(json.loads(nav.read_text())) if nav.exists() else None)
++            for t in self.trucks:
++                t.guard = guard
+         self.follow = {t.id: GroundFollow(self.truck_size) for t in self.trucks}
+         for t in self.trucks:
+             self.follow[t.id].update(t, self.probe, 0.0)
+diff --git a/isaac/sim/main.py b/isaac/sim/main.py
+index c899865..89cf1d1 100644
+--- a/isaac/sim/main.py
++++ b/isaac/sim/main.py
+@@ -22,6 +22,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     p.add_argument("--config", default=str(CONFIG))
+     p.add_argument("--dry-run", action="store_true")
+     p.add_argument("--raycast", choices=["auto", "on", "off"], default="auto")
++    p.add_argument("--keep-in-bounds", action="store_true")
+     p.add_argument("--cache", default=str(ROOT / "downloads/isaac/cache"))
+     p.add_argument("--renderer", default="")
+     p.add_argument("--fps", type=float, default=0.0)
+@@ -87,7 +88,7 @@ def run(args: argparse.Namespace) -> None:
+     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
+     from isaac.sim.sim import Sim
+ 
+-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []))
++    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), keep_in_bounds=args.keep_in_bounds)
+     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
+     if args.dry_run:
+         renderer = DryRenderer(sim)
