@@ -27,6 +27,7 @@ def mount(app: FastAPI, base: str | None = None, transport: httpx.AsyncBaseTrans
     client = httpx.AsyncClient(base_url=upstream, timeout=TIMEOUT_S, transport=transport, follow_redirects=False)
 
     @app.websocket("/radio/ws/radio")
+    @app.websocket("/ws/radio")
     async def radio_ws(ws: WebSocket):
         headers = {"cookie": ws.headers["cookie"]} if "cookie" in ws.headers else {}
         try:
@@ -64,6 +65,10 @@ def mount(app: FastAPI, base: str | None = None, transport: httpx.AsyncBaseTrans
                 await ws.close()
             except RuntimeError:
                 pass
+
+    @app.api_route("/api/radio/{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
+    async def radio_api(path: str, request: Request):
+        return await radio_http(f"api/radio/{path}", request)
 
     @app.api_route("/radio/{path:path}", methods=["GET", "POST", "DELETE", "PUT"])
     async def radio_http(path: str, request: Request):
