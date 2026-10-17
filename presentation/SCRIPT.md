@@ -1,66 +1,55 @@
-# R² pitch script (about 3.5 min of slides + 2–3 min live demo)
+# R² pitch: bullet cheat sheet (about 3.5 min + live demo)
 
-**Before you start:** the deck is open on slide 1. In other tabs: `localhost:8090/view` (aerial view) and `localhost:8090` (radio). RELEASE has been pressed so everything is idle. Physical sensor pod on the table.
+**Setup:** deck on slide 1. Tabs: `localhost:8090/view` + `localhost:8090` (radio). RELEASE pressed. Pod on the table.
 
----
+**1 · Cover**
+- R², Rocky Robotics: mining autonomy for quarries
 
-**1 · Cover: Rocky Robotics (10 s)**
-"Hi, we're R², Rocky Robotics. We build mining autonomy for the sites the big players ignore: quarries."
+**2 · Problem**
+- 39 Bt of rock quarried a year, a driver in every truck
+- OEM autonomy is about $2.3M per truck, built for giant 24/7 mines
+- ~0 autonomous trucks under 100 t (quarry size)
+- Powered haulage = 25–43% of US mining deaths
 
-**2 · Problem: Quarries are left out of autonomy (30 s)**
-"Quarries move 39 billion tonnes of rock a year, almost all of it in trucks with a driver in every seat.
-Autonomy exists, but it was built for giant 24/7 mines, and it costs about 2.3 million dollars a truck.
-The trucks quarries actually run, under 100 tonnes, are almost never autonomous.
-And this matters for people: powered haulage is behind a quarter to 43% of US mining deaths."
+**3 · Solution**
+- Retrofit pod on trucks and excavators quarries already own: cameras, lidar, compute
+- A vision policy drives
+- Dispatch by radio in plain speech; machines answer back
 
-**3 · Solution: Retrofit the trucks they own (25 s)**
-"So we don't sell new trucks. We bolt a sensor pod (cameras, lidar, compute) onto the trucks and excavators a quarry already owns.
-A vision policy drives on that camera and lidar.
-And you don't program it. You dispatch it over the radio, in plain speech, and every machine answers back."
+**4 · Economics**
+- Driver = 25–35% of quarry-truck running cost (vs 12–15% on big mine trucks)
+- Autonomy operators: 13–20% lower haul cost (Rio Tinto, BHP)
+- 10-truck quarry payback: ~1 year on 2 shifts, ~4 months at 24/7
 
-**4 · Economics: The driver is the cost autonomy removes (30 s)**
-"On a quarry-sized truck, the driver is 25 to 35% of the hourly running cost, roughly double the share on a big mine truck. That's why this works for quarries.
-Operators running autonomy, like Rio Tinto and BHP, reported 13 to 20% lower haul costs.
-On our pricing, a 10-truck quarry running two shifts pays us back in about a year, and in four months if it runs around the clock."
+**5 · Market**
+- TAM $1.3–5.1B/yr; SAM ~$0.3–1.2B/yr (US/EU/AU multi-shift)
+- Autonomous haul trucks +84% last year, almost none quarry-size
+- $90k kit + $75k onboarding + $4k per truck per month
 
-**5 · Market: Kit plus subscription (25 s)**
-"Quarry trucks and loaders are a 1.3 to 5 billion dollar a year opportunity. About a billion of it is serviceable today, in multi-shift sites across the US, Europe and Australia.
-Autonomous haul trucks grew 84% last year, but almost none of them are quarry-sized.
-We charge for a kit, a site onboarding fee, and four thousand dollars per truck per month."
+**6 · Why R²**
+- OEMs automate only their own big trucks; Pronto and Sensmore prove retrofit demand
+- New site = a drone flight, not months of mapping
+- Fleet camera + lidar footage feeds the sim, so it stays current and the policy keeps learning
 
-**6 · Why R²: Fastest site onboarding, run by voice (30 s)**
-"The OEMs only automate their own big trucks. Pronto and Sensmore retrofit, which proves the demand.
-Our edge is speed and simplicity. A new site is a drone flight, not months of mapping.
-And it keeps learning: every truck's camera and lidar footage flows back into the site simulation, so the digital quarry stays current as the pit is dug, and the policy gets better every shift."
+**7 · How it works**
+- Scan → Simulate (Isaac Sim, industry-standard roads, berms, grades) → Train (vision policy) → Talk (ElevenLabs + LLM)
 
-**7 · How it works: A drone flight to an autonomous site (25 s)**
-"Here's the pipeline. We scan the quarry with a drone. In seconds that becomes a simulator: haul roads, safety berms and grades, all sized to industry standards for the real truck, running in NVIDIA Isaac Sim.
-The vision policy trains there. On site, ElevenLabs transcribes the radio, an LLM turns speech into goals, and the machines reply.
-Let me show you."
+**8 · Built today**
+- Drone scan → sim world in seconds
+- Isaac Sim + Unity: cameras, lidar, rigged excavators, tipping beds, keep-in-bounds
+- Voice radio; machines talk back; "Everyone stop"
+- Live 3D ops view, Gym RL environment
+- Physical-ready: sim sensors = pod spec (90° 640×360 camera; lidar 120°×30°, 10 Hz, 100 m), same protocol for sim and truck, policy outputs throttle + steer
+- Next: pod hardware, drive-by-wire, ISO 17757 safety case
 
-**8 · Built today: Software running, hardware-ready (35 s)**
-"Everything you're about to see, we built today.
-A pipeline that turns a drone scan into a sim world in seconds, with roads, berms, grades, loading points and design checks.
-It runs in NVIDIA Isaac Sim and Unity, with RTX cameras, lidar, rigged excavators, tipping truck beds and a keep-in-bounds safety layer.
-A voice radio on ElevenLabs and an LLM, where every machine talks back. A live 3D ops view, and a Gym environment to train the policy.
-And it's built for the physical layer. The sim sensors match the pod's spec: a 90-degree camera at 640 by 360, and lidar at 120 by 30 degrees, 10 hertz, 100 metres. The sim and a real truck speak the same protocol of camera frames, lidar and actions. The policy outputs throttle and steer, ready for a drive-by-wire kit.
-Next is the pod hardware, drive-by-wire, and the ISO 17757 safety case."
+**9 · Live demo**
+- Show `/view`, press `2` for the cameras
+- "Excavator one, start digging."
+- "Truck one, go unload at excavator one."
+- "Truck one, start digging." → it talks back
+- A judge's own command
+- "Everyone stop." → "R². Mining autonomy. Thank you."
 
-**9 · Live demo: Give the quarry an order (2–3 min)**
-*(Switch to `/view`, then hand a judge the laptop with the radio tab, or say it yourself. Hold Space to talk.)*
-- "This is a real limestone quarry, drone-scanned. Three Komatsu haul trucks on the ready line, three excavators at the faces." *(Drag or zoom the view, then press `2` for the cab and excavator cameras.)*
-- Judge: **"Excavator one, start digging."** The excavator digs at the face and replies in its own voice.
-- Judge: **"Truck one, go unload at excavator one."** The truck pulls out on the haul road. *(While it drives:)* "Their words became goals. The policy steers on camera and lidar, and a safety layer keeps every truck on the road."
-- Judge: **"Truck one, start digging."** → *"I can't dig, I'm a haul truck. Want me to go to Excavator One?"* "It pushes back when an order makes no sense."
-- Let them try one in their own words, e.g. "send the second truck to fill up with fuel".
-- Close: **"Everyone stop."** Everything halts. "That's R². Mining autonomy. Thank you."
+**Fallbacks:** quick buttons or the text box; the radio's simulated mode if the sim drops; 20 s of the video.
 
----
-
-**If something breaks:** use the quick buttons or the text box on the radio page. If the sim drops, the radio keeps going in simulated mode. Last resort: play 20 s of the video.
-
-**Likely questions**
-- *Is the hardware real?* The pod is a concept prop. The sim, voice dispatch and policy loop are built and running.
-- *Pricing?* $90k kit, $75k site onboarding, $4k per truck per month. It's our model; no competitor publishes prices.
-- *Safety and regulation?* We'd build an ISO 17757 autonomous-machine safety case. "Everyone stop" and keep-in-bounds are built in.
-- *Why not just Pronto?* Faster onboarding from a drone scan, voice ops, and a sim that updates from fleet footage.
+**Q&A:** pod = concept prop · pricing = our model · ISO 17757 safety case · vs Pronto: drone-scan onboarding + voice ops + sim fed by fleet footage
