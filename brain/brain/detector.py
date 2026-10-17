@@ -24,6 +24,7 @@ DEPTH_PERCENTILE = 20
 DEPTH_BAND = 0.2
 DEPTH_MAX_M = 500
 NORM_DIGITS = 4
+COCO_KEEP = {"person", "bicycle", "car", "motorcycle", "bus", "truck"}
 
 
 @dataclass
@@ -144,7 +145,7 @@ class Detector:
         shape = self.session.get_outputs()[0].shape
         nc = len(ast.literal_eval(meta["names"])) if meta.get("names") else max(int(min(shape[1:])) - 4, 1)
         self.names = class_names(meta, nc)
-        self.classes = classes
+        self.classes = classes or (COCO_KEEP if len(self.names) == 80 and "giraffe" in self.names else None)
         self.conf, self.iou = conf, iou
         self.path = path
 

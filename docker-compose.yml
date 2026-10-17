@@ -12,8 +12,12 @@ services:
       WORLD_DIR: /app/data/worlds/quarry
       RADIO_URL: ${RADIO_URL:-http://radio:8090}
       LIDAR_HEIGHT: ${LIDAR_HEIGHT:-2.7}
+      DETECTOR_MODEL: ${DETECTOR_MODEL-/app/models/yolo11n.onnx}
+      DETECTOR_CLASSES: ${DETECTOR_CLASSES:-}
+      DETECTOR_THREADS: ${DETECTOR_THREADS:-4}
     volumes:
       - ./data:/app/data:ro
+      - ./models:/app/models:ro
     restart: unless-stopped
 
   fakesim:

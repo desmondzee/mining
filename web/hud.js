@@ -13,6 +13,8 @@ const ROCK_RANGE = 50;
 const DETECTION_TTL_MS = 1000;
 const STATE_BUFFER = 30;
 const UNIT_KEY = "quarry-hud-unit";
+const GT_KEY = "quarry-hud-ground-truth";
+const LABEL_MIN_H = 14;
 const MAX_PIXELS = 2.6e6;
 const DETAIL_WIDTH = 960;
 const HOLD_LEN = 14;
@@ -38,6 +40,10 @@ const rgba = (c, a) => `rgba(${c[0]},${c[1]},${c[2]},${a.toFixed(3)})`;
 
 const WHEEL_SVG = `<svg class="hud-wheel" viewBox="0 0 24 24" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="2.4"/><path d="M3.4 10.2c3.2-.9 5.6-1 8.6-1s5.4.1 8.6 1M12 14.4V21"/></g></svg>`;
 
+function storedFlag(key) {
+  try { return localStorage.getItem(key) === "1"; } catch { return false; }
+}
+
 function storedUnit() {
   try { return localStorage.getItem(UNIT_KEY) === "ms" ? "ms" : "kmh"; } catch { return "kmh"; }
 }
@@ -45,35 +51,6 @@ function storedUnit() {
 function formatDistance(m) {
   if (!Number.isFinite(m)) return "";
   return m >= 1000 ? `${(m / 1000).toFixed(1)} km` : `${Math.max(0, Math.round(m))} m`;
-}
-
-function hull(pts, n, out) {
-  const idx = [];
-  for (let i = 0; i < n; i++) idx.push(i);
-  idx.sort((a, b) => pts[a * 2] - pts[b * 2] || pts[a * 2 + 1] - pts[b * 2 + 1]);
-  const cross = (o, a, b) => (pts[a * 2] - pts[o * 2]) * (pts[b * 2 + 1] - pts[o * 2 + 1]) - (pts[a * 2 + 1] - pts[o * 2 + 1]) * (pts[b * 2] - pts[o * 2]);
-  out.length = 0;
-  for (const pass of [idx, idx.slice().reverse()]) {
-    const start = out.length;
-    for (const i of pass) {
-      while (out.length >= start + 2 && cross(out[out.length - 2], out[out.length - 1], i) <= 0) out.pop();
-      out.push(i);
-    }
-    out.pop();
-  }
-  return out;
-}
-
-function roundedBrackets(ctx, x0, y0, x1, y1, r, len) {
-  const w = x1 - x0, h = y1 - y0;
-  const l = Math.min(len, w * 0.4, h * 0.4);
-  const rr = Math.min(r, l * 0.8);
-  ctx.beginPath();
-  ctx.moveTo(x0, y0 + l); ctx.arcTo(x0, y0, x0 + l, y0, rr); ctx.lineTo(x0 + l, y0);
-  ctx.moveTo(x1 - l, y0); ctx.arcTo(x1, y0, x1, y0 + l, rr); ctx.lineTo(x1, y0 + l);
-  ctx.moveTo(x1, y1 - l); ctx.arcTo(x1, y1, x1 - l, y1, rr); ctx.lineTo(x1 - l, y1);
-  ctx.moveTo(x0 + l, y1); ctx.arcTo(x0, y1, x0, y1 - l, rr); ctx.lineTo(x0, y1 - l);
-  ctx.stroke();
 }
 
 function polyline(c) {
@@ -128,8 +105,6 @@ class TileHud {
     this.ribbon = new Ribbon(160);
     this.cam = {};
     this.pt = [0, 0, 0];
-    this.corners = new Float32Array(16);
-    this.hullIdx = [];
     this.objects = [];
     this.labelsUsed = 0;
     this.labels = [];
@@ -253,8 +228,8 @@ class TileHud {
     buildRibbon(this.path, ego, cam, HALF_W, len, this.ribbon, 0.45);
     if (forward) this.drawRibbon(ctx, this.ribbon, tone, engaged && !holding, full, u, now, stopAt != null && stopAt <= len + 0.01);
     if (forward && engaged && !holding && truck.goal && !stopAt) this.drawGoal(ctx, cam, truck.goal, groundY, full, u, now);
-    this.drawObjects(ctx, cam, objs.list, lead, full, u);
-    this.drawDetections2D(ctx, vw, vh, full, u);
+    if (this.hud.showGroundTruth(this.name)) this.drawObjects(cam, objs.list, lead, full);
+    this.drawDetections2D(vw, vh, full, engaged);
     this.hideLabels();
     this.updateTelemetry(meta, truck, engaged, status, lead, route, ego);
   }
@@ -456,155 +431,77 @@ class TileHud {
   }
 
 
-  styleFor(o) {
-    switch (o.state) {
-      case "stop": return { c: C.red, hi: C.redHi, fill: 0.34, line: 1, w: 1.6, bracket: true };
-      case "warn": return { c: C.amber, hi: C.amberHi, fill: 0.3, line: 1, w: 1.5, bracket: true };
-      case "lead": return { c: C.blue, hi: C.blueHi, fill: 0.32, line: 1, w: 1.5, bracket: true };
-      case "path": case "near": return { c: C.blue, hi: C.blueHi, fill: 0.2, line: 0.75, w: 1.1, bracket: false };
-      default:
-        return o.ground ? { c: C.white, hi: C.white, fill: 0.06, line: 0.22, w: 0.8, bracket: false } : { c: C.white, hi: C.white, fill: 0.16, line: 0.55, w: 1, bracket: false };
-    }
+  rectColor(state) {
+    return state === "stop" ? C.redHi : state === "warn" ? C.amberHi : state === "lead" || state === "path" || state === "near" ? C.blueHi : C.white;
   }
 
-  drawObjects(ctx, cam, list, lead, full, u) {
-    for (const o of list) {
-      if (!full && o.ground && o.state === "neutral") continue;
-      const st = this.styleFor(o);
-      const box = o.kind === "person" ? this.drawPerson(ctx, cam, o, st, full, u) : this.drawBox(ctx, cam, o, st, full, u);
-      if (!box) continue;
-      if (st.bracket) {
-        ctx.save();
-        ctx.lineWidth = (full ? 2.2 : 1.6) * u;
-        ctx.strokeStyle = rgba(st.hi, 0.95);
-        ctx.lineCap = "round";
-        const pad = 4 * u;
-        roundedBrackets(ctx, box[0] - pad, box[1] - pad, box[2] + pad, box[3] + pad, 6 * u, 12 * u);
-        ctx.restore();
-      }
-      const showLabel = o === lead || (full && (o.state !== "neutral" || (o.kind === "person" && o.dist < 45) || (o.kind === "truck" && o.dist < 70)));
-      if (showLabel) {
-        const name = full ? `${KIND_LABEL[o.kind] || o.kind} · ` : "";
-        this.label(`${name}${formatDistance(o.dist)}`, (box[0] + box[2]) / 2, box[1] - 6 * u, o.state);
-      }
-    }
-  }
-
-  drawShadow(ctx, cam, o, r, alpha) {
-    const pt = this.pt;
-    ctx.beginPath();
-    for (let k = 0; k < 20; k++) {
-      const a = (k / 20) * Math.PI * 2;
-      if (project(cam, o.x + Math.cos(a) * r, o.y, o.z + Math.sin(a) * r, pt) < NEAR) return;
-      k ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]);
-    }
-    ctx.closePath();
-    ctx.fillStyle = `rgba(0,0,0,${alpha})`;
-    ctx.fill();
-  }
-
-  drawPerson(ctx, cam, o, st, full, u) {
-    const pt = this.pt;
-    const zc = project(cam, o.x, o.y, o.z, pt);
-    if (zc < NEAR) return null;
-    const x = pt[0], yb = pt[1];
-    project(cam, o.x, o.y + 1.8, o.z, pt);
-    const yt = pt[1];
-    const h = yb - yt;
-    if (h < 2) return null;
-    const scale = h / 1.8;
-    const bw = Math.max(0.5 * scale, 2 * u), headR = Math.max(0.13 * scale, 1.2 * u);
-    if (full) this.drawShadow(ctx, cam, o, 0.55, 0.22);
+  drawRect(x0, y0, x1, y1, col, full) {
+    const ctx = this.ctx, s = this.s;
+    const lw = Math.max(1, Math.round(this.dpr * (full ? 1.25 : 1)));
+    const off = (lw % 2) / 2;
+    const X0 = Math.round(x0 * s + this.ox) + off, Y0 = Math.round(y0 * s + this.oy) + off;
+    const X1 = Math.round(x1 * s + this.ox) - off, Y1 = Math.round(y1 * s + this.oy) - off;
+    if (X1 - X0 < 2 || Y1 - Y0 < 2) return false;
     ctx.save();
-    ctx.fillStyle = rgba(st.c, st.fill + 0.1);
-    ctx.strokeStyle = rgba(st.hi, st.line);
-    ctx.lineWidth = st.w * u;
-    const bodyTop = yt + 0.36 * scale;
-    ctx.beginPath();
-    ctx.roundRect(x - bw / 2, bodyTop, bw, yb - bodyTop, bw / 2);
-    ctx.fill();
-    ctx.stroke();
-    ctx.beginPath();
-    ctx.arc(x, yt + 0.15 * scale, headR, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.stroke();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.lineWidth = lw;
+    ctx.strokeStyle = rgba(col, 0.95);
+    ctx.strokeRect(X0, Y0, X1 - X0, Y1 - Y0);
     ctx.restore();
-    return [x - bw * 0.9, yt, x + bw * 0.9, yb];
+    return true;
   }
 
-  drawBox(ctx, cam, o, st, full, u) {
+  projectedBounds(cam, o) {
+    const pt = this.pt;
+    if (o.kind === "person") {
+      if (project(cam, o.x, o.y, o.z, pt) < NEAR) return null;
+      const x = pt[0], yb = pt[1];
+      project(cam, o.x, o.y + o.size[1], o.z, pt);
+      const half = ((yb - pt[1]) / o.size[1]) * o.size[0] * 0.5;
+      return [x - half, pt[1], x + half, yb];
+    }
     const [w, h, l] = o.size;
     const yaw = (o.yaw * Math.PI) / 180;
     const fx = Math.sin(yaw), fz = Math.cos(yaw), rx = fz, rz = -fx;
-    const pts = this.corners, pt = this.pt;
-    let k = 0;
-    for (const dy of [0, h]) for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
-      const x = o.x + rx * (a * w) / 2 + fx * (b * l) / 2;
-      const z = o.z + rz * (a * w) / 2 + fz * (b * l) / 2;
-      if (project(cam, x, o.y + dy, z, pt) < NEAR) return null;
-      pts[k * 2] = pt[0]; pts[k * 2 + 1] = pt[1]; k++;
-    }
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-    for (let i = 0; i < 8; i++) {
-      x0 = Math.min(x0, pts[i * 2]); x1 = Math.max(x1, pts[i * 2]);
-      y0 = Math.min(y0, pts[i * 2 + 1]); y1 = Math.max(y1, pts[i * 2 + 1]);
+    for (const dy of [0, h]) for (const [a, b] of [[-1, -1], [1, -1], [1, 1], [-1, 1]]) {
+      if (project(cam, o.x + (rx * a * w) / 2 + (fx * b * l) / 2, o.y + dy, o.z + (rz * a * w) / 2 + (fz * b * l) / 2, pt) < NEAR) return null;
+      x0 = Math.min(x0, pt[0]); x1 = Math.max(x1, pt[0]);
+      y0 = Math.min(y0, pt[1]); y1 = Math.max(y1, pt[1]);
     }
-    if (x1 < -50 || x0 > cam.w + 50 || x1 - x0 < 1.5) return null;
-    if (full && !o.ground) this.drawShadow(ctx, cam, o, Math.max(w, l) * 0.62, 0.2);
-    const idx = hull(pts, 8, this.hullIdx);
-    const cover = ((Math.min(x1, cam.w) - Math.max(x0, 0)) * (Math.min(y1, cam.h) - Math.max(y0, 0))) / (cam.w * cam.h);
-    const fade = Math.max(0.25, Math.min(1, 1 - (cover - 0.06) * 2.2));
-    ctx.save();
-    ctx.beginPath();
-    idx.forEach((i, j) => (j ? ctx.lineTo(pts[i * 2], pts[i * 2 + 1]) : ctx.moveTo(pts[i * 2], pts[i * 2 + 1])));
-    ctx.closePath();
-    ctx.fillStyle = rgba(st.c, st.fill * fade);
-    ctx.fill();
-    ctx.restore();
-    ctx.beginPath();
-    for (let i = 4; i < 8; i++) i === 4 ? ctx.moveTo(pts[i * 2], pts[i * 2 + 1]) : ctx.lineTo(pts[i * 2], pts[i * 2 + 1]);
-    ctx.closePath();
-    ctx.fillStyle = rgba(st.hi, st.fill * 0.6 * fade);
-    ctx.fill();
-    ctx.lineJoin = "round";
-    ctx.lineWidth = st.w * u;
-    ctx.strokeStyle = rgba(st.hi, st.line * 0.4 * fade);
-    ctx.beginPath();
-    for (let i = 0; i < 4; i++) {
-      const j = (i + 1) % 4;
-      ctx.moveTo(pts[i * 2], pts[i * 2 + 1]); ctx.lineTo(pts[j * 2], pts[j * 2 + 1]);
-      ctx.moveTo(pts[(i + 4) * 2], pts[(i + 4) * 2 + 1]); ctx.lineTo(pts[(j + 4) * 2], pts[(j + 4) * 2 + 1]);
-      ctx.moveTo(pts[i * 2], pts[i * 2 + 1]); ctx.lineTo(pts[(i + 4) * 2], pts[(i + 4) * 2 + 1]);
-    }
-    ctx.stroke();
-    ctx.strokeStyle = rgba(st.hi, st.line * (0.45 + 0.55 * fade));
-    ctx.beginPath();
-    idx.forEach((i, j) => (j ? ctx.lineTo(pts[i * 2], pts[i * 2 + 1]) : ctx.moveTo(pts[i * 2], pts[i * 2 + 1])));
-    ctx.closePath();
-    ctx.stroke();
-    return [x0, y0, x1, y1];
+    return x1 < 0 || x0 > cam.w ? null : [x0, y0, x1, y1];
   }
 
-  drawDetections2D(ctx, vw, vh, full, u) {
+  drawObjects(cam, list, lead, full) {
+    for (const o of list) {
+      if (!full && o.ground && o.state === "neutral") continue;
+      const b = this.projectedBounds(cam, o);
+      if (!b || !this.drawRect(b[0], b[1], b[2], b[3], this.rectColor(o.state), full)) continue;
+      if (o === lead || full || b[3] - b[1] > LABEL_MIN_H) this.boxLabel(`${(KIND_LABEL[o.kind] || o.kind).toLowerCase()} ${formatDistance(o.dist)}`, b, o.state);
+    }
+  }
+
+  drawDetections2D(vw, vh, full, engaged) {
     for (const d of this.hud.detections(this.name)) {
       if (!d.box) continue;
       const [a, b, c, e] = d.box;
-      const x0 = a * vw, y0 = b * vh, x1 = c * vw, y1 = e * vh;
-      const col = d.state === "stop" ? C.redHi : d.state === "warn" ? C.amberHi : d.highlight ? C.blueHi : C.white;
-      ctx.save();
-      ctx.lineWidth = (full ? 2 : 1.4) * u;
-      ctx.strokeStyle = rgba(col, 0.9);
-      ctx.lineCap = "round";
-      roundedBrackets(ctx, x0, y0, x1, y1, 6 * u, 12 * u);
-      ctx.restore();
-      if (full || d.highlight) {
-        const conf = d.conf != null ? ` ${Math.round(d.conf * 100)}%` : "";
-        this.label(`${d.cls || "object"}${conf}`, (x0 + x1) / 2, y0 - 6 * u, d.state || (d.highlight ? "lead" : "neutral"));
+      const box = [a * vw, b * vh, c * vw, e * vh];
+      const ahead = engaged && d.dist != null && a < 0.62 && c > 0.38;
+      const state = d.state || (ahead && d.dist - FRONT < STOP_CLEAR ? "stop" : ahead && d.dist - FRONT < WARN_CLEAR ? "warn" : "neutral");
+      if (!this.drawRect(box[0], box[1], box[2], box[3], this.rectColor(state), full)) continue;
+      if (full || state !== "neutral" || box[3] - box[1] > LABEL_MIN_H) {
+        const dist = d.dist != null ? ` ${formatDistance(d.dist)}` : "";
+        const conf = full && d.conf != null ? ` ${d.conf.toFixed(2)}` : "";
+        this.boxLabel(`${String(d.cls || "object").toLowerCase()}${dist}${conf}`, box, state);
       }
     }
   }
 
-  label(text, vx, vy, state) {
+  boxLabel(text, box, state) {
+    this.label(text, box[0], box[1] - (2 * this.dpr) / this.s, state, true);
+  }
+
+  label(text, vx, vy, state, left = false) {
     let el = this.labels[this.labelsUsed];
     if (!el) {
       el = document.createElement("span");
@@ -613,12 +510,13 @@ class TileHud {
       this.labels.push(el);
     }
     this.labelsUsed++;
-    const w = text.length * 3.6 + 12;
-    const x = Math.min(this.cssW - w - 6, Math.max(w + 6, (vx * this.s + this.ox) / this.dpr));
+    const w = left ? text.length * 6 + 4 : text.length * 3.6 + 12;
+    const px = (vx * this.s + this.ox) / this.dpr;
+    const x = left ? Math.min(this.cssW - w - 2, Math.max(2, px)) : Math.min(this.cssW - w - 6, Math.max(w + 6, px));
     const y = Math.max(this.focused ? 72 : 46, Math.min(this.cssH - 4, (vy * this.s + this.oy) / this.dpr));
     if (el.textContent !== text) el.textContent = text;
     if (el.dataset.state !== state) el.dataset.state = state;
-    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(-50%, -100%)`;
+    el.style.transform = `translate(${x.toFixed(1)}px, ${y.toFixed(1)}px) translate(${left ? "0" : "-50%"}, -100%)`;
     el.hidden = false;
   }
 
@@ -689,6 +587,7 @@ export function createHud({ focusOnClick = true } = {}) {
     state: { trucks: [], pedestrians: [], obstacles: [] },
     latestT: 0,
     unit: storedUnit(),
+    groundTruth: storedFlag(GT_KEY),
     focusOnClick,
     detailed: null,
     trucksById: new Map(),
@@ -706,6 +605,7 @@ export function createHud({ focusOnClick = true } = {}) {
       const h = huds.get(name);
       if (!h) return;
       h.meta = meta || h.meta;
+      if (meta && meta.det) hud.setDetections(name, meta.det.items);
       if (!focused || focused === h) h.draw(performance.now());
     },
 
@@ -725,9 +625,20 @@ export function createHud({ focusOnClick = true } = {}) {
       detections.set(cameraId, { at: performance.now(), list: Array.isArray(list) ? list : [] });
     },
 
-    detections(cameraId) {
+    detections(cameraId, live = false) {
       const d = detections.get(cameraId);
-      return d && performance.now() - d.at < DETECTION_TTL_MS ? d.list : [];
+      const fresh = !!d && performance.now() - d.at < DETECTION_TTL_MS;
+      return live ? fresh : fresh ? d.list : [];
+    },
+
+    showGroundTruth(cameraId) {
+      return hud.groundTruth || !hud.detections(cameraId, true);
+    },
+
+    toggleGroundTruth() {
+      hud.groundTruth = !hud.groundTruth;
+      try { localStorage.setItem(GT_KEY, hud.groundTruth ? "1" : "0"); } catch {}
+      for (const h of huds.values()) h.dirty = true;
     },
 
     truckState(id) {

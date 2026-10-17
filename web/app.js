@@ -556,6 +556,7 @@ function commands(query = "") {
     : { id: "judge:pin", group: "radio", title: "Set access code…", keywords: "pin judge", searchOnly: true, run: () => setTimeout(() => commandPalette.open("pin "), 160) });
   const theme = storedTheme();
   for (const th of THEMES) out.push({ id: `theme:${th}`, group: "appearance", title: `Theme ${th}`, keywords: "appearance colour mode", detail: theme === th ? "current" : "", run: () => applyTheme(th) });
+  out.push({ id: "hud:ground-truth", group: "appearance", title: hud.groundTruth ? "Hide ground truth boxes" : "Show ground truth boxes", keywords: "hud detector detections objects overlay", run: () => hud.toggleGroundTruth() });
   out.push({ id: "help:keys", group: "help", title: "Keyboard shortcuts", keywords: "help keys", keys: ["?"], run: () => help.open() });
   if (query && !url && !pin) out.push({ id: "radio:send", group: "radio", title: `Send to radio: “${query}”`, always: true, run: () => sendRadio(query) });
   return out;
