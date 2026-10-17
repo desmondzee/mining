@@ -1155,7 +1155,11 @@ def state():
 @app.get("/api/radio/world")
 def world():
     w = radio.world
-    return {"id": w.raw.get("id"), "bounds": w.bounds, "roads": w.road_lines,
+    wid = w.raw.get("id")
+    has_map = (REPO / "data" / "worlds" / str(wid) / "minimap.png").exists()
+    return {"id": wid, "bounds": w.bounds, "roads": w.road_lines,
+            "origin": w.raw.get("origin"), "size_m": w.raw.get("size_m"),
+            "basemap": f"/data/worlds/{wid}/minimap.png" if has_map else None,
             "sites": [{"id": s.id, "type": s.type, "name": s.name, "x": s.point[0], "z": s.point[1]} for s in w.sites.values()]}
 
 
