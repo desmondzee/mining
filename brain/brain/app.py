@@ -10,6 +10,7 @@ from fastapi import FastAPI, HTTPException, Response, WebSocket, WebSocketDiscon
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import planning
 from .bridge import SimBridge
 from .hub import LatestHub
 from .world import World
@@ -27,6 +28,9 @@ class Goal(BaseModel):
 
 def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR) -> FastAPI:
     world = World()
+    nav = planning.nav_map()
+    if nav is not None:
+        world.bounds = nav.bounds
     video = LatestHub()
     lidar = LatestHub()
     bridge = SimBridge(world, video, lidar)
@@ -57,11 +61,30 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         truck = world.trucks[truck_id]
         truck.goal = goal
         truck.status = "driving" if goal else "idle"
+        truck.path, truck.path_idx, truck.ghost_paths = [], 0, []
+        if goal and nav is not None:
+            route = planning.plan_route(nav, (truck.x, truck.z), goal)
+            if route is None:
+                log.warning("no route for %s to %s; driving straight", truck_id, goal)
+            else:
+                truck.path = route.round(2).tolist()
         return truck.to_dict()
 
     @app.post("/api/trucks/{truck_id}/goal")
     def post_goal(truck_id: str, goal: Goal):
         return set_goal(truck_id, (goal.x, goal.z))
+
+    @app.get("/api/sites")
+    def get_sites():
+        if nav is None:
+            return []
+        return [{"id": k, "type": nav.site_types[k], "pos": list(p)} for k, p in nav.sites.items()]
+
+    @app.post("/api/trucks/{truck_id}/site/{site_id}")
+    def post_site(truck_id: str, site_id: str):
+        if nav is None or site_id not in nav.sites:
+            raise HTTPException(404, f"unknown site {site_id}")
+        return set_goal(truck_id, nav.sites[site_id])
 
     @app.delete("/api/trucks/{truck_id}/goal")
     def delete_goal(truck_id: str):

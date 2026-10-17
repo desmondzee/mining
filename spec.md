@@ -117,7 +117,30 @@
 | Slow distance (m) | 15 | `brain/brain/policy.py:SLOW_DIST` |
 | Full-steer heading error (deg) | 45 | `brain/brain/policy.py:STEER_GAIN_DEG` |
 | Depth band | rows 35 %–65 %, split into left / centre / right thirds | |
-| Statuses | `idle`, `driving`, `avoiding`, `arrived` | |
+| Statuses | `idle`, `driving`, `avoiding`, `holding`, `arrived` | |
+
+## Planner
+
+| Item | Value | Source |
+|---|---|---|
+| World | `data/worlds/default/` (`world.json`, `navgrid.json`), override with `WORLD_DIR` | |
+| Route | A* on the nav grid (impassable cells grown by one cell), Chaikin smoothing, 2 m spacing | |
+| Used when | the truck has a route; otherwise the straight-to-goal policy above | |
+| Candidates | 11 steer × 4 target speeds (8, 5, 2.5, 0 m/s), kinematic bicycle rollout | |
+| Candidate horizon (s) | 3.0 | `brain/brain/planning/driver.py:HORIZON` |
+| Rollout step (s) | 0.1 | `brain/brain/planning/driver.py:DT` |
+| Planner max speed (m/s) | 8.0 | `brain/brain/planning/driver.py:MAX_V` |
+| Planner arrive radius (m) | 5.0 | `brain/brain/planning/driver.py:ARRIVE_RADIUS` |
+| Output | throttle = target speed / 8, steer = candidate steer | |
+| Chooser | hand-tuned score (baseline), or learned scorer from `PLANNER_CKPT` (needs torch) | |
+| Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
+| Lidar mount override | `LIDAR_HEIGHT` env var | |
+| Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
+| Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
+| Obstacles | lidar points above the nav-grid ground on free cells; points on walls are left to the grid | |
+| Unsafe candidate | hits a blocked cell, or comes within 1.5 m of an obstacle while closing in | |
+| Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
+| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
 
 ## Sim protocol (TCP)
 
@@ -147,5 +170,7 @@
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Read state | `GET /api/state` | |
-| Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
+| Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}`, plans a route | |
+| Sites | `GET /api/sites` → `[{"id","type","pos"}]` | |
+| Go to site | `POST /api/trucks/{id}/site/{site_id}` | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` | |

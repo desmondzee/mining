@@ -103,6 +103,7 @@ class SimBridge:
         truck.throttle, truck.steer, truck.status = action.throttle, action.steer, action.status
         if action.status == "arrived":
             truck.goal = None
+            truck.path, truck.ghost_paths = [], []
         writer.write(
             encode({"type": "action", "truck": truck_id, "throttle": action.throttle, "steer": action.steer})
         )

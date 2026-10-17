@@ -14,6 +14,9 @@ class Truck:
     status: str = "idle"
     throttle: float = 0.0
     steer: float = 0.0
+    path: list[list[float]] = field(default_factory=list)
+    path_idx: int = 0
+    ghost_paths: list[list[list[float]]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         return asdict(self)
