@@ -39,9 +39,9 @@ renderer.setScissorTest(true);
 document.body.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
-const sky = new THREE.Color(0xd9c6a5);
+const sky = new THREE.Color(0xc9d3d6);
 scene.background = sky;
-scene.fog = new THREE.Fog(sky, 0.6 * Math.max(...world.size_m), 2.2 * Math.max(...world.size_m));
+scene.fog = new THREE.Fog(sky, 0.9 * Math.max(...world.size_m), 4.5 * Math.max(...world.size_m));
 scene.add(new THREE.HemisphereLight(0xfff1d6, 0x5a4a38, 1.1));
 const sun = new THREE.DirectionalLight(0xffd29a, 2.4);
 sun.position.set(-160, 120, -90);
@@ -62,6 +62,37 @@ if (world.assets.visual && world.scan_transform) {
 }
 ground.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.castShadow = true; } });
 scene.add(ground);
+
+// --- surroundings: a ground apron + distant hills so the scan doesn't float in space.
+// Inside the scan footprint the apron sits 4 m under the heightmap (hidden by the scan), outside it blends to rolling ground.
+{
+  const meta = await (await fetch(base + 'heightmap_meta.json', { cache: 'no-store' })).json();
+  const hm = new Uint16Array(await (await fetch(base + 'heightmap.raw', { cache: 'no-store' })).arrayBuffer());
+  const N = meta.resolution, [ox, oz] = meta.origin, [sx, sz] = meta.size_m;
+  const hAt = (x, z) => {
+    const c = Math.round((x - ox) / sx * (N - 1)), r = Math.round((z - oz) / sz * (N - 1));
+    if (c < 0 || r < 0 || c >= N || r >= N) return null;
+    return meta.min_height_m + hm[r * N + c] / 65535 * meta.height_range_m;
+  };
+  const half = Math.max(sx, sz) / 2, R = 3000, rim = 0;
+  const geo = new THREE.PlaneGeometry(2 * R, 2 * R, 300, 300); geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position, col = [];
+  const n2 = (x, z) => Math.sin(x * 0.011) * Math.cos(z * 0.013) + 0.5 * Math.sin(x * 0.031 + z * 0.017) + 0.25 * Math.cos(x * 0.07 - z * 0.05);
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i), z = pos.getZ(i), d = Math.max(Math.abs(x), Math.abs(z));
+    let inner = hAt(x, z);
+    if (inner !== null) for (const [dx, dz] of [[-12,0],[12,0],[0,-12],[0,12],[-12,-12],[12,12],[-12,12],[12,-12]]) { const h = hAt(x + dx, z + dz); if (h !== null) inner = Math.min(inner, h); }   // stay under steep faces
+    const out = THREE.MathUtils.smoothstep(d, half * 0.9, half * 1.8);
+    const hills = THREE.MathUtils.smoothstep(d, half * 2.5, R * 0.6);
+    const ground = rim + 2 + 4 * n2(x, z) + hills * (60 + 45 * n2(x * 0.4, z * 0.4));
+    pos.setY(i, inner === null ? ground : THREE.MathUtils.lerp(inner - 4, ground, out));
+    const g = 0.5 + 0.5 * n2(x * 2.1, z * 1.7), c = new THREE.Color().setRGB(0.20 + 0.12 * g, 0.27 + 0.10 * g, 0.13 + 0.05 * g);
+    col.push(c.r, c.g, c.b);
+  }
+  geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); geo.computeVertexNormals();
+  const apron = new THREE.Mesh(geo, new THREE.MeshLambertMaterial({ vertexColors: true }));
+  apron.receiveShadow = true; scene.add(apron);
+}
 
 // --- roads as glowing amber ribbons, sites as beacons with labels
 const roadMat = new THREE.LineBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.9 });
