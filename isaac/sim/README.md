@@ -39,7 +39,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 | Key | Meaning |
 |---|---|
 | `fps` | camera rate (default 15; fresh frames, measured 26 fps achievable for 4 cameras with other Isaac containers running) |
-| `tiled` | overview + truck cameras in one 2 × 2 tiled render product |
+| `tiled` | overview + truck cameras in one 2 × 2 tiled render product (off: on 6.2 the moving truck cameras render with a wrong view in tiles) |
 | `step` | `step_nowait` (`rep.orchestrator.step(wait_for_render=False)`, frames lag the pose by one tick; the sim sends the previous tick's pose/cam/depth with them), `step`, `step_dt0`, `update` (stale frames) |
 | `rt_subframes` | RTX subframes per step |
 | `lidar_frame` | `sensor` (default, tilts with the truck like Unity `tiltSensors`) or `level` (sensor origin, gravity-aligned axes) |

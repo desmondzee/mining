@@ -163,7 +163,7 @@ class IsaacRenderer:
         self.step_mode = config.get("step", "step_nowait")
         self.lag = int(self.step_mode == "step_nowait")
         sensors = cameras[: 1 + len(sim.trucks)]
-        if config.get("tiled", True) and len(sensors) > 1:
+        if config.get("tiled", False) and len(sensors) > 1:
             rp = rep.create.render_product_tiled(cameras=[p for _, p, _, _ in sensors], tile_resolution=(CAM_W, CAM_H))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
             ann.attach(rp)

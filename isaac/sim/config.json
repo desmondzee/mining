@@ -1,6 +1,6 @@
 {
   "fps": 15,
-  "tiled": true,
+  "tiled": false,
   "rt_subframes": 1,
   "look": "default",
   "step": "step_nowait",
