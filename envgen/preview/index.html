@@ -290,7 +290,9 @@ function place(t, dt) {
 }
 
 // --- excavators: one per face (world.equipment, else beside the face site), swinging while loading
-const excSrc = (await loader.loadAsync('../../assets/models/excavator/excavator.glb')).scene;
+// [exc-rig] prefer the segmented/rigged model (nodes tracks/house/boom/stick/bucket), fall back to the original
+const excSrc = (await loader.loadAsync('../../assets/models/excavator/excavator_rigged.glb')
+  .catch(() => loader.loadAsync('../../assets/models/excavator/excavator.glb'))).scene;
 const ebox = new THREE.Box3().setFromObject(excSrc), esize = ebox.getSize(new THREE.Vector3());
 excSrc.position.sub(ebox.getCenter(new THREE.Vector3())).setY(-ebox.min.y);
 excSrc.traverse(o => { if (o.isMesh) o.castShadow = true; });
@@ -316,14 +318,48 @@ const excavators = equipment.filter(e => e.type === undefined || e.type === 'exc
   const faceName = faces.find(f => f.id === e.face)?.name || e.face;
   return { g, cam, face: e.face, faceName, name: `Excavator ${NUM[i] || i + 1}`, busy: false, base: g.rotation.y, phase: Math.random() * 6 };
 });
+// [exc-rig] dig cycle keyframes (8 s loop): [phase 0..1, house yaw rad (+ = toward cab/+X side = truck side),
+// boom, stick, bucket deg about local X (+ = boom down / stick in / bucket curl); 0,0,0,0 = modelled rest pose]
+const EXC_CYCLE_S = 8, EXC_DUMP_YAW = 1.7;
+const EXC_KEYS = [
+  [0.00, 0, 12, -42, -60],                   // swung to face, reaching out
+  [0.12, 0, 20, -50, -85],                   // boom down, stick out, bucket open at the face
+  [0.30, 0, 14, -12, -10],                   // dig: stick in + bucket curl
+  [0.42, 0, -14, -5, 0],                     // boom up with a full bucket
+  [0.60, EXC_DUMP_YAW, -14, -15, 0],         // swing to the truck side
+  [0.70, EXC_DUMP_YAW, -12, -35, -110],      // dump: stick out, bucket open
+  [0.78, EXC_DUMP_YAW, -12, -35, -100],
+  [1.00, 0, 12, -42, -60],                   // swing back to the face
+];
+function excPose(u) {
+  let i = 0; while (i < EXC_KEYS.length - 2 && u > EXC_KEYS[i + 1][0]) i++;
+  const a = EXC_KEYS[i], b = EXC_KEYS[i + 1], s = THREE.MathUtils.smootherstep(u, a[0], b[0]);
+  return [1, 2, 3, 4].map(k => a[k] + (b[k] - a[k]) * s);
+}
 function animateExcavators(t) {
   for (const x of excavators) {
-    // LIVE: follow the radio's excavator state (digging -> swing, holding -> back to base heading)
+    // LIVE: follow the radio's excavator state (digging -> dig cycle, holding -> ease back to rest)
     const busy = LIVE ? liveExc[x.face]?.state === 'digging'
       : trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
     x.busy = !!busy;
-    const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
-    x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
+    if (x.rig === undefined) {   // rigged model: swing the house only, articulate boom/stick/bucket
+      const n = k => x.g.getObjectByName(k);
+      x.rig = n('house') && n('boom') && n('stick') && n('bucket')
+        ? { house: n('house'), boom: n('boom'), stick: n('stick'), bucket: n('bucket'), pose: [0, 0, 0, 0], t } : null;
+      if (x.rig && x.cam && x.cam.parent === x.g) x.rig.house.attach(x.cam);   // cab camera rides the swinging house
+    }
+    if (!x.rig) {   // original single-body model: swing the whole machine
+      const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
+      x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
+      continue;
+    }
+    const r = x.rig, dt = Math.min(Math.max(t - r.t, 0), 0.1); r.t = t;
+    const goal = busy ? excPose(((t + x.phase * 1.3) % EXC_CYCLE_S) / EXC_CYCLE_S) : [0, 0, 0, 0];
+    const k = 1 - Math.exp(-dt * (busy ? 8 : 2.5));   // tight tracking while digging, gentle ease to rest
+    for (let j = 0; j < 4; j++) r.pose[j] += (goal[j] - r.pose[j]) * k;
+    const D = THREE.MathUtils.degToRad;
+    r.house.rotation.y = r.pose[0];
+    r.boom.rotation.x = D(r.pose[1]); r.stick.rotation.x = D(r.pose[2]); r.bucket.rotation.x = D(r.pose[3]);
   }
 }
 
@@ -337,13 +373,21 @@ const controls = new OrbitControls(over, hit);
 controls.enableDamping = true; controls.dampingFactor = 0.08;
 controls.minDistance = 25; controls.maxDistance = 2.5 * Math.max(...world.size_m);
 controls.maxPolarAngle = Math.PI * 0.49; controls.zoomSpeed = 1.2; controls.screenSpacePanning = false;
-controls.target.set(0, -25, 0);
-{ const R0 = 0.75 * Math.max(...world.size_m); over.position.set(R0, 0.47 * R0, 0); }
+// frame the working area (sites + roads), looking down ~55 degrees
+const HOME = (() => {
+  const pts = [...world.sites.map(s => s.pos3 || [s.pos[0], 0, s.pos[1]]), ...(world.roads || []).flatMap(r => r.points)];
+  const c = pts.reduce((a, p) => [a[0] + p[0] / pts.length, a[1] + p[1] / pts.length, a[2] + p[2] / pts.length], [0, 0, 0]);
+  const r = Math.max(60, ...pts.map(p => Math.hypot(p[0] - c[0], p[2] - c[2])));
+  const dist = 1.15 * r / Math.tan(THREE.MathUtils.degToRad(42 / 2));
+  const el = THREE.MathUtils.degToRad(55);
+  return { target: new THREE.Vector3(c[0], c[1], c[2]), pos: new THREE.Vector3(c[0] + dist * Math.cos(el) * 0.6, c[1] + dist * Math.sin(el), c[2] + dist * Math.cos(el) * 0.8) };
+})();
+controls.target.copy(HOME.target); over.position.copy(HOME.pos);
 let lastUser = -1e9, orbitAngle = 0;
 controls.addEventListener('start', () => { lastUser = performance.now(); hit.style.cursor = 'grabbing'; });
 controls.addEventListener('end', () => { lastUser = performance.now(); hit.style.cursor = 'grab'; });
 hit.addEventListener('wheel', () => { lastUser = performance.now(); }, { passive: true });
-hit.addEventListener('dblclick', () => { lastUser = -1e9; controls.target.set(0, -25, 0); });   // double-click: back to auto tour
+hit.addEventListener('dblclick', () => { lastUser = -1e9; controls.target.copy(HOME.target); over.position.copy(HOME.pos); });   // double-click: back to auto tour
 over.layers.enable(1);
 const tags = ['Overview', ...trucks.map(t => t.id)].map((name, i) => {
   const el = document.createElement('div'); el.className = 'tag';
