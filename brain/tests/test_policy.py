@@ -27,7 +27,13 @@ def test_heading_error_unity_convention(goal, expected):
 
 def test_drives_straight_at_clear_goal():
     a = act(Truck("t", goal=(0, 50)), None, CLEAR)
-    assert a.status == "driving" and a.steer == pytest.approx(0) and a.throttle == pytest.approx(1)
+    assert a.status == "driving" and a.steer == pytest.approx(0) and a.throttle == pytest.approx(5 / 8)
+
+
+def test_speed_cap_env_and_goal_slowdown(monkeypatch):
+    monkeypatch.setenv("MAX_SPEED", "8")
+    assert act(Truck("t", goal=(0, 50)), None, CLEAR).throttle == pytest.approx(1)
+    assert act(Truck("t", goal=(0, 20)), None, CLEAR).throttle == pytest.approx(3 / 8)
 
 
 def test_turns_toward_goal():

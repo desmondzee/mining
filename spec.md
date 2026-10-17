@@ -326,6 +326,9 @@
 | Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CKPT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
+| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre | `brain/brain/policy.py:planner_points` |
+| Ground returns | per 0.5° lidar column, outwards: a return is ground if it rises at most tan 20° × distance + 0.2 m above the last ground return (start: sensor y − `LIDAR_HEIGHT`) | `brain/brain/policy.py:ground_mask` |
+| Speed cap (m/s) | 5.0, env `MAX_SPEED`; 3.0 within 25 m of the goal; applied to the chosen throttle after the chooser | `brain/brain/policy.py:speed_cap` |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
@@ -412,7 +415,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]`; optional `roads[{id,from,to,width_m,one_way,points[{x,z}]}]` (points from → to), `sites[{id,type,name,x,z}]`, `junctions[{id,x,z}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
-| `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
+| `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}`, optional `sensor{x,y,z,yaw,pitch,roll,hfov}` (lidar world pose, same Euler convention as `cam`; Isaac sends it) | `points` × 3 int16 cm (or float32 m) |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
 
 ## Web
@@ -441,7 +444,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Lidar zlib level | 6 | `brain/brain/protocol.py:LIDAR_ZLIB_LEVEL` |
 | Lidar compression | encoded once per scan in the bridge, shared by all viewers | |
 | Lidar viewer rate (Hz), env `LIDAR_VIEWER_HZ` | 10 | `brain/brain/app.py:LIDAR_VIEWER_HZ` |
-| Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
+| Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose, sensor}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Map | preview background, roads (scaled by `width_m`), sites (labelled, coloured by type), junctions, obstacles, pedestrian paths, pedestrians, truck routes, goals, trucks | |
 | Map extent | hello `bounds` | |

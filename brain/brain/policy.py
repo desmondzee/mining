@@ -1,4 +1,5 @@
 import math
+import os
 from dataclasses import dataclass
 
 import numpy as np
@@ -13,6 +14,10 @@ STEER_GAIN_DEG = 45.0
 GROUND_SLOPE = math.tan(math.radians(20.0))
 GROUND_TOL = 0.2
 COLUMN_DEG = 0.5
+SIM_MAX_SPEED = 8.0
+MAX_SPEED = 5.0
+GOAL_SPEED = 3.0
+GOAL_SLOW_DIST = 25.0
 
 
 @dataclass
@@ -71,6 +76,13 @@ def planner_points(
     return np.stack([dx * c - dz * s, y, dx * s + dz * c], axis=1).astype(np.float32)
 
 
+def speed_cap(truck: Truck) -> float:
+    cap = float(os.environ.get("MAX_SPEED", MAX_SPEED))
+    if truck.goal is not None and math.hypot(truck.goal[0] - truck.x, truck.goal[1] - truck.z) < GOAL_SLOW_DIST:
+        cap = min(cap, GOAL_SPEED)
+    return cap / SIM_MAX_SPEED
+
+
 def sector_ranges(depth: np.ndarray) -> tuple[float, float, float]:
     h, w = depth.shape
     band = depth[int(h * 0.35) : int(h * 0.65)]
@@ -101,10 +113,10 @@ def act(
         if points is not None and sensor is not None and math.isfinite(ground):
             points = planner_points(points, sensor, truck, ground, planning.lidar_height())
         d = planning.follow(truck, nav, points, planning.scorer(), planning.lidar_height(), now)
-        return Action(d.throttle, d.steer, d.status)
+        return Action(min(d.throttle, speed_cap(truck)), d.steer, d.status)
 
     steer = max(-1.0, min(1.0, heading_error(truck, gx, gz) / STEER_GAIN_DEG))
-    throttle = 1.0 - 0.6 * abs(steer)
+    throttle = min(1.0 - 0.6 * abs(steer), speed_cap(truck))
     status = "driving"
 
     if depth is not None:
