@@ -127,11 +127,12 @@ SPEC = {
     "lidar": {
         "direction": "sim->brain",
         "required": {"truck": STR, "points": int, "format": STR, "pose": DICT},
-        "optional": {},
+        "optional": {"sensor": DICT},
         "pose": ("x", "z", "yaw"),
     },
     "actors": {"direction": "sim->brain", "required": {"pedestrians": LIST}, "optional": {}, "items": {"pedestrians": ("id", "x", "z", "yaw")}},
     "action": {"direction": "brain->sim", "required": {"truck": STR, "throttle": NUM, "steer": NUM}, "optional": {}},
+    "view": {"direction": "brain->sim", "required": {"camera": STR}, "optional": {"box": (list, type(None))}},
 }
 
 
@@ -171,7 +172,7 @@ def validate(header: dict, payload: bytes = b"") -> list[str]:
             errs.append(f"lidar.format {header['format']!r}")
         elif len(payload) != header["points"] * per:
             errs.append(f"lidar payload {len(payload)} != {header['points']} x {per}")
-    if kind in ("hello", "actors", "action") and payload:
+    if kind in ("hello", "actors", "action", "view") and payload:
         errs.append(f"{kind} must have no payload")
     return errs
 
@@ -244,6 +245,10 @@ def actors_message(pedestrians: list[dict]) -> bytes:
 
 def action_message(truck: str, throttle: float, steer: float) -> bytes:
     return encode({"type": "action", "truck": truck, "throttle": float(throttle), "steer": float(steer)})
+
+
+def view_message(camera: str, box: list | None) -> bytes:
+    return encode({"type": "view", "camera": camera, "box": box})
 
 
 # ------------------------------------------------------------------------------------------------------------ config

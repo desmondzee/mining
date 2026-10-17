@@ -49,12 +49,15 @@ def test_off_pads_and_crossings(data):
         assert (G.segment_distance(p, seg) - r >= 2.0).all()
 
 
-def test_crossings_match_fakesim():
+def test_crossings_are_walker_areas():
     sys.path.insert(0, str(Gn.REPO / "brain"))
-    from brain.fakesim import crossing_paths
-    roads = [{"id": r["id"], "width_m": r["width_m"], "points": [{"x": q[0], "z": q[2]} for q in r["points"]]} for r in WORLD["roads"]]
-    for ours, theirs in zip(G.crossing_segments(WORLD), crossing_paths(roads)):
-        assert np.allclose(ours, np.array(theirs), atol=1e-6)
+    from brain.pedestrians import make_walkers
+    roads = [{"id": r["id"], "from": r["from"], "to": r["to"], "width_m": r["width_m"], "one_way": r.get("one_way", False),
+              "points": [(q[0], q[2]) for q in r["points"]]} for r in WORLD["roads"]]
+    areas, _ = make_walkers(roads, {s["id"]: s["type"] for s in WORLD["sites"]})
+    segs = G.crossing_segments(WORLD)
+    assert len(segs) == sum(len(a.polygon()) for a in areas) and len(areas) == 6
+    assert np.allclose(segs[0][0], np.array(areas[0].polygon()[0]), atol=1e-6)
 
 
 def test_obstacles_do_not_overlap(data):

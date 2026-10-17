@@ -454,7 +454,7 @@ def place_site_props(site: Site) -> dict:
             if spot:
                 xz, y, n = spot
                 put("light_vehicle", "polyhaven/covered_car.usdc", xz, y, facing_road(site, xz) + rng.uniform(-20, 20), 2.6, True, n)
-    for seg in site.crossings:
+    for seg in G.crossing_caps(site.world):
         mid = seg.mean(axis=0)
         k, i, _ = site.roads.nearest(mid)
         t = site.roads.tangent(k, i)

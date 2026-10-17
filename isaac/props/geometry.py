@@ -1,11 +1,11 @@
 import math
+import sys
+from pathlib import Path
 
 import numpy as np
 from scipy.spatial import cKDTree
 
 CORRIDOR_MIN_WIDTH = 10.0
-CROSSING_ROADS = 4
-CROSSING_EXTRA = 12.0
 S = np.array([[1.0, 0, 0], [0, 0, 1.0], [0, 1.0, 0]])
 
 
@@ -19,23 +19,31 @@ def corridor_half(road: dict) -> float:
     return max(float(road.get("width_m") or 0.0), CORRIDOR_MIN_WIDTH) / 2
 
 
+def walker_areas(world: dict) -> list:
+    repo = str(Path(__file__).resolve().parents[2] / "brain")
+    if repo not in sys.path:
+        sys.path.insert(0, repo)
+    from brain.pedestrians import make_walkers
+
+    roads = [{"id": r["id"], "from": r["from"], "to": r["to"], "width_m": r["width_m"], "one_way": r.get("one_way", False),
+              "points": [(float(q[0]), float(q[-1])) for q in r["points"]]} for r in world["roads"]]
+    return make_walkers(roads, {s["id"]: s["type"] for s in world["sites"]})[0]
+
+
 def crossing_segments(world: dict) -> list[np.ndarray]:
     out = []
-    for road in sorted(world["roads"], key=lambda r: r["id"])[:CROSSING_ROADS]:
-        pts = [(p[0], p[2]) for p in road["points"]]
-        lengths = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
-        remaining = sum(lengths) / 2
-        for i, length in enumerate(lengths):
-            if remaining <= length or i == len(lengths) - 1:
-                f = remaining / length if length else 0.0
-                (ax, az), (bx, bz) = pts[i], pts[i + 1]
-                mx, mz = ax + (bx - ax) * f, az + (bz - az) * f
-                break
-            remaining -= length
-        seg = math.hypot(bx - ax, bz - az)
-        rx, rz = (bz - az) / seg, -(bx - ax) / seg
-        half = (road["width_m"] + CROSSING_EXTRA) / 2
-        out.append(np.array([[mx - rx * half, mz - rz * half], [mx + rx * half, mz + rz * half]]))
+    for area in walker_areas(world):
+        poly = np.array(area.polygon(), float)
+        out += [np.array([poly[i], poly[(i + 1) % len(poly)]]) for i in range(len(poly))]
+    return out
+
+
+def crossing_caps(world: dict) -> list[np.ndarray]:
+    out = []
+    for area in walker_areas(world):
+        poly = np.array(area.polygon(), float)
+        n = len(poly) // 2
+        out += [np.array([poly[n - 1], poly[n]]), np.array([poly[-1], poly[0]])]
     return out
 
 

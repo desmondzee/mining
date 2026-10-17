@@ -10,8 +10,8 @@
     {"id": "exc-4", "type": "excavator", "pos3": [-74.5, -95.1, 53.5], "heading_deg": 0.0},
     {"id": "exc-5", "type": "excavator", "pos3": [81.5, -71.3, 85.5], "heading_deg": 60.0}
   ],
-  "excavator_cameras": ["exc-0", "exc-1", "exc-2"],
-  "props": {"skip": [], "no_raycast": ["debris"]},
+  "excavator_cameras": ["exc-0"],
+  "props": {"skip": ["debris"], "no_raycast": ["debris"]},
   "step": "step_nowait",
   "lidar_frame": "sensor",
   "renderer": "RealTimePathTracing",
