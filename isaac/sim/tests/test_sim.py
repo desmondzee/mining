@@ -38,6 +38,9 @@ def test_drive_and_sensors(sim):
         assert depths[0].shape == (36, 64) and np.isfinite(depths[0]).all() and depths[0].min() > 0
         assert depths[0][-1].mean() < depths[0][0].mean()
         assert len(lidars[0]) > 1000 and lidars[0][:, 1].min() < -2
+        origin, rot = sim.lidar_pose(0)
+        near = lidars[0][np.hypot(lidars[0][:, 0], lidars[0][:, 2]) < 20] @ rot.T + origin
+        assert np.median(np.abs(near[:, 1] - [sim.height(x, z) for x, _, z in near])) < 0.3
 
 
 def test_excavator_state(sim):

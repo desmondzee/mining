@@ -324,7 +324,7 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Item | Value | Source |
 |---|---|---|
 | Inputs | pose, goal, RGB, depth, latest lidar points | |
-| Outputs | throttle 0..1, steer -1..1 (positive = right) | |
+| Outputs | throttle -1..1 (negative only for dead-end reverse; Isaac and fake sim honour it), steer -1..1 (positive = right) | |
 | Arrive radius (m) | 4 | `brain/brain/policy.py:ARRIVE_RADIUS` |
 | Stop distance (m) | 6 | `brain/brain/policy.py:STOP_DIST` |
 | Slow distance (m) | 15 | `brain/brain/policy.py:SLOW_DIST` |
@@ -350,9 +350,21 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Planner max speed (m/s) | 8.0 | `brain/brain/planning/driver.py:MAX_V` |
 | Planner arrive radius (m) | 5.0 | `brain/brain/planning/driver.py:ARRIVE_RADIUS` |
 | Output | throttle = target speed / 8, steer = candidate steer | |
-| Chooser | hand-tuned score (baseline), or learned scorer from `PLANNER_CKPT` (needs torch) | |
+| Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CKPT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
+| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre (`brain/brain/policy.py:planner_points`) | |
+| Ground returns | per 0.5° lidar column, outwards: a return is ground if it rises at most tan 20° × distance + 0.2 m above the last ground return (start: sensor y − `LIDAR_HEIGHT`) (`brain/brain/policy.py:ground_mask`) | |
+| Ground column (deg) | 0.5 | `brain/brain/policy.py:COLUMN_DEG` |
+| Ground tolerance (m) | 0.2 | `brain/brain/policy.py:GROUND_TOL` |
+| Speed cap | env `MAX_SPEED`, applied to the chosen throttle after the chooser | |
+| Speed cap default (m/s) | 5.0 | `brain/brain/policy.py:MAX_SPEED` |
+| Speed near goal (m/s) | 3.0 | `brain/brain/policy.py:GOAL_SPEED` |
+| Near goal distance (m) | 25.0 | `brain/brain/policy.py:GOAL_SLOW_DIST` |
+| Dead-end recovery | no safe forward candidate for the stuck time: straight reverse (status `reversing`, throttle −speed / 8) while the nav grid 3 m behind is clear for the whole width, up to the reverse distance, then replan; no rear lidar, so other vehicles behind are not checked | `brain/brain/recovery.py` |
+| Stuck time (s) | 3.0 | `brain/brain/recovery.py:STUCK_AFTER` |
+| Reverse speed (m/s) | 1.5 | `brain/brain/recovery.py:REVERSE_SPEED` |
+| Reverse distance (m) | 10.0 | `brain/brain/recovery.py:REVERSE_DIST` |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
@@ -369,10 +381,62 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Re-plan cooldown (s) | 1.0 | `brain/brain/planning/follow.py:REPLAN_COOLDOWN` |
 | Re-plan rejected | the new route starts more than 90° from the truck heading (no reverse) | |
 | Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
-| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
+| Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates), `planner`, `choice`, `candidates`, `candidate_scores` | |
 | Route in state | `trucks[].route` = `path` | |
 | Goal resolution | `{site}` → hello `sites` ∪ `junctions` position (fallback `world.json` sites), then A* route | |
 | On arrival | `goal`, `goal_site`, `path`, `ghost_paths` cleared, status `arrived` then `idle` | |
+
+## Learned planner
+
+meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D sim on the same nav grid). It replaces only the rule-based choice among the 44 planner candidates; routes, safety mask, re-planning and holds are unchanged.
+
+| Item | Value | Source |
+|---|---|---|
+| Enable | `PLANNER_CKPT` = path to an exported `.npz` (a `.pt` is accepted if a sibling `.npz` exists or torch is installed; `PLANNER_CHECKPOINT` also read) | |
+| Default | unset: rules. Docker compose sets `/app/models/ppo_v3.npz` (meiru-cam's PPO v3) with `./models` mounted read-only; missing or invalid file: warning log, rules | |
+| Runtime | numpy MLP forward, no torch in the brain image (`brain/brain/planning/learned.py`) | |
+| Export | `cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo_v3.pt` → `models/ppo_v3.npz` (state_dict + config JSON with width, dims, source, sha256); fails if the input layer sizes differ from OBS_DIM / CAND_DIM | |
+| Fetch | `uv run --with torch --with numpy tools/fetch_planner.py` (Hugging Face org `pi-hack-mining`, newest `.pt` whose repo or file name contains `--want`, default `ppo_v3`; `HF_TOKEN` for a private repo) → `models/ppo_v3.pt`, `models/ppo_v3.npz` | |
+| Network | scene MLP (obs → 256 → 256), path MLP (candidate → 128 → 128), head (384 → 256 → 1), ReLU | |
+| Choice | argmax logit over safe candidates; no safe candidate → hold (target speed 0, steer 0) | |
+| Output | throttle = candidate target speed / 8, steer = candidate steer; same action semantics as sim2d (target speed, first-order response 1.5 /s, bicycle model) | |
+| Train | `uv run --with numpy --with torch --with scipy python -m sim2d.datagen --out data/bc.npz`, then `sim2d.train_bc --out runs/bc.pt`, then `sim2d.train_ppo --init runs/bc.pt --out runs/ppo.pt` | |
+| Evaluate | `python -m sim2d.evaluate --worlds quarry --policy expert\|runs/ppo_v3.pt\|models/ppo_v3.npz` | |
+| sim2d worlds | `data/worlds/<id>` (override `SIM2D_WORLDS_DIR`); worlds used `SIM2D_WORLDS`, default `default,quarry` | |
+| Tests | `uv run --with numpy --with torch --with scipy --with pytest pytest tests -q` (constants, candidates, grid and feature parity with `DriveEnv.observe()`, numpy vs torch logits within 1e-5) | |
+
+| Feature | Layout | Brain source |
+|---|---|---|
+| Observation | 79 floats = 60 lidar + 16 route + 3 state | `driver.features` |
+| Lidar | 60 rays over 120° ahead (left to right), min range per ray bin / 100; range = min(lidar points above the nav-grid ground, nav-grid ray march at 1 m steps), lidar range rounded up to 1 m as in sim2d | |
+| Route | 8 route points 5 m apart ahead of the nearest route index, ego frame (forward, right) / 40 | |
+| State | speed / 8, last steer command, load (brain sends 0; sim2d trains on 0..1) | |
+| Candidate | 33 floats = 15 rollout points ego / 30, steer, target speed / 8, min(clearance, 20) / 20 | |
+| Clearance | nearest dynamic lidar obstacle point minus 4 m (sim2d: mover centre minus 3.5 m truck radius minus mover radius) | |
+| Safety mask | brain rule checks (whole-width off-road, obstacle closing within hit margin) | |
+
+| Constant | Value | Source |
+|---|---|---|
+| Lidar rays | 60 | `sim2d/env.py:N_RAYS` |
+| Lidar range (m) | 100.0 | `sim2d/env.py:LIDAR_RANGE` |
+| Route points | 8 | `sim2d/env.py:ROUTE_POINTS` |
+| Route point spacing (m) | 5.0 | `sim2d/env.py:ROUTE_SPACING` |
+| Route resample step (m) | 2.0 | `brain/brain/planning/driver.py:ROUTE_STEP` |
+| Candidate horizon (s) | 3.0 | `sim2d/env.py:HORIZON` |
+| Candidate point step (s) | 0.2 | `sim2d/env.py:RDT` |
+| Speed response (1/s) | 1.5 | `brain/brain/planning/driver.py:ACCEL` |
+| Max speed (m/s) | 8.0 | `sim2d/env.py:MAX_V` |
+| Wheelbase (m) | 5.0 | `sim2d/env.py:WHEELBASE` |
+| Truck half width (m) | 2.12 | `brain/brain/planning/driver.py:TRUCK_HALF_W` |
+| Sim tick (s) | 0.1 | `sim2d/env.py:DT` |
+
+| HUD state (`trucks[]`) | Meaning |
+|---|---|
+| `planner` | `learned` or `rules` |
+| `choice` | index into `candidates` of the driven path, -1 when none |
+| `candidates` | all 44 rollouts `[[x, z], …]` (15 points, 0.2 s apart) |
+| `candidate_scores` | per candidate, higher = preferred (logit, or minus the rule cost); `null` = unsafe |
+| Map | chosen path bold, other safe candidates faint, in the truck colour |
 
 ## Sim protocol (TCP)
 
@@ -387,8 +451,9 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]`; optional `roads[{id,from,to,width_m,one_way,points[{x,z}]}]` (points from → to), `sites[{id,type,name,x,z}]`, `junctions[{id,x,z}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
-| `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
+| `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}`, optional `sensor{x,y,z,yaw,pitch,roll,hfov}` (lidar world pose, same Euler convention as `cam`; Isaac sends it) | `points` × 3 int16 cm (or float32 m) |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
+| `view` | brain → sim | `camera` (`overview`), `box` `[x0,y0,x1,y1]` normalised top-left image coords of the unzoomed view, or null to reset; resent after every `hello` | none |
 
 ## Web
 
@@ -416,7 +481,7 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Lidar zlib level | 6 | `brain/brain/protocol.py:LIDAR_ZLIB_LEVEL` |
 | Lidar compression | encoded once per scan in the bridge, shared by all viewers | |
 | Lidar viewer rate (Hz), env `LIDAR_VIEWER_HZ` | 10 | `brain/brain/app.py:LIDAR_VIEWER_HZ` |
-| Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
+| Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose, sensor}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Map | preview background, roads (scaled by `width_m`), sites (labelled, coloured by type), junctions, obstacles, pedestrian paths, pedestrians, truck routes, goals, trucks | |
 | Map extent | hello `bounds` | |
@@ -435,6 +500,11 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Go to site | `POST /api/trucks/{id}/site/{site_id}` (same as `{"site"}`) | |
 | Goal fields | `goal` [x, z], `goal_site` node id or null, `route` [[x, z], …] (planner path) | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` (clears `goal`, `goal_site`, `route`) | |
+| Overview zoom | `POST /api/view/overview` `{"box":[x0,y0,x1,y1]}` (normalised, top-left origin, of the unzoomed frame; 409 while zoomed, one level), `DELETE /api/view/overview` resets; state `views.overview.box`. Shared: one viewer's zoom applies to every viewer | |
+| Zoom box minimum (normalised) | 0.02 | `brain/brain/app.py:MIN_BOX` |
+| Zoom box max aspect | 8 | `brain/brain/app.py:MAX_BOX_ASPECT` |
+| Zoom in sim | Isaac re-aims the overview at the box centre ray and narrows the focal length so the box fills the frame (smaller side expanded to the image aspect), eased over 0.4 s; overview frame meta `view{box,settled}`; fakesim renders the sub-region at full resolution | `isaac/sim/zoom.py` |
+| Zoom UI | crosshair on the overview, drag (≥ 8 px) selects, box expanded to the tile aspect; the frame scales to the box until a settled zoomed frame arrives; Esc or palette "Reset overview zoom" resets | `web/zoom.js` |
 
 ## Radio
 
@@ -489,8 +559,8 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Actors rate (Hz) | 10 | `isaac/sim/sensors.py:ACTORS_HZ` |
 | JPEG quality | 80 | `isaac/sim/protocol.py:JPEG_QUALITY` |
 | Overview | perspective, looks at the road network's centre from the side opposite the ore faces | |
-| Overview elevation (deg) | 50 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
-| Overview distance (× road extent) | 0.8 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
+| Overview elevation (deg) | 32 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
+| Overview distance (× road extent) | 0.62 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
 | Overview horizontal FOV (deg) | 60 | `isaac/sim/sensors.py:OVERVIEW_HFOV` |
 | Truck frame `cam` | `{x, y, z, yaw, pitch, roll, hfov}` camera world pose, Unity Euler (pitch > 0 looks down) | |
 | Physics substep (s) | 1/60, real-time paced | |
@@ -527,7 +597,7 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Sim → brain camera pose | optional `frame` header field `cam{x,y,z,yaw,pitch,roll,hfov}`: camera world position (m, Unity axes) and Unity Euler angles (deg): `yaw` = `eulerAngles.y` (0 = +z, clockwise), `pitch` = `eulerAngles.x` in −180..180 (positive looks down), `roll` = `eulerAngles.z` in −180..180, `hfov` horizontal FOV | `unity/Assets/Scripts/SensorCamera.cs` |
 | Truck ground height | optional `pose.y` in `frame` (truck transform y) | |
 | Fake sim camera | truck position (renderer origin), y = ground + `CAM_HEIGHT` (ground from the nav-grid terrain in `--world` mode, else 0; `pose.y` = ground), pitch 0, roll 0, hfov `FOV_DEG`; pinhole columns `atan((col + 0.5 − W/2) / f)` | `brain/brain/fakesim.py` |
-| Frame metadata | JSON `{t, cam, pose, speed, truck}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit | `brain/brain/hud.py` |
+| Frame metadata | JSON `{t, cam, pose, speed, truck, det}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit; `det` on truck frames when the detector is on (see Detector) | `brain/brain/hud.py` |
 | State additions | `t` (brain wall clock, s); with a heightmap: `y` on trucks, pedestrians, obstacles and `route_y` (one height per `route` point) | `brain/brain/hud.py` |
 | Heightmap | `WORLD_DIR/heightmap.raw` + `heightmap_meta.json` (uint16, row 0 = min z, col 0 = min x), bilinear; none when `WORLD_DIR` unset or files missing | |
 | Ground fallback | horizontal plane at state truck `y`, else `pose.y`, else `cam.y − 3.6` | `web/hud.js` |
@@ -536,15 +606,50 @@ Shared by the Isaac sim and the fake sim (`isaac/sim/pedestrians.py`, copied to 
 | Path source | chosen planner candidate (`candidates[chosen]`, also `chosen_idx`/`candidate`/`candidate_idx`/`best`) blended into `route` beyond its end; else `route` (with `route_y`); else kinematic prediction toward `goal`; else 9 m grey stub | |
 | Alternatives | other `candidates` (or `ghost_paths` without candidates) as thin faint lines, opacity from normalised score (`score` field or `scores[i]`) | |
 | Hold | status `holding`/`hold`/`blocked`, or `candidates` present with no chosen index: short amber stub | |
-| Hold stub (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Hold bar (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Chosen candidate segment (m) | 30 | `web/hud.js:NEAR_LEN` |
+| Route ribbon far alpha | 0.14 | `web/hud.js:ROUTE_END_ALPHA` |
 | Front camera only | ribbon and candidates drawn when camera yaw is within the forward cone of truck yaw | |
 | Forward cone half-angle (deg) | 60 | `web/hud.js:FORWARD_DEG` |
 | Path length (m) | 80 | `web/hud.js:MAX_LEN` |
 | Ribbon half-width (m) | 2.65 | `web/hud.js:HALF_W` |
-| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |
+| Ribbon | global route (`route` + `route_y`) always drawn, 0.62 alpha near the truck fading to the far alpha; learned planner's chosen candidate (null-score candidates skipped) as a bright 0.6 × width near segment; other candidates faint thin lines; holding keeps the full route, tinted amber, with a solid stop bar at the hold distance | |
+| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object with a stop bar) | |
 | Stop clearance (m) | 8 | `web/hud.js:STOP_CLEAR` |
 | Warn clearance (m) | 20 | `web/hud.js:WARN_CLEAR` |
-| Objects | ground truth: pedestrians (0.6 × 1.8 m capsule), other trucks (5.3 × 4.5 × 9.35 m box), obstacles (2r box); `hud.setDetections(camera, list)` adds 3D `{x,z,size,kind}` or 2D `{box:[x0,y0,x1,y1] normalised, cls, conf}` detections | |
-| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
+| Objects | thin axis-aligned rectangle per object, label `class distance` above the top-left corner (confidence added when focused); white, amber within warn clearance, red within stop clearance (detections: box spanning the centre 24 % of the frame) | `web/hud.js` |
+| Detections | `meta.det.items` → `hud.setDetections(camera, items)`; 2D `{box:[x0,y0,x1,y1] normalised, cls, conf, dist}` or 3D `{x,z,size,kind}`; expire after the TTL | `web/hud.js` |
+| Detection TTL (ms) | 1000 | `web/hud.js:DETECTION_TTL_MS` |
+| Ground truth boxes | pedestrians (0.6 × 1.8 m), other trucks (5.3 × 4.5 × 9.35 m), obstacles (2r) projected to their image bounds; drawn when the palette toggle "Show ground truth boxes" is on (stored in `localStorage`) or the camera has no live detections | |
+| Label min box height (px) | 14 | `web/hud.js:LABEL_MIN_H` |
+| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `toggleGroundTruth()`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
 | Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
 | Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
+
+## Detector
+
+| Item | Value | Source |
+|---|---|---|
+| Model | YOLO detector as ONNX at `DETECTOR_MODEL` (compose default `/app/models/yolo11n.onnx`, `./models` mounted read-only); off when unset or missing | `brain/brain/detector.py` |
+| Team model | `uv run tools/fetch_detector.py` downloads the first `pi-hack-mining` Hugging Face model (`--repo`, `--file` to choose; `.pt` exported to ONNX) into `models/` | `tools/fetch_detector.py` |
+| Placeholder | `uv run tools/fetch_detector.py --placeholder`: Ultralytics YOLO11n COCO (2.6 M params), exported at 384 × 640 | `tools/fetch_detector.py` |
+| Classes | from ONNX metadata `names`; `DETECTOR_CLASSES` comma list filters; COCO models keep person, bicycle, car, motorcycle, bus, truck | `brain/brain/detector.py` |
+| Output layouts | `(1, 4+nc, N)` YOLOv8/11, `(1, N, 5+nc)` YOLOv5, `(1, N, 6)` end-to-end (metadata `end2end`) | `brain/brain/detector.py` |
+| Input height (px) | 384 | `brain/brain/detector.py:INPUT_H` |
+| Input width (px) | 640 | `brain/brain/detector.py:INPUT_W` |
+| Preprocess | letterbox (bilinear resize, centred pad), RGB, /255, NCHW; fixed model input shape wins over the defaults | |
+| Pad value | 114 | `brain/brain/detector.py:PAD_VALUE` |
+| Confidence threshold | 0.35 | `brain/brain/detector.py:CONF` |
+| NMS IoU | 0.5 | `brain/brain/detector.py:IOU` |
+| Max detections | 50 | `brain/brain/detector.py:MAX_DET` |
+| Runtime | onnxruntime (extra `detector`), providers from `DETECTOR_PROVIDERS` else all available (CPU on watson) | |
+| Intra-op threads | 2 | `brain/brain/detector.py:THREADS` |
+| Worker threads | 2 | `brain/brain/detector.py:WORKERS` |
+| Scheduling | one pending frame per camera (newer replaces older), workers take the oldest pending camera; truck cameras only | |
+| Meta | `det: {t, items:[{box, cls, conf, dist}]}`; `t` = arrival time of the frame the boxes came from; latest result per camera carried on every later frame | `brain/brain/bridge.py` |
+| Max carry age (s) | 1 | `brain/brain/detector.py:MAX_AGE_S` |
+| Box | normalised to the frame, 4 decimals | |
+| Distance | depth at the box bottom band (bottom 20 %, centre half of the width), 20th percentile, × `hypot(1, (cx − W/2)/f)` | `brain/brain/detector.py` |
+| Depth percentile | 20 | `brain/brain/detector.py:DEPTH_PERCENTILE` |
+| Stats | `GET /api/detector` → `{enabled, model, input, classes, runs, dropped, infer_ms}` | `brain/brain/app.py` |
+| Throughput (YOLO11n, watson CPU, Isaac running) | 21 ms single stream at 4 threads; 56 inferences/s with 2 workers × 4 threads (target 45) | |

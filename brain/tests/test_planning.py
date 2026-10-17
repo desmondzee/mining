@@ -9,7 +9,7 @@ from brain import planning
 from brain.fakesim import Truck as SimTruck
 from brain.planning.driver import LIDAR_HEIGHT, lidar_ranges, split_lidar
 from brain.planning.navmap import load
-from brain.policy import act
+from brain.policy import act, planner_points, sensor_rotation
 from brain.world import Truck
 
 WORLDS = Path(__file__).resolve().parents[2] / "data" / "worlds"
@@ -166,7 +166,7 @@ def test_lidar_bins_run_left_to_right():
     ranges = lidar_ranges(np.array([[-10.0, 10.0], [0.5, 20.0], [10.0, 10.0]]))
     hits = np.flatnonzero(ranges < 100)
     assert len(hits) == 3 and hits[0] < 30 <= hits[1] < hits[2]
-    assert ranges[30] == pytest.approx(math.hypot(0.5, 20.0))
+    assert ranges[30] == math.ceil(math.hypot(0.5, 20.0))
 
 
 def test_holds_behind_vehicle_blocking_narrow_ramp(nav):
@@ -188,3 +188,49 @@ def test_keeps_body_on_narrow_ramp_next_to_vehicle(nav, side):
     blocker = tuple(route[i] + np.array([d[1], -d[0]]) * side)
     _, clear, _ = run(nav, start, goal, [blocker], ticks=700)
     assert clear > 3.0
+
+
+
+def tilted_ground_scan(nav, truck: Truck, pitch: float, roll: float, front: float) -> tuple[np.ndarray, dict]:
+    rot = sensor_rotation(truck.yaw, pitch, roll)
+    origin = np.array([truck.x, float(nav.ground_at(truck.x, truck.z)), truck.z]) + rot @ [0.0, LIDAR_HEIGHT, front]
+    el = np.radians(np.linspace(-19.5, 9.5, 30))
+    az = np.radians(np.linspace(-59.75, 59.75, 240))
+    el, az = np.meshgrid(el, az, indexing="ij")
+    dirs = np.stack([np.cos(el) * np.sin(az), np.sin(el), np.cos(el) * np.cos(az)], axis=-1).reshape(-1, 3)
+    t = np.arange(0.25, 100.0, 0.25)
+    rays = origin + (dirs @ rot.T)[:, None, :] * t[None, :, None]
+    below = rays[..., 1] < nav.ground_at(rays[..., 0], rays[..., 2])
+    hit = below.any(axis=1)
+    dist = t[below.argmax(axis=1)][hit]
+    sensor = dict(zip("xyz", origin.tolist()), yaw=truck.yaw, pitch=pitch, roll=roll)
+    return (dirs[hit] * dist[:, None]).astype(np.float32), sensor
+
+
+def quarry_spawn(monkeypatch) -> tuple:
+    if not (WORLDS / "quarry" / "navgrid.json").is_file():
+        pytest.skip("no quarry world")
+    nav = load(WORLDS / "quarry")
+    monkeypatch.setattr(planning, "nav_map", lambda: nav)
+    planning.reset()
+    truck = Truck("truck-2", x=-253.31, z=41.03, yaw=59.46)
+    points, sensor = tilted_ground_scan(nav, truck, pitch=1.55, roll=7.03, front=4.875)
+    return nav, truck, points, sensor
+
+
+def test_tilted_front_lidar_ground_is_not_an_obstacle(monkeypatch):
+    nav, truck, points, sensor = quarry_spawn(monkeypatch)
+    yaw = math.radians(truck.yaw)
+    _, raw = split_lidar(nav, truck.x, truck.z, yaw, points, LIDAR_HEIGHT)
+    level = planner_points(points, sensor, truck, float(nav.ground_at(truck.x, truck.z)), LIDAR_HEIGHT)
+    _, fixed = split_lidar(nav, truck.x, truck.z, yaw, level, LIDAR_HEIGHT)
+    assert len(raw) > 100 and len(fixed) == 0
+
+
+def test_tilted_front_lidar_truck_drives(monkeypatch):
+    nav, truck, points, sensor = quarry_spawn(monkeypatch)
+    truck.set_goal(nav.sites["ore_1"], "ore_1")
+    truck.path = planning.plan_route(nav, (truck.x, truck.z), truck.goal).tolist()
+    assert act(truck, None, None, points, now=0.0).status == "holding"
+    a = act(truck, None, None, points, now=0.0, sensor=sensor)
+    assert a.status != "holding" and a.throttle > 0

@@ -10,10 +10,19 @@ services:
       - "127.0.0.1:9000:9000"
     environment:
       WORLD_DIR: /app/data/worlds/quarry
+      PLANNER_CKPT: ${PLANNER_CKPT-/app/models/ppo_v3.npz}
       RADIO_URL: ${RADIO_URL:-http://radio:8090}
       LIDAR_HEIGHT: ${LIDAR_HEIGHT:-2.7}
+      DETECTOR_MODEL: ${DETECTOR_MODEL-/app/models/yolo11n.onnx}
+      DETECTOR_CLASSES: ${DETECTOR_CLASSES:-}
+      DETECTOR_THREADS: ${DETECTOR_THREADS:-2}
+      DETECTOR_WORKERS: ${DETECTOR_WORKERS:-1}
+      OMP_NUM_THREADS: ${OMP_NUM_THREADS:-2}
+      OPENBLAS_NUM_THREADS: ${OPENBLAS_NUM_THREADS:-2}
+      MAX_SPEED: ${MAX_SPEED:-5.0}
     volumes:
       - ./data:/app/data:ro
+      - ./models:/app/models:ro
     restart: unless-stopped
 
   fakesim:

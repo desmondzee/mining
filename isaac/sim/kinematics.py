@@ -75,7 +75,7 @@ class Truck:
         self.received = -math.inf
 
     def command(self, throttle: float, steer: float, now: float) -> None:
-        self.throttle = min(1.0, max(0.0, float(throttle)))
+        self.throttle = min(1.0, max(-1.0, float(throttle)))
         self.steer = min(1.0, max(-1.0, float(steer)))
         self.received = now
 

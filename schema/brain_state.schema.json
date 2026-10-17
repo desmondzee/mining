@@ -38,7 +38,11 @@
         "steer": {"description": "-1..1, positive = right.", "type": "number", "minimum": -1, "maximum": 1},
         "route": {"description": "Planner A* path [[x, z], ...].", "$ref": "common.schema.json#/$defs/Polyline2"},
         "path_idx": {"type": "integer", "minimum": 0},
-        "ghost_paths": {"description": "Safe candidate rollouts.", "type": "array", "items": {"$ref": "common.schema.json#/$defs/Polyline2"}}
+        "ghost_paths": {"description": "Safe candidate rollouts.", "type": "array", "items": {"$ref": "common.schema.json#/$defs/Polyline2"}},
+        "planner": {"description": "Candidate chooser: learned scorer (PLANNER_CHECKPOINT loaded) or hand-tuned rules.", "type": "string", "enum": ["learned", "rules"]},
+        "choice": {"description": "Index into candidates of the driven path, -1 when none.", "type": "integer", "minimum": -1},
+        "candidates": {"description": "All 44 candidate rollouts this tick, [x, z] every 0.2 s for 3 s.", "type": "array", "items": {"$ref": "common.schema.json#/$defs/Polyline2"}},
+        "candidate_scores": {"description": "Per candidate, higher = preferred (learned logit or minus rule cost); null = unsafe.", "type": "array", "items": {"type": ["number", "null"]}}
       }
     },
     "Obstacle": {"type": "object", "required": ["x", "z"], "properties": {"x": {"type": "number"}, "z": {"type": "number"}, "r": {"type": "number"}}},

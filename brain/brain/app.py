@@ -1,4 +1,5 @@
 import asyncio
+import time
 import json
 import logging
 import math
@@ -12,7 +13,8 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import hud, planning, radio_proxy
+from . import detector, hud, planning, radio_proxy
+from .compact import pack_state
 from .bridge import SimBridge
 from .hub import LatestHub
 from .video import VideoHub
@@ -23,12 +25,33 @@ log = logging.getLogger(__name__)
 STATE_HZ = 10
 LIDAR_VIEWER_HZ = 10
 DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
+MIN_BOX = 0.02
+MAX_BOX_ASPECT = 8.0
+ZOOM_CAMERAS = ("overview",)
 
 
 class Goal(BaseModel):
     x: float | None = None
     z: float | None = None
     site: str | None = None
+
+
+class View(BaseModel):
+    box: list[float]
+
+
+def check_box(box: list[float]) -> list[float]:
+    if len(box) != 4 or not all(math.isfinite(v) for v in box):
+        raise HTTPException(422, "box must be [x0, y0, x1, y1]")
+    x0, y0, x1, y1 = box
+    w, h = x1 - x0, y1 - y0
+    if not (0 <= x0 and 0 <= y0 and x1 <= 1 and y1 <= 1):
+        raise HTTPException(422, "box must lie within 0..1")
+    if w < MIN_BOX or h < MIN_BOX:
+        raise HTTPException(422, f"box must be at least {MIN_BOX} in each dimension")
+    if max(w / h, h / w) > MAX_BOX_ASPECT:
+        raise HTTPException(422, f"box aspect must be within 1:{MAX_BOX_ASPECT:g}")
+    return [round(v, 4) for v in box]
 
 
 def load_world_meta(world_dir: Path) -> dict:
@@ -50,7 +73,8 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     video = LatestHub()
     lidar = LatestHub()
     h264 = VideoHub()
-    bridge = SimBridge(world, video, lidar, h264)
+    det = detector.from_env()
+    bridge = SimBridge(world, video, lidar, h264, det)
     lidar_period = 1 / float(os.environ.get("LIDAR_VIEWER_HZ", LIDAR_VIEWER_HZ))
     heightmap = hud.load_heightmap(os.environ.get("WORLD_DIR"))
 
@@ -64,6 +88,8 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         if server:
             server.close()
         h264.close()
+        if det:
+            det.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.world = world
@@ -75,6 +101,14 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     @app.get("/api/state")
     def get_state():
         return hud.augment(world.snapshot(), heightmap)
+
+    @app.get("/api/detector")
+    def get_detector():
+        if det is None:
+            return {"enabled": False}
+        model = det.detect
+        return {"enabled": True, "model": os.path.basename(model.path), "input": list(model.size),
+                "classes": len(model.names), **det.stats()}
 
     @app.get("/api/world")
     def get_world():
@@ -141,8 +175,26 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         scan = world.lidar.get(truck_id)
         if scan is None:
             raise HTTPException(404, f"no lidar scan for {truck_id}")
-        meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose}
+        meta = {"truck": truck_id, "seq": scan.seq, "points": len(scan.points), "pose": scan.pose, "sensor": scan.sensor}
         return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
+
+    def find_view(camera: str) -> dict:
+        if camera not in ZOOM_CAMERAS:
+            raise HTTPException(404, f"camera {camera} has no zoom")
+        return world.views.setdefault(camera, {"box": None})
+
+    @app.post("/api/view/{camera}")
+    def post_view(camera: str, view: View):
+        if find_view(camera)["box"] is not None:
+            raise HTTPException(409, f"{camera} is already zoomed")
+        bridge.send_view(camera, check_box(view.box))
+        return world.views[camera]
+
+    @app.delete("/api/view/{camera}")
+    def delete_view(camera: str):
+        find_view(camera)
+        bridge.send_view(camera, None)
+        return world.views[camera]
 
     @app.websocket("/ws/video")
     async def ws_video(ws: WebSocket, codec: str = "h264"):
@@ -186,12 +238,21 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         except (WebSocketDisconnect, RuntimeError):
             pass
 
+    state_cache = {"t": 0.0, "text": ""}
+
+    def packed_state() -> str:
+        now = time.monotonic()
+        if now - state_cache["t"] >= 1 / STATE_HZ / 2:
+            state_cache["text"] = pack_state(hud.augment(world.snapshot(network=False), heightmap))
+            state_cache["t"] = now
+        return state_cache["text"]
+
     @app.websocket("/ws/state")
     async def ws_state(ws: WebSocket):
         await ws.accept()
         try:
             while True:
-                await ws.send_json(hud.augment(world.snapshot(network=False), heightmap))
+                await ws.send_text(packed_state())
                 await asyncio.sleep(1 / STATE_HZ)
         except (WebSocketDisconnect, RuntimeError):
             pass

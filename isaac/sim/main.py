@@ -59,13 +59,16 @@ class DryRenderer:
     def __init__(self, sim) -> None:
         import numpy as np
 
-        from isaac.sim.sensors import CAM_H, CAM_W
+        from isaac.sim.sensors import CAM_H, CAM_W, OVERVIEW_HFOV
+        from isaac.sim.zoom import OverviewZoom
 
+        self.zoom = OverviewZoom(np.eye(4), OVERVIEW_HFOV, CAM_W / CAM_H)
         self.frames = {name: np.zeros((CAM_H, CAM_W, 3), np.uint8) for name in ["overview", *(t.id for t in sim.trucks)]}
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
         self.view_poses = {}
 
     def update(self, sim, dt: float) -> None:
+        self.zoom.step(dt)
         self.view_poses = sim.view_poses(dt)
 
     def render(self) -> dict:
@@ -84,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
 
     from isaac.sim.bridge import Bridge
     from isaac.sim.protocol import encode_actors, encode_frame, encode_jpeg, encode_lidar
-    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
+    from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HFOV, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
     sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
@@ -97,7 +100,11 @@ def run(args: argparse.Namespace) -> None:
         renderer = IsaacRenderer(app, sim, args, config)
 
     host, port = args.brain.rsplit(":", 1)
-    bridge = Bridge(host, int(port), sim.hello, sim.command).start()
+    def on_view(camera: str, box: list | None) -> None:
+        if camera == "overview":
+            renderer.zoom.set(box)
+
+    bridge = Bridge(host, int(port), sim.hello, sim.command, on_view).start()
     jpeg_pool = ThreadPoolExecutor(6)
     publisher = ThreadPoolExecutor(1)
     noise = float(config.get("noise_sigma", 0.0))
@@ -116,7 +123,7 @@ def run(args: argparse.Namespace) -> None:
     last_sig: dict[str, bytes] = {}
     fresh: dict[str, int] = {}
 
-    def publish(images, depths, poses, cams, views, frame):
+    def publish(images, depths, poses, cams, views, overview, frame):
         new = {}
         for name, img in images.items():
             sig = img[::17, ::23].tobytes()
@@ -132,6 +139,8 @@ def run(args: argparse.Namespace) -> None:
                     bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name]))
                 elif name in views:
                     bridge.send(encode_frame(name, data, w, h, cam=views[name]))
+                elif name == "overview":
+                    bridge.send(encode_frame(name, data, w, h, view=overview))
                 else:
                     bridge.send(encode_frame(name, data, w, h))
         if save and args.save_every and frame % args.save_every == 0:
@@ -170,14 +179,14 @@ def run(args: argparse.Namespace) -> None:
                 bridge.send(encode_actors(sim.actors()))
             if sim.time >= next_lidar:
                 next_lidar = max(next_lidar + 1 / LIDAR_HZ, sim.time - 1 / LIDAR_HZ)
-                for t, points in zip(sim.trucks, sim.lidars()):
-                    bridge.send(encode_lidar(t.id, points, t.pose()))
+                for i, (t, points) in enumerate(zip(sim.trucks, sim.lidars())):
+                    bridge.send(encode_lidar(t.id, points, t.pose(), cam_field(*sim.lidar_pose(i), LIDAR_HFOV)))
         t3 = time.monotonic()
         if pending is not None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        meta = (depths, poses, cams, views)
+        meta = (depths, poses, cams, views, renderer.zoom.meta())
         if lag:
             meta, previous = (previous or meta), meta
         pending = publisher.submit(publish, images, *meta, frames)

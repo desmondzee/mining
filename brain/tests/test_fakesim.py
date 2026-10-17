@@ -125,3 +125,20 @@ def test_world_lidar_ground_follows_navgrid():
         t.x, t.z, t.yaw = pose
         found.append(len(split_lidar(nav, t.x, t.z, math.radians(t.yaw), q.scan_lidar(t), LIDAR_HEIGHT)[1]))
     assert found[0] > 0 and found[1] == 0
+
+
+def test_overview_zoom_renders_subregion_at_full_resolution(quarry):
+    from brain.fakesim import OVERVIEW_PX, square_box
+
+    assert square_box([0.1, 0.2, 0.3, 0.6]) == pytest.approx([0.0, 0.2, 0.4, 0.6])
+    quarry.rocks = np.array([[20.0, 20.0, 8.0, 3.0, 0]])
+    rock = lambda img: np.all(img == (110, 110, 115), axis=-1)
+    full = quarry.render_overview()
+    quarry.view_box = [0.5, 0.3, 0.7, 0.5]
+    zoomed = quarry.render_overview()
+    assert zoomed.shape == full.shape == (OVERVIEW_PX, OVERVIEW_PX, 3)
+    assert rock(zoomed).sum() == pytest.approx(np.pi * (8 * OVERVIEW_PX / 200 * 5) ** 2, rel=0.03)
+    ys, xs = np.nonzero(rock(zoomed))
+    assert xs.mean() == pytest.approx(OVERVIEW_PX / 2, abs=2) and ys.mean() == pytest.approx(OVERVIEW_PX / 2, abs=2)
+    quarry.view_box = None
+    np.testing.assert_array_equal(quarry.render_overview(), full)

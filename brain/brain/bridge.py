@@ -2,14 +2,16 @@ import asyncio
 import io
 import logging
 import struct
+import time
 
 import numpy as np
 from PIL import Image
 
 from . import policy
+from .detector import DetectorWorker
 from .hub import LatestHub
 from .hud import frame_meta, pack_meta
-from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, read_message
+from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, encode_view, read_message
 from .video import VideoHub
 from .world import Scan, World
 
@@ -32,11 +34,13 @@ def lidar_message(truck_id: str, scan: Scan) -> bytes:
 
 
 class SimBridge:
-    def __init__(self, world: World, video: LatestHub, lidar: LatestHub, h264: VideoHub | None = None) -> None:
+    def __init__(self, world: World, video: LatestHub, lidar: LatestHub, h264: VideoHub | None = None,
+                 detector: DetectorWorker | None = None) -> None:
         self.world = world
         self.video = video
         self.h264 = h264
         self.lidar = lidar
+        self.detector = detector
         self._writer: asyncio.StreamWriter | None = None
         self._scan_seq = 0
 
@@ -54,6 +58,8 @@ class SimBridge:
                 kind = header.get("type")
                 if kind == "hello":
                     self._on_hello(header)
+                    for camera, view in self.world.views.items():
+                        writer.write(encode_view(camera, view["box"]))
                 elif kind == "frame":
                     await self._on_frame(header, payload, writer)
                 elif kind == "lidar":
@@ -74,6 +80,11 @@ class SimBridge:
             writer.close()
             log.info("sim disconnected (%s)", peer)
 
+    def send_view(self, camera: str, box: list[float] | None) -> None:
+        self.world.views[camera] = {"box": box}
+        if self._writer is not None:
+            self._writer.write(encode_view(camera, box))
+
     def _on_hello(self, header: dict) -> None:
         if "bounds" in header:
             self.world.bounds = [float(v) for v in header["bounds"]]
@@ -91,13 +102,18 @@ class SimBridge:
     async def _on_lidar(self, header: dict, payload: bytes) -> None:
         truck_id = header["truck"]
         self._scan_seq += 1
-        scan = Scan(self._scan_seq, header["pose"], decode_lidar(header, payload))
+        scan = Scan(self._scan_seq, header["pose"], decode_lidar(header, payload), header.get("sensor"))
         self.world.lidar[truck_id] = scan
         await self.lidar.publish(truck_id, lidar_message(truck_id, scan))
 
     async def _on_frame(self, header: dict, payload: bytes, writer: asyncio.StreamWriter) -> None:
         rgb, depth, jpeg = decode_frame(header, payload)
-        meta = frame_meta(header)
+        t = time.time()
+        det = None
+        if self.detector and header.get("truck"):
+            self.detector.submit(header["camera"], rgb, depth, t, (header.get("cam") or {}).get("hfov"))
+            det = self.detector.latest(header["camera"], t)
+        meta = frame_meta(header, t, det)
         if self.h264:
             self.h264.submit(header["camera"], rgb, meta)
         if jpeg is None and self.video.subscribers:
@@ -116,7 +132,7 @@ class SimBridge:
         truck.speed = float(header.get("speed", truck.speed))
 
         scan = self.world.lidar.get(truck_id)
-        action = policy.act(truck, rgb, depth, scan.points if scan else None)
+        action = policy.act(truck, rgb, depth, scan.points if scan else None, sensor=scan.sensor if scan else None)
         truck.throttle, truck.steer, truck.status = action.throttle, action.steer, action.status
         if action.status == "arrived":
             truck.set_goal(None)
