@@ -151,11 +151,14 @@ class IsaacRenderer:
             ann.attach(rp)
             self.tiles = (ann, [n for n, _, _, _ in sensors], math.ceil(math.sqrt(len(sensors))))
             cameras = [c for c in cameras if c not in sensors]
+        self.slow, self.every, self.frame = [], max(1, int(config.get("excavator_camera_every", 1))), 0
         for name, path, w, h in cameras:
             rp = rep.create.render_product(path, (w, h))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
             ann.attach(rp)
             self.annotators.append((name, ann, np.zeros((h, w, 3), np.uint8)))
+            if name in sim.cab_cameras and self.every > 1:
+                self.slow.append(rp)
         self.black = np.zeros((CAM_H, CAM_W, 3), np.uint8)
         self.update(sim, 0.0)
         omni.timeline.get_timeline_interface().play()
@@ -300,6 +303,9 @@ class IsaacRenderer:
                 self.views[name].Set(camera_matrix(r, p))
 
     def render(self) -> dict:
+        self.frame += 1
+        for k, rp in enumerate(self.slow):
+            rp.hydra_texture.set_updates_enabled((self.frame + k) % self.every == 0)
         if self.step_mode == "update":
             self.app.update()
         else:
