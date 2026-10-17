@@ -1,0 +1,5 @@
+# Automatic HTTPS (Let's Encrypt) for $DOMAIN. Needs ports 80/443 open and DNS pointing here.
+{$DOMAIN:localhost} {
+    encode gzip zstd
+    reverse_proxy web:80
+}

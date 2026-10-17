@@ -1,0 +1,6 @@
+numpy>=1.26
+scipy>=1.11
+trimesh>=4.0
+pillow>=10.1
+requests>=2.31
+rtree>=1.2

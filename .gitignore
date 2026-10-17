@@ -1,0 +1,52 @@
+# Secrets
+.env
+.env.*
+!.env.example
+!deploy/.env.example
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Node / web
+node_modules/
+dist/
+web/dist/
+*.tsbuildinfo
+.vite/
+
+# Unity
+unity/**/[Ll]ibrary/
+unity/**/[Tt]emp/
+unity/**/[Oo]bj/
+unity/**/[Bb]uild/
+unity/**/[Bb]uilds/
+unity/**/[Ll]ogs/
+unity/**/[Uu]ser[Ss]ettings/
+*.csproj
+*.sln
+
+# Generated worlds: keep the procedural default tracked, ignore large generated splats elsewhere
+data/worlds/*/splat_*.spz
+data/worlds/*/*.ply
+!data/worlds/default/
+!data/worlds/default/**
+data/audio/
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# API key files
+deploy/secrets/*
+!deploy/secrets/README.md
+.venv*/
