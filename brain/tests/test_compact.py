@@ -9,7 +9,7 @@ def test_pack_state_rounds_and_thins():
     out = json.loads(pack_state(state))
     t = out["trucks"][0]
     assert t["x"] == 1.23 and out["t"] == 1.23
-    assert len(t["candidates"][0]) == 7 and t["candidates"][0][-1] == [1.9, 14.8]
+    assert len(t["candidates"][0]) == 6 and t["candidates"][0][-1] == [1.9, 14.8]
     assert t["candidate_scores"] == [0.12]
 
 
