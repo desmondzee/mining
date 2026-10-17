@@ -24,7 +24,8 @@
     "concept": null,
     "heightmap_raw": "heightmap.raw",
     "preview": "preview.png",
-    "heightmap_meta": "heightmap_meta.json"
+    "heightmap_meta": "heightmap_meta.json",
+    "surround": "surround.glb"
   },
   "splat_transform": {
     "scale": 1.0,
@@ -48,7 +49,15 @@
         107.9,
         -1.7,
         107.9
-      ]
+      ],
+      "dump_point": {
+        "pos3": [
+          107.9,
+          -1.7,
+          107.9
+        ],
+        "heading_deg": 4.1
+      }
     },
     {
       "id": "dump_south",
@@ -62,7 +71,15 @@
         -107.9,
         -1.42,
         -107.9
-      ]
+      ],
+      "dump_point": {
+        "pos3": [
+          -107.9,
+          -1.42,
+          -107.9
+        ],
+        "heading_deg": 270.0
+      }
     },
     {
       "id": "parking",
@@ -76,6 +93,32 @@
         107.9,
         -2.8,
         -107.9
+      ],
+      "slots": [
+        {
+          "pos3": [
+            103.0,
+            -2.7,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        },
+        {
+          "pos3": [
+            107.9,
+            -2.8,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        },
+        {
+          "pos3": [
+            112.8,
+            -2.89,
+            -107.9
+          ],
+          "heading_deg": 0.0
+        }
       ]
     },
     {
@@ -105,7 +148,15 @@
         4.0,
         -30.01,
         -6.0
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          4.0,
+          -30.01,
+          -6.0
+        ],
+        "heading_deg": 253.6
+      }
     },
     {
       "id": "pit_south",
@@ -120,7 +171,15 @@
         14.2,
         -10.01,
         -87.5
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          14.2,
+          -10.01,
+          -87.5
+        ],
+        "heading_deg": 170.6
+      }
     },
     {
       "id": "pit_west",
@@ -135,7 +194,15 @@
         -61.4,
         -20.01,
         0.6
-      ]
+      ],
+      "load_point": {
+        "pos3": [
+          -61.4,
+          -20.01,
+          0.6
+        ],
+        "heading_deg": 270.6
+      }
     }
   ],
   "junctions": [
@@ -1224,12 +1291,13 @@
       "id": "truck-0",
       "callsign": "Truck 0",
       "spawn": [
-        101.1,
+        103.0,
         -107.9
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 0
     },
     {
       "id": "truck-1",
@@ -1240,18 +1308,20 @@
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 1
     },
     {
       "id": "truck-2",
       "callsign": "Truck 2",
       "spawn": [
-        114.7,
+        112.8,
         -107.9
       ],
       "heading_deg": 0.0,
       "capacity_t": 55,
-      "model": "Komatsu HD465-7 (HD465-7E0)"
+      "model": "Komatsu HD465-7 (HD465-7E0)",
+      "slot": 2
     }
   ],
   "navgrid": "navgrid.json",
@@ -1568,5 +1638,46 @@
         "ok": true
       }
     }
-  }
+  },
+  "equipment": [
+    {
+      "id": "exc-0",
+      "type": "excavator",
+      "name": "Excavator 1",
+      "face": "pit_floor",
+      "pos3": [
+        4.0,
+        -30.01,
+        4.0
+      ],
+      "heading_deg": 180.0,
+      "model": "excavator"
+    },
+    {
+      "id": "exc-1",
+      "type": "excavator",
+      "name": "Excavator 2",
+      "face": "pit_south",
+      "pos3": [
+        23.12,
+        -10.01,
+        -88.67
+      ],
+      "heading_deg": 277.5,
+      "model": "excavator"
+    },
+    {
+      "id": "exc-2",
+      "type": "excavator",
+      "name": "Excavator 3",
+      "face": "pit_west",
+      "pos3": [
+        -61.4,
+        -20.01,
+        9.6
+      ],
+      "heading_deg": 180.0,
+      "model": "excavator"
+    }
+  ]
 }

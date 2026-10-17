@@ -65,7 +65,12 @@ scene.add(ground);
 
 // --- surroundings: a ground apron + distant hills so the scan doesn't float in space.
 // Inside the scan footprint the apron sits 4 m under the heightmap (hidden by the scan), outside it blends to rolling ground.
-{
+// Prefer the generated surround.glb (envgen/surround.py, same frame as collider.glb); fall back to the inline apron.
+if (world.assets.surround) {
+  const sur = (await loader.loadAsync(base + world.assets.surround)).scene;
+  sur.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.material = new THREE.MeshLambertMaterial({ vertexColors: true }); } });
+  scene.add(sur);
+} else {
   const meta = await (await fetch(base + 'heightmap_meta.json', { cache: 'no-store' })).json();
   const hm = new Uint16Array(await (await fetch(base + 'heightmap.raw', { cache: 'no-store' })).arrayBuffer());
   const N = meta.resolution, [ox, oz] = meta.origin, [sx, sz] = meta.size_m;
