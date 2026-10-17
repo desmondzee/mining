@@ -1,0 +1,56 @@
+{
+  "model": "komatsu_hd465.glb (now at unity/Assets/Models/Trucks/komatsu_hd465.glb; same geometry as the original assets copy)",
+  "frame": "glTF scene coordinates of the GLB (after its Sketchfab Z-up->Y-up root node): metres, +Y up, +Z forward (cab end), +X lateral, right-handed",
+  "dump_bed": {
+    "mesh_node": "Object_7",
+    "material": "DumpBed",
+    "hinge_m": [
+      0.0838,
+      1.8742,
+      -5.2269
+    ],
+    "hinge_note": "rear-bottom of the DumpBed bounding box (x centred): rear = min Z, bottom = min Y",
+    "axis": [
+      -1,
+      0,
+      0
+    ],
+    "positive": "tip: rotating by +angle about axis (right-handed) raises the front of the bed",
+    "tip_deg": 48,
+    "raise_s": 3,
+    "lower_s": 2.5,
+    "bed_bbox_m": {
+      "min": [
+        -2.5164,
+        1.8742,
+        -5.2269
+      ],
+      "max": [
+        2.684,
+        4.5129,
+        3.4961
+      ]
+    }
+  },
+  "model_bbox_m": {
+    "min": [
+      -2.5164,
+      -0.0101,
+      -5.2269
+    ],
+    "max": [
+      2.8481,
+      4.5129,
+      4.17
+    ]
+  },
+  "used_by": [
+    "envgen/preview/index.html ([bed-tip])"
+  ],
+  "hinge_m": [
+    0.0838,
+    1.8742,
+    -2.82
+  ],
+  "hinge_note": "hinge pins at the rear end of the chassis frame (Frame mesh min Z + 0.15 m), bed bottom height; x centred. Was the bed tail lip (-5.23), which is wrong."
+}
