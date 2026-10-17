@@ -4,7 +4,6 @@ set -euo pipefail
 REPO="$(cd "$(dirname "$0")/../.." && pwd)"
 OUT="$REPO/downloads/isaac/fx"
 mkdir -p "$OUT" && chmod 777 "$OUT"
-while docker ps --format '{{.Names}}' | grep -q '^mining-isaac'; do echo "waiting for $(docker ps --format '{{.Names}}' | grep '^mining-isaac' | tr '\n' ' ')"; sleep 30; done
 SCRIPT="$1"; shift
 docker run --rm --name mining-isaac-fx --device nvidia.com/gpu=all --network=host \
   -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e NVIDIA_DRIVER_CAPABILITIES=all -e PYTHONUNBUFFERED=1 \

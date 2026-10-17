@@ -414,3 +414,40 @@
 | Commands per session / global (per min) | 20 / 60 | |
 | TTS syntheses global (per min) | 60 | |
 | Login attempts per IP / global (per min) | 5 / 20 | |
+
+## Truck FX
+
+| Item | Value | Source |
+|---|---|---|
+| Dust renderer | Omni Flow (`omni.flowusd` 110.0.4, aarch64), RTX volumetric | |
+| Gravel renderer | `UsdGeom.PointInstancer`, 3 shapes × 3 tones, 20-triangle rocks | `isaac/fx/fx.py:ROCK_SHAPES` |
+| Ground map cell (m) | 1 | `isaac/fx/ground.py:CELL` |
+| Ground map samples per triangle | 4 | `isaac/fx/ground.py:BARYCENTRIC` |
+| Road corridor dust floor | 0.55 | `isaac/fx/ground.py:ROAD_DUST` |
+| Road corridor gravel | 0.85 | `isaac/fx/ground.py:ROAD_GRAVEL` |
+| Rock-face slope band (deg) | 15–35 | `isaac/fx/ground.py:SLOPE_ROCK` |
+| Dust start speed (m/s) | 1 | `isaac/fx/presets.py:DEFAULTS.min_speed` |
+| Dust full speed (m/s) | 8 | `isaac/fx/presets.py:DEFAULTS.full_speed` |
+| Surface smoothing (s) | 0.5 | `isaac/fx/dust.py:SMOOTH_TIME` |
+| Slip gain on dust | 0.6 | `isaac/fx/dust.py:SLIP_GAIN` |
+| Slip yaw rate scale (deg/s) | 30 | `isaac/fx/dust.py:SLIP_YAW_RATE` |
+| Slip accel scale (m/s²) | 2 | `isaac/fx/dust.py:SLIP_ACCEL` |
+| Dust fade (1/s) | 0.2 | `isaac/fx/fx.py:SMOKE_FADE` |
+| Wind default (m/s, Isaac x y z) | 1.5 0.5 0 | `isaac/fx/presets.py:DEFAULTS.wind` |
+| Own-camera cut: tail wind / speed | 0.3–0.6 | `isaac/fx/dust.py:AHEAD_LIMIT` |
+| Rear axle from truck centre (m) | -2.425 | `isaac/fx/presets.py:REAR_AXLE_FROM_REAR` |
+| Rear half track (m) | 1.5 | `isaac/fx/presets.py:REAR_HALF_TRACK` |
+| Tyre radius (m) | 1.1 | `isaac/fx/presets.py:TYRE_RADIUS` |
+| Gravel size (m) | 0.04–0.16 | `isaac/fx/gravel.py:SIZE` |
+| Gravel launch elevation (deg) | 15–60 | `isaac/fx/gravel.py:ELEVATION` |
+| Gravel launch speed (× truck speed) | 0.35–1.0 | `isaac/fx/gravel.py:SPEED_FRACTION` |
+| Gravel restitution | 0.3 | `isaac/fx/gravel.py:RESTITUTION` |
+| Gravel rest then shrink (s) | 0.4 + 0.25 | `isaac/fx/gravel.py:REST_TIME` |
+| Hits Warp depth/lidar | no | |
+| Hits PhysX | no | |
+
+| Preset | Flow cell (m) | Emitters per truck | Max stones per truck | Stones/s per m/s | Source |
+|---|---|---|---|---|---|
+| off | | 0 | 0 | 0 | `isaac/fx/presets.py:PRESETS` |
+| low | 0.5 | 2 | 60 | 6 | `isaac/fx/presets.py:PRESETS` |
+| high | 0.3 | 3 | 150 | 15 | `isaac/fx/presets.py:PRESETS` |

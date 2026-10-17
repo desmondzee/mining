@@ -25,7 +25,7 @@ PRESETS = {
     "low": {
         "dust": True,
         "gravel": 60,
-        "cell": 0.4,
+        "cell": 0.5,
         "emitters": 2,
         "steps_per_second": 30.0,
         "vorticity": 0.0,
@@ -35,10 +35,10 @@ PRESETS = {
     "high": {
         "dust": True,
         "gravel": 150,
-        "cell": 0.2,
+        "cell": 0.3,
         "emitters": 3,
-        "steps_per_second": 60.0,
-        "vorticity": 1.5,
+        "steps_per_second": 30.0,
+        "vorticity": 1.0,
         "shadow_steps": 16,
         "gravel_rate": 15.0,
     },
