@@ -461,8 +461,10 @@
 | Lidar rate (Hz) | 10 | `isaac/sim/sensors.py:LIDAR_HZ` |
 | Actors rate (Hz) | 10 | `isaac/sim/sensors.py:ACTORS_HZ` |
 | JPEG quality | 80 | `isaac/sim/protocol.py:JPEG_QUALITY` |
-| Overview | orthographic top-down, 640 × 360, vertical extent = bounds z range, image top = +z | |
-| Overview camera height (m) | 400 | `isaac/sim/sensors.py:OVERVIEW_HEIGHT` |
+| Overview | perspective, looks at the road network's centre from the side opposite the ore faces | |
+| Overview elevation (deg) | 50 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
+| Overview distance (× road extent) | 0.8 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
+| Overview horizontal FOV (deg) | 60 | `isaac/sim/sensors.py:OVERVIEW_HFOV` |
 | Truck frame `cam` | `{x, y, z, yaw, pitch, roll, hfov}` camera world pose, Unity Euler (pitch > 0 looks down) | |
 | Physics substep (s) | 1/60, real-time paced | |
 | Max speed (m/s) | 8 | `isaac/sim/kinematics.py:MAX_SPEED` |

@@ -13,7 +13,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 from . import world as W
 from .kinematics import yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS
-from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_HEIGHT
+from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, OVERVIEW_HFOV
 from .excavators import JOINTS
 from .kinematics import quat_from_matrix
 from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix
@@ -27,6 +27,26 @@ PROPS_JSON = "props.json"
 
 def gf(m: np.ndarray) -> Gf.Matrix4d:
     return Gf.Matrix4d(np.asarray(m, float).T.tolist())
+
+
+def overview_matrix(world) -> np.ndarray:
+    pts = np.vstack([np.asarray(r.points, float)[:, :3] for r in world.roads])
+    lo, hi = pts.min(0), pts.max(0)
+    target = (lo + hi) / 2
+    faces = [s.pos for s in world.sites if s.type == "ore"]
+    away = target[[0, 2]] - np.mean([np.asarray(f, float)[[0, -1]] for f in faces], axis=0) if faces else np.array([0.0, -1.0])
+    away /= np.linalg.norm(away) or 1.0
+    dist = float(np.hypot(hi[0] - lo[0], hi[2] - lo[2])) * OVERVIEW_DISTANCE
+    el = math.radians(OVERVIEW_ELEVATION)
+    eye = target + dist * np.array([math.cos(el) * away[0], math.sin(el), math.cos(el) * away[1]])
+    e, t = TO_ISAAC[:3, :3] @ eye, TO_ISAAC[:3, :3] @ target
+    f = (t - e) / np.linalg.norm(t - e)
+    right = np.cross(f, [0.0, 0.0, 1.0])
+    right /= np.linalg.norm(right)
+    m = np.eye(4)
+    m[:3, :3] = np.column_stack([right, np.cross(right, f), -f])
+    m[:3, 3] = e
+    return m
 
 
 def pinhole(stage, path: str, hfov: float, w: int, h: int) -> UsdGeom.Camera:
@@ -128,16 +148,8 @@ class IsaacRenderer:
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
         self.fx = self.make_fx(sim, args.fx)
 
-        xmin, zmin, xmax, zmax = world.bounds
-        height = zmax - zmin
-        over = UsdGeom.Camera.Define(stage, "/World/Overview")
-        over.CreateProjectionAttr(UsdGeom.Tokens.orthographic)
-        over.CreateHorizontalApertureAttr(height * CAM_W / CAM_H * 10)
-        over.CreateVerticalApertureAttr(height * 10)
-        over.CreateClippingRangeAttr(Gf.Vec2f(1.0, OVERVIEW_HEIGHT * 3))
-        top = np.eye(4)
-        top[:3, 3] = [(xmin + xmax) / 2, (zmin + zmax) / 2, OVERVIEW_HEIGHT]
-        over.AddTransformOp().Set(gf(top))
+        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, CAM_W, CAM_H)
+        over.AddTransformOp().Set(gf(overview_matrix(world)))
         cameras.insert(0, ("overview", "/World/Overview", CAM_W, CAM_H))
 
         self.views = {}
