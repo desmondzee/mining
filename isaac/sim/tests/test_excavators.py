@@ -11,7 +11,7 @@ def test_cycle_keys():
 
 
 def test_rig_tracks_and_rests():
-    rig = E.Rig("exc-0", digging=True)
+    rig = E.DigRig("exc-0", digging=True)
     for _ in range(300):
         rig.step(1 / 30)
     assert rig.pose == pytest.approx(E.cycle_pose(rig.phase), abs=15)
@@ -19,11 +19,11 @@ def test_rig_tracks_and_rests():
     for _ in range(300):
         rig.step(1 / 30)
     assert max(abs(v) for v in rig.pose) < 0.1
-    assert E.Rig("exc-0").phase == E.Rig("exc-0").phase != E.Rig("exc-1").phase
+    assert E.DigRig("exc-0").phase == E.DigRig("exc-0").phase != E.DigRig("exc-1").phase
 
 
 def test_radio_apply():
-    rigs = {"exc-0": E.Rig("exc-0"), "exc-1": E.Rig("exc-1")}
+    rigs = {"exc-0": E.DigRig("exc-0"), "exc-1": E.DigRig("exc-1")}
     poller = E.RadioPoller("http://x", rigs)
     poller.apply([{"id": "exc-0", "state": "digging", "heading_deg": 10}, {"id": "exc-9", "state": "digging"}])
     assert rigs["exc-0"].digging and not rigs["exc-1"].digging and poller.headings == {"exc-0": 10.0}

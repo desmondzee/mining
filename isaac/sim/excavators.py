@@ -41,7 +41,7 @@ def cycle_pose(phase: float) -> list[float]:
     return pose
 
 
-class Rig:
+class DigRig:
     def __init__(self, excavator_id: str, digging: bool = False) -> None:
         self.id = excavator_id
         self.digging = digging
@@ -72,7 +72,7 @@ def rot_y(a: float) -> np.ndarray:
 
 
 class RadioPoller:
-    def __init__(self, url: str, rigs: dict[str, Rig]) -> None:
+    def __init__(self, url: str, rigs: dict[str, DigRig]) -> None:
         self.url = url.rstrip("/") + "/api/radio/excavators"
         self.rigs = rigs
         self.headings: dict[str, float] = {}

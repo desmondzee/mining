@@ -9,7 +9,7 @@ from .kinematics import GroundFollow, Truck, yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS, make_walkers
 from .sensors import DEPTH_RANGE, LIDAR_RANGE, Rig, depth_image, lidar_points
 from .views import View, view_pose
-from .excavators import JOINTS, RadioPoller, Rig
+from .excavators import JOINTS, DigRig, RadioPoller
 
 PEDESTRIAN_PROBE = 30.0
 
@@ -36,7 +36,7 @@ class Sim:
             self.probe = lambda xs, zs, tops, lengths: np.array([hm(x, z) for x, z in zip(xs, zs)])
         self.height = height
         self.excavators = W.excavators(self.world, height, repo)
-        self.rigs = {b.id: Rig(b.id) for b in self.excavators}
+        self.rigs = {b.id: DigRig(b.id) for b in self.excavators}
         self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
