@@ -14,6 +14,9 @@ services:
       RADIO_URL: ${RADIO_URL:-http://radio:8090}
       LIDAR_HEIGHT: ${LIDAR_HEIGHT:-2.7}
       MAX_SPEED: ${MAX_SPEED:-5.0}
+      DETECTOR_MODEL: ${DETECTOR_MODEL-/app/models/yolo11n.onnx}
+      DETECTOR_CLASSES: ${DETECTOR_CLASSES:-}
+      DETECTOR_THREADS: ${DETECTOR_THREADS:-4}
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro

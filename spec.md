@@ -326,9 +326,14 @@
 | Chooser | hand-tuned score (rules), or the learned scorer when `PLANNER_CKPT` loads (see Learned planner) | |
 | Lidar mount height (m) | 3.0 | `brain/brain/planning/driver.py:LIDAR_HEIGHT` |
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
-| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre | `brain/brain/policy.py:planner_points` |
-| Ground returns | per 0.5° lidar column, outwards: a return is ground if it rises at most tan 20° × distance + 0.2 m above the last ground return (start: sensor y − `LIDAR_HEIGHT`) | `brain/brain/policy.py:ground_mask` |
-| Speed cap (m/s) | 5.0, env `MAX_SPEED`; 3.0 within 25 m of the goal; applied to the chosen throttle after the chooser | `brain/brain/policy.py:speed_cap` |
+| Tilted / offset sensor | when the lidar message has `sensor`, points go to world with its pose, ground returns are dropped, and the rest are re-expressed as a level sensor `LIDAR_HEIGHT` above the nav-grid ground at the truck centre (`brain/brain/policy.py:planner_points`) | |
+| Ground returns | per 0.5° lidar column, outwards: a return is ground if it rises at most tan 20° × distance + 0.2 m above the last ground return (start: sensor y − `LIDAR_HEIGHT`) (`brain/brain/policy.py:ground_mask`) | |
+| Ground column (deg) | 0.5 | `brain/brain/policy.py:COLUMN_DEG` |
+| Ground tolerance (m) | 0.2 | `brain/brain/policy.py:GROUND_TOL` |
+| Speed cap | env `MAX_SPEED`, applied to the chosen throttle after the chooser | |
+| Speed cap default (m/s) | 5.0 | `brain/brain/policy.py:MAX_SPEED` |
+| Speed near goal (m/s) | 3.0 | `brain/brain/policy.py:GOAL_SPEED` |
+| Near goal distance (m) | 25.0 | `brain/brain/policy.py:GOAL_SLOW_DIST` |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
@@ -417,6 +422,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}`, optional `sensor{x,y,z,yaw,pitch,roll,hfov}` (lidar world pose, same Euler convention as `cam`; Isaac sends it) | `points` × 3 int16 cm (or float32 m) |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
+| `view` | brain → sim | `camera` (`overview`), `box` `[x0,y0,x1,y1]` normalised top-left image coords of the unzoomed view, or null to reset; resent after every `hello` | none |
 
 ## Web
 
@@ -463,6 +469,11 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Go to site | `POST /api/trucks/{id}/site/{site_id}` (same as `{"site"}`) | |
 | Goal fields | `goal` [x, z], `goal_site` node id or null, `route` [[x, z], …] (planner path) | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` (clears `goal`, `goal_site`, `route`) | |
+| Overview zoom | `POST /api/view/overview` `{"box":[x0,y0,x1,y1]}` (normalised, top-left origin, of the unzoomed frame; 409 while zoomed, one level), `DELETE /api/view/overview` resets; state `views.overview.box`. Shared: one viewer's zoom applies to every viewer | |
+| Zoom box minimum (normalised) | 0.02 | `brain/brain/app.py:MIN_BOX` |
+| Zoom box max aspect | 8 | `brain/brain/app.py:MAX_BOX_ASPECT` |
+| Zoom in sim | Isaac re-aims the overview at the box centre ray and narrows the focal length so the box fills the frame (smaller side expanded to the image aspect), eased over 0.4 s; overview frame meta `view{box,settled}`; fakesim renders the sub-region at full resolution | `isaac/sim/zoom.py` |
+| Zoom UI | crosshair on the overview, drag (≥ 8 px) selects, box expanded to the tile aspect; the frame scales to the box until a settled zoomed frame arrives; Esc or palette "Reset overview zoom" resets | `web/zoom.js` |
 
 ## Radio
 
@@ -517,8 +528,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Actors rate (Hz) | 10 | `isaac/sim/sensors.py:ACTORS_HZ` |
 | JPEG quality | 80 | `isaac/sim/protocol.py:JPEG_QUALITY` |
 | Overview | perspective, looks at the road network's centre from the side opposite the ore faces | |
-| Overview elevation (deg) | 50 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
-| Overview distance (× road extent) | 0.8 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
+| Overview elevation (deg) | 32 | `isaac/sim/sensors.py:OVERVIEW_ELEVATION` |
+| Overview distance (× road extent) | 0.62 | `isaac/sim/sensors.py:OVERVIEW_DISTANCE` |
 | Overview horizontal FOV (deg) | 60 | `isaac/sim/sensors.py:OVERVIEW_HFOV` |
 | Truck frame `cam` | `{x, y, z, yaw, pitch, roll, hfov}` camera world pose, Unity Euler (pitch > 0 looks down) | |
 | Physics substep (s) | 1/60, real-time paced | |
@@ -560,7 +571,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Sim → brain camera pose | optional `frame` header field `cam{x,y,z,yaw,pitch,roll,hfov}`: camera world position (m, Unity axes) and Unity Euler angles (deg): `yaw` = `eulerAngles.y` (0 = +z, clockwise), `pitch` = `eulerAngles.x` in −180..180 (positive looks down), `roll` = `eulerAngles.z` in −180..180, `hfov` horizontal FOV | `unity/Assets/Scripts/SensorCamera.cs` |
 | Truck ground height | optional `pose.y` in `frame` (truck transform y) | |
 | Fake sim camera | truck position (renderer origin), y = ground + `CAM_HEIGHT` (ground from the nav-grid terrain in `--world` mode, else 0; `pose.y` = ground), pitch 0, roll 0, hfov `FOV_DEG`; pinhole columns `atan((col + 0.5 − W/2) / f)` | `brain/brain/fakesim.py` |
-| Frame metadata | JSON `{t, cam, pose, speed, truck}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit | `brain/brain/hud.py` |
+| Frame metadata | JSON `{t, cam, pose, speed, truck, det}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit; `det` on truck frames when the detector is on (see Detector) | `brain/brain/hud.py` |
 | State additions | `t` (brain wall clock, s); with a heightmap: `y` on trucks, pedestrians, obstacles and `route_y` (one height per `route` point) | `brain/brain/hud.py` |
 | Heightmap | `WORLD_DIR/heightmap.raw` + `heightmap_meta.json` (uint16, row 0 = min z, col 0 = min x), bilinear; none when `WORLD_DIR` unset or files missing | |
 | Ground fallback | horizontal plane at state truck `y`, else `pose.y`, else `cam.y − 3.6` | `web/hud.js` |
@@ -569,15 +580,50 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Path source | chosen planner candidate (`candidates[chosen]`, also `chosen_idx`/`candidate`/`candidate_idx`/`best`) blended into `route` beyond its end; else `route` (with `route_y`); else kinematic prediction toward `goal`; else 9 m grey stub | |
 | Alternatives | other `candidates` (or `ghost_paths` without candidates) as thin faint lines, opacity from normalised score (`score` field or `scores[i]`) | |
 | Hold | status `holding`/`hold`/`blocked`, or `candidates` present with no chosen index: short amber stub | |
-| Hold stub (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Hold bar (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Chosen candidate segment (m) | 30 | `web/hud.js:NEAR_LEN` |
+| Route ribbon far alpha | 0.14 | `web/hud.js:ROUTE_END_ALPHA` |
 | Front camera only | ribbon and candidates drawn when camera yaw is within the forward cone of truck yaw | |
 | Forward cone half-angle (deg) | 60 | `web/hud.js:FORWARD_DEG` |
 | Path length (m) | 80 | `web/hud.js:MAX_LEN` |
 | Ribbon half-width (m) | 2.65 | `web/hud.js:HALF_W` |
-| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |
+| Ribbon | global route (`route` + `route_y`) always drawn, 0.62 alpha near the truck fading to the far alpha; learned planner's chosen candidate (null-score candidates skipped) as a bright 0.6 × width near segment; other candidates faint thin lines; holding keeps the full route, tinted amber, with a solid stop bar at the hold distance | |
+| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object with a stop bar) | |
 | Stop clearance (m) | 8 | `web/hud.js:STOP_CLEAR` |
 | Warn clearance (m) | 20 | `web/hud.js:WARN_CLEAR` |
-| Objects | ground truth: pedestrians (0.6 × 1.8 m capsule), other trucks (5.3 × 4.5 × 9.35 m box), obstacles (2r box); `hud.setDetections(camera, list)` adds 3D `{x,z,size,kind}` or 2D `{box:[x0,y0,x1,y1] normalised, cls, conf}` detections | |
-| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
+| Objects | thin axis-aligned rectangle per object, label `class distance` above the top-left corner (confidence added when focused); white, amber within warn clearance, red within stop clearance (detections: box spanning the centre 24 % of the frame) | `web/hud.js` |
+| Detections | `meta.det.items` → `hud.setDetections(camera, items)`; 2D `{box:[x0,y0,x1,y1] normalised, cls, conf, dist}` or 3D `{x,z,size,kind}`; expire after the TTL | `web/hud.js` |
+| Detection TTL (ms) | 1000 | `web/hud.js:DETECTION_TTL_MS` |
+| Ground truth boxes | pedestrians (0.6 × 1.8 m), other trucks (5.3 × 4.5 × 9.35 m), obstacles (2r) projected to their image bounds; drawn when the palette toggle "Show ground truth boxes" is on (stored in `localStorage`) or the camera has no live detections | |
+| Label min box height (px) | 14 | `web/hud.js:LABEL_MIN_H` |
+| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `toggleGroundTruth()`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
 | Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
 | Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
+
+## Detector
+
+| Item | Value | Source |
+|---|---|---|
+| Model | YOLO detector as ONNX at `DETECTOR_MODEL` (compose default `/app/models/yolo11n.onnx`, `./models` mounted read-only); off when unset or missing | `brain/brain/detector.py` |
+| Team model | `uv run tools/fetch_detector.py` downloads the first `pi-hack-mining` Hugging Face model (`--repo`, `--file` to choose; `.pt` exported to ONNX) into `models/` | `tools/fetch_detector.py` |
+| Placeholder | `uv run tools/fetch_detector.py --placeholder`: Ultralytics YOLO11n COCO (2.6 M params), exported at 384 × 640 | `tools/fetch_detector.py` |
+| Classes | from ONNX metadata `names`; `DETECTOR_CLASSES` comma list filters; COCO models keep person, bicycle, car, motorcycle, bus, truck | `brain/brain/detector.py` |
+| Output layouts | `(1, 4+nc, N)` YOLOv8/11, `(1, N, 5+nc)` YOLOv5, `(1, N, 6)` end-to-end (metadata `end2end`) | `brain/brain/detector.py` |
+| Input height (px) | 384 | `brain/brain/detector.py:INPUT_H` |
+| Input width (px) | 640 | `brain/brain/detector.py:INPUT_W` |
+| Preprocess | letterbox (bilinear resize, centred pad), RGB, /255, NCHW; fixed model input shape wins over the defaults | |
+| Pad value | 114 | `brain/brain/detector.py:PAD_VALUE` |
+| Confidence threshold | 0.35 | `brain/brain/detector.py:CONF` |
+| NMS IoU | 0.5 | `brain/brain/detector.py:IOU` |
+| Max detections | 50 | `brain/brain/detector.py:MAX_DET` |
+| Runtime | onnxruntime (extra `detector`), providers from `DETECTOR_PROVIDERS` else all available (CPU on watson) | |
+| Intra-op threads | 4 | `brain/brain/detector.py:THREADS` |
+| Worker threads | 2 | `brain/brain/detector.py:WORKERS` |
+| Scheduling | one pending frame per camera (newer replaces older), workers take the oldest pending camera; truck cameras only | |
+| Meta | `det: {t, items:[{box, cls, conf, dist}]}`; `t` = arrival time of the frame the boxes came from; latest result per camera carried on every later frame | `brain/brain/bridge.py` |
+| Max carry age (s) | 1 | `brain/brain/detector.py:MAX_AGE_S` |
+| Box | normalised to the frame, 4 decimals | |
+| Distance | depth at the box bottom band (bottom 20 %, centre half of the width), 20th percentile, × `hypot(1, (cx − W/2)/f)` | `brain/brain/detector.py` |
+| Depth percentile | 20 | `brain/brain/detector.py:DEPTH_PERCENTILE` |
+| Stats | `GET /api/detector` → `{enabled, model, input, classes, runs, dropped, infer_ms}` | `brain/brain/app.py` |
+| Throughput (YOLO11n, watson CPU, Isaac running) | 21 ms single stream at 4 threads; 56 inferences/s with 2 workers × 4 threads (target 45) | |

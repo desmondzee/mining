@@ -14,11 +14,12 @@ Unity player / fakesim ── TCP :9000 ──▶ brain ── HTTP/WS :8080 ─
 | `web/` | Camera grid and goal map |
 | `unity/` | Unity project |
 | `tools/fetch_rocketbox.py` | downloads Rocketbox people into the Unity project |
+| `tools/fetch_detector.py` | downloads the team YOLO detector (or `--placeholder` COCO YOLO11n) into `models/` as ONNX |
 | `tools/fetch_planner.py` | downloads the learned planner checkpoint (Hugging Face `pi-hack-mining`) into `models/` and exports it |
 | `sim2d/` | 2D driving sim, BC + PPO training and evaluation for the learned planner (meiru-cam) |
 | `planner/`, `risk_monitor/`, `docs/planner.html` | grid A* benchmark, PoNR risk monitor, planner explainer (meiru-cam) |
 | `tests/` | tests for `sim2d`, `risk_monitor` and brain/sim2d feature parity |
-| `models/` | learned planner checkpoints (gitignored): `ppo_v3.pt` → exported `ppo_v3.npz` |
+| `models/` | learned planner checkpoints and detector ONNX (gitignored): `ppo_v3.pt` → exported `ppo_v3.npz`, `yolo11n.onnx` |
 | `unity/Assets/MineSim/` | world importer, road graph, ground follow, cinematic look ([README](unity/Assets/MineSim/README.md)) |
 | `data/worlds/` | generated worlds: `quarry` (drone scan), `default` (procedural) |
 | `envgen/` | offline world generator and browser preview ([README](envgen/README.md)) |
@@ -44,6 +45,17 @@ Public domain (Cloudflare Tunnel, origin `http://localhost:8080`, Access policy 
 cp .env.example .env
 docker compose --profile public up -d tunnel
 ```
+
+## Detector
+
+```bash
+uv run tools/fetch_detector.py                 # team model from huggingface.co/pi-hack-mining
+uv run tools/fetch_detector.py --placeholder   # COCO YOLO11n
+scp models/*.onnx watson:~/Documents/mining/models/
+DETECTOR_MODEL=/app/models/<file>.onnx docker compose up -d brain
+```
+
+Stats at `/api/detector`. Ground truth boxes: palette, "Show ground truth boxes".
 
 ## Develop locally
 
@@ -74,4 +86,5 @@ PLANNER_CKPT=../models/ppo_v3.npz uv run brain                                  
 | Unity scripts | written, not compiled |
 | Unity ARM64 player on GB10 | not verified |
 | Policy | route planner + candidate paths; chooser = rules, or the learned scorer when `models/ppo_v3.npz` exists |
+| Detector | ONNX YOLO on truck cameras (CPU), boxes in the HUD; placeholder COCO model until the team model is published |
 | Video | per-camera JPEG over WebSocket |

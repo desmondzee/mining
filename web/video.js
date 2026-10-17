@@ -23,14 +23,15 @@ function spsCodec(au) {
 }
 
 function draw(tile, frame) {
+  const meta = tile.meta ? tile.meta.get(frame.timestamp) : null;
+  if (meta !== undefined && tile.meta) tile.meta.delete(frame.timestamp);
+  tile.frames++;
+  if (tile.accept && !tile.accept(meta || null)) { frame.close(); return; }
   const c = tile.canvas;
   if (c.width !== frame.displayWidth) c.width = frame.displayWidth;
   if (c.height !== frame.displayHeight) c.height = frame.displayHeight;
   c.getContext("2d").drawImage(frame, 0, 0);
-  const meta = tile.meta ? tile.meta.get(frame.timestamp) : null;
-  if (meta !== undefined && tile.meta) tile.meta.delete(frame.timestamp);
   frame.close();
-  tile.frames++;
   tile.el.classList.add("live");
   if (tile.onFrame) tile.onFrame(meta || null);
 }

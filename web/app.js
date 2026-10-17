@@ -7,6 +7,7 @@ import { createKpis, createRadio } from "./radio.js";
 import { createDialog, createShell, isTyping, SPLITS, VIEWS } from "./shell.js";
 import { applyTheme, onTheme, palette, renderChrome, setStatusSource, storedTheme, THEMES } from "./ui.js";
 import { readMeta, videoFeed } from "./video.js";
+import { createZoom } from "./zoom.js";
 
 const COLOURS = ["#9aa5e6", "#d9b98a", "#c98f86", "#9cbfa6"];
 const feeds = document.getElementById("feeds");
@@ -19,6 +20,7 @@ const captionHint = document.getElementById("caption-hint");
 const SITE_COLOURS = { ore: "#7fa38f", crusher: "#b0736a", dump: "#8f86a8", parking: "#b59a5e", fuel: "#b5835e" };
 const lidarView = createLidarView(document.getElementById("lidar"));
 const hud = createHud({ focusOnClick: false });
+const zoom = createZoom();
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [], cameras: [] };
 let network = { roads: [], sites: [], junctions: [] };
@@ -135,6 +137,7 @@ function layoutOps() {
   }
   const { r, primary } = opsRects();
   if (primary && shell.camera !== primary) shell.setCamera(primary, tiles);
+  if (primary && selected !== primary) select(primary);
   for (const [name, t] of tiles) {
     const rect = r.get(name);
     t.el.classList.toggle("slot", !!rect);
@@ -162,6 +165,7 @@ function tileFor(name) {
   tiles.set(name, tile);
   hud.attach(name, el, tile.canvas);
   tile.onFrame = (meta) => hud.frame(name, meta);
+  if (name === "overview") zoom.attach(tile);
   document.getElementById("feeds-empty").hidden = true;
   const active = shell.camera && tiles.has(shell.camera) ? shell.camera : name;
   if (!feeds.querySelector(".feed.active") || active === name) shell.setCamera(active, tiles);
@@ -178,6 +182,7 @@ async function onVideo(ev) {
   tile.busy = true;
   try {
     const { meta, end } = readMeta(buf, 1 + n);
+    if (tile.accept && !tile.accept(meta)) { tile.frames++; return; }
     const bmp = await createImageBitmap(new Blob([buf.subarray(end)], { type: "image/jpeg" }));
     if (tile.canvas.width !== bmp.width) tile.canvas.width = bmp.width;
     if (tile.canvas.height !== bmp.height) tile.canvas.height = bmp.height;
@@ -407,6 +412,7 @@ const onLidar = lidarDecoder((points) => lidarView.update(points));
 function select(id) {
   if (id === selected) return;
   selected = id;
+  if (shell.view === "ops" && tiles.has(id) && shell.camera !== id) { shell.setCamera(id, tiles); layoutOps(); }
   if (stopLidar) stopLidar();
   lidarView.clear();
   stopLidar = connect(`/ws/lidar?truck=${encodeURIComponent(id)}`, onLidar, true);
@@ -518,6 +524,7 @@ function onState(ev) {
   drawMap();
   renderChrome(state, { tileFor, tiles, truckColour, selected });
   hud.setState(state);
+  zoom.setBox(state.views?.overview?.box);
 }
 
 map.addEventListener("click", (e) => {
@@ -549,6 +556,7 @@ function commands(query = "") {
   const out = [];
   for (const v of VIEWS) out.push({ id: `view:${v}`, group: "view", title: v[0].toUpperCase() + v.slice(1), keywords: "tab view show go", detail: shell.view === v ? "current" : "", keys: [VIEW_KEYS[v]], run: () => shell.setView(v) });
   cameraOrder().forEach((name, i) => out.push({ id: `camera:${name}`, group: "camera", title: `View ${name}`, keywords: "camera cam feed video", detail: shell.camera === name ? "current" : "", keys: i < 9 ? [String(i + 1)] : null, run: () => showCamera(name) }));
+  if (zoom.zoomed) out.push({ id: "camera:unzoom", group: "camera", title: "Reset overview zoom", keywords: "zoom out overview camera view", keys: ["esc"], run: () => zoom.reset() });
   if (state.trucks.length) out.push({ id: "stop:all", group: "fleet", title: "Stop all", keywords: "everything trucks excavators halt release emergency estop", detail: "trucks · excavators · radio jobs", keys: ["⇧", "esc"], confirm: "Press ↵ again to stop everything", run: stopAll });
   for (const t of state.trucks) {
     out.push({ id: `focus:${t.id}`, group: "fleet", title: `Focus ${t.id}`, keywords: "select follow truck", detail: t.status, run: () => focusTruck(t.id) });
@@ -573,6 +581,7 @@ function commands(query = "") {
     : { id: "judge:pin", group: "radio", title: "Set access code…", keywords: "pin judge", searchOnly: true, run: () => setTimeout(() => commandPalette.open("pin "), 160) });
   const theme = storedTheme();
   for (const th of THEMES) out.push({ id: `theme:${th}`, group: "appearance", title: `Theme ${th}`, keywords: "appearance colour mode", detail: theme === th ? "current" : "", run: () => applyTheme(th) });
+  out.push({ id: "hud:ground-truth", group: "appearance", title: hud.groundTruth ? "Hide ground truth boxes" : "Show ground truth boxes", keywords: "hud detector detections objects overlay", run: () => hud.toggleGroundTruth() });
   out.push({ id: "help:keys", group: "help", title: "Keyboard shortcuts", keywords: "help keys", keys: ["?"], run: () => help.open() });
   if (query && !url && !pin) out.push({ id: "radio:send", group: "radio", title: `Send to radio: “${query}”`, always: true, run: () => sendRadio(query) });
   return out;
@@ -620,6 +629,7 @@ const SHORTCUTS = [
   ["Fleet · radio · judge · split", ["F", "R", "J", "S"]],
   ["Stop everything (twice)", ["⇧", "esc"]],
   ["Camera", ["1", "–", "9"]],
+  ["Reset overview zoom", ["esc"]],
   ["Shortcuts", ["?"]],
   ["Close", ["esc"]],
 ];
@@ -653,6 +663,7 @@ addEventListener("keydown", (e) => {
   else if (e.key === "\\") { e.preventDefault(); schedulePalette.open(); }
   else if (e.key === "?") { e.preventDefault(); help.open(); }
   else if (VIEW_BY_KEY[key] && !e.shiftKey) shell.setView(VIEW_BY_KEY[key]);
+  else if (e.key === "Escape" && zoom.zoomed && zoom.visible) { e.preventDefault(); zoom.reset(); }
   else if (/^[1-9]$/.test(e.key)) { const name = cameraOrder()[Number(e.key) - 1]; if (name) showCamera(name); }
 });
 

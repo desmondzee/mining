@@ -28,7 +28,8 @@ def test_frame_produces_action_and_jpeg():
         reader, writer = await asyncio.open_connection("127.0.0.1", port)
         writer.write(encode({"type": "hello", "trucks": [t.id], "cameras": [t.id], "bounds": quarry.bounds}))
         await writer.drain()
-        await asyncio.sleep(0.05)
+        view, _ = await asyncio.wait_for(read_message(reader), 5)
+        assert view == {"type": "view", "camera": "overview", "box": None}
         world.trucks[t.id].goal = (t.x + 40, t.z)
 
         rgb, depth = quarry.render_truck(t)

@@ -31,6 +31,10 @@ async def read_message(reader: asyncio.StreamReader) -> tuple[dict, bytes]:
     return header, payload
 
 
+def encode_view(camera: str, box: list[float] | None) -> bytes:
+    return encode({"type": "view", "camera": camera, "box": box})
+
+
 def encode_frame(
     camera: str,
     rgb: np.ndarray,
