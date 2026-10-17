@@ -33,9 +33,13 @@ const world = await (await fetch(base + 'world.json', { cache: 'no-store' })).js
 let LIVE = new URLSearchParams(location.search).get('live');
 if (LIVE === null) { try { LIVE = (await fetch('/api/radio/state', { cache: 'no-store' })).ok ? '1' : '0'; } catch { LIVE = '0'; } }
 LIVE = LIVE === '1';
-const liveState = {};
+const liveState = {}, liveExc = {};   // liveExc: radio excavator state keyed by ore face id
 if (LIVE) setInterval(async () => {
-  try { const d = await (await fetch('/api/radio/state', { cache: 'no-store' })).json(); for (const t of d.trucks || []) liveState[t.id] = t; } catch {}
+  try {
+    const d = await (await fetch('/api/radio/state', { cache: 'no-store' })).json();
+    for (const t of d.trucks || []) liveState[t.id] = t;
+    for (const e of d.excavators || []) if (e.face) liveExc[e.face] = e;
+  } catch {}
 }, 200);
 let groundY = () => 0;
 {
@@ -299,7 +303,9 @@ const excavators = equipment.filter(e => e.type === undefined || e.type === 'exc
 });
 function animateExcavators(t) {
   for (const x of excavators) {
-    const busy = trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
+    // LIVE: follow the radio's excavator state (digging -> swing, holding -> back to base heading)
+    const busy = LIVE ? liveExc[x.face]?.state === 'digging'
+      : trucks.some(tr => tr.phase === 'loading' && faces.find(f => f.name === tr.face)?.id === x.face);
     const target = busy ? x.base + Math.sin(t * 0.9 + x.phase) * 0.9 : x.base;
     x.g.rotation.y += (target - x.g.rotation.y) * 0.05;
   }

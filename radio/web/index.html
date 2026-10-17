@@ -41,6 +41,17 @@
   .chip .st { font-size: 11px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .chip .task { font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
+  #excs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 2px 10px 4px; }
+  .echip { background: var(--panel); border: 1px solid var(--line); border-left: 4px solid var(--ec); border-radius: 8px; padding: 4px 8px; min-width: 0; }
+  .echip .top { display: flex; align-items: center; gap: 5px; }
+  .echip .cs { font-weight: 700; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .echip .st { font-size: 10px; font-weight: 700; letter-spacing: .06em; color: var(--ec); }
+  .echip .fc { font-size: 10px; color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .echip.digging { --ec: var(--green); }
+  .echip.holding { --ec: var(--amber); }
+  .sq { width: 8px; height: 8px; background: var(--ec); flex: none; border-radius: 1px; }
+  .echip.digging .sq { animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .25; } }
   #mapwrap { position: relative; margin: 4px 10px; height: 24vh; min-height: 120px; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   #map { width: 100%; height: 100%; display: block; }
   #modeTag { position: absolute; left: 8px; top: 6px; font-size: 10px; color: var(--dim); letter-spacing: .08em; }
@@ -97,6 +108,7 @@
 </header>
 
 <div id="trucks"></div>
+<div id="excs"></div>
 <div id="mapwrap"><canvas id="map"></canvas><div id="modeTag"></div></div>
 <div id="log"></div>
 <div id="heard" class="dim">Hold the button and talk</div>
@@ -127,10 +139,12 @@ const QUICK = [
   "Truck two haul from the middle face to the crusher",
   "Truck three haul two loads from the lower face to the crusher",
   "All trucks return to the ready line",
+  "Excavator one start digging",
+  "All excavators hold",
   "Everyone stop",
   "Status report",
 ];
-const colorOf = (id) => COLORS[id] || "var(--ctl)";
+const colorOf = (id) => COLORS[id] || (id && id.startsWith("exc-") ? "var(--green)" : "var(--ctl)");
 
 // ------------------------------------------------------------------ UI helpers
 function toast(msg, ms = 3500) {
@@ -160,7 +174,20 @@ function addLog(ev) {
 }
 
 // ------------------------------------------------------------------ trucks + map
-let trucks = [], world = null, mode = null;
+let trucks = [], excs = [], world = null, mode = null;
+function renderExcs() {
+  const box = $("#excs");
+  box.innerHTML = "";
+  for (const e of excs) {
+    const d = document.createElement("div");
+    d.className = "echip " + (e.state === "digging" ? "digging" : "holding");
+    d.innerHTML = `<div class="top"><span class="sq"></span><span class="cs"></span></div><div class="st mono"></div><div class="fc"></div>`;
+    d.querySelector(".cs").textContent = e.callsign;
+    d.querySelector(".st").textContent = (e.state || "holding").toUpperCase();
+    d.querySelector(".fc").textContent = e.face_name || e.face || "";
+    box.appendChild(d);
+  }
+}
 function renderTrucks() {
   const box = $("#trucks");
   box.innerHTML = "";
@@ -190,6 +217,7 @@ function drawMap() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0); g.clearRect(0, 0, W, H);
   if (world) for (const r of world.roads) for (const [x, z] of r.points) grow(x, z);
   for (const t of trucks) grow(t.x, t.z);
+  for (const e of excs) grow(e.x, e.z);
   if (!ext) return;
   const pad = 14, sx = (W - 2 * pad) / Math.max(1, ext.x1 - ext.x0), sz = (H - 2 * pad) / Math.max(1, ext.z1 - ext.z0);
   const s = Math.min(sx, sz), ox = (W - s * (ext.x1 - ext.x0)) / 2, oy = (H - s * (ext.z1 - ext.z0)) / 2;
@@ -213,6 +241,13 @@ function drawMap() {
       g.lineWidth = 3; g.strokeStyle = "rgba(0,0,0,.75)"; g.strokeText(st.name.replace("Primary ", ""), px + 5, py - 4);
       g.fillStyle = "#f1efe8"; g.fillText(st.name.replace("Primary ", ""), px + 5, py - 4);
     }
+  }
+  const pulse = 0.5 + 0.5 * Math.sin(Date.now() / 160);
+  for (const e of excs) {
+    const [px, py] = P(e.x, e.z), dig = e.state === "digging", k = dig ? 4.5 + 2 * pulse : 4.5;
+    if (dig) { g.fillStyle = `rgba(67,209,122,${0.25 * (1 - pulse) + 0.1})`; g.fillRect(px - k - 4, py - k - 4, 2 * k + 8, 2 * k + 8); }
+    g.fillStyle = dig ? "#43d17a" : "#ffb627"; g.strokeStyle = "#000"; g.lineWidth = 1;
+    g.fillRect(px - 4.5, py - 4.5, 9, 9); g.strokeRect(px - 4.5, py - 4.5, 9, 9);
   }
   for (const t of trucks) {
     if (t.route && t.route.length) {
@@ -314,8 +349,9 @@ function speak(ev) {
     if (!("speechSynthesis" in window)) return res();
     squelch(0.1, 0.16);
     const u = new SpeechSynthesisUtterance(ev.text);
-    const idx = { "truck-0": 0, "truck-1": 1, "truck-2": 2 }[ev.truck_id];
-    u.rate = 1.08; u.pitch = idx == null ? 1.15 : [0.8, 1.0, 0.65][idx];
+    const isExc = (ev.truck_id || "").startsWith("exc-");
+    const idx = isExc ? 4 : { "truck-0": 0, "truck-1": 1, "truck-2": 2 }[ev.truck_id];
+    u.rate = 1.08; u.pitch = idx == null ? 1.15 : [0.8, 1.0, 0.65, 1, 0.5][idx];
     const vs = speechSynthesis.getVoices().filter((v) => v.lang && v.lang.startsWith("en"));
     if (vs.length) u.voice = vs[(idx == null ? 3 : idx) % vs.length];
     const done = () => { squelch(0.14, 0.18); res(); };
@@ -340,7 +376,7 @@ async function sendCommand(text) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || r.status);
     for (const rep of j.replies || []) {
-      const ev = { id: rep.id, from: rep.callsign, truck_id: rep.truck_id, text: rep.text, audio_url: rep.audio_url, kind: rep.truck_id ? "truck" : "control", t: Date.now() / 1000 };
+      const ev = { id: rep.id, from: rep.callsign, truck_id: rep.truck_id, text: rep.text, audio_url: rep.audio_url, kind: !rep.truck_id ? "control" : rep.truck_id.startsWith("exc-") ? "excavator" : "truck", t: Date.now() / 1000 };
       addLog(ev); enqueue(ev);
     }
   } catch (e) { toast("Command failed: " + e.message); }
@@ -453,7 +489,7 @@ document.addEventListener("pointerdown", () => ensureCtx(), { once: true });
 // ------------------------------------------------------------------ websocket
 let ws = null, backoff = 500, wsOpen = false, polled = false;
 function handleState(msg) {
-  trucks = msg.trucks || []; renderTrucks(); drawMap();
+  trucks = msg.trucks || []; excs = msg.excavators || []; renderTrucks(); renderExcs(); drawMap();
   mode = msg.mode;
   pill("#pLink", !msg.brain_ok ? "off" : msg.mode === "mock" ? "warn" : msg.sim_connected ? "on" : "warn",
     !msg.brain_ok ? "NO BRAIN" : msg.mode === "mock" ? "MOCK" : msg.sim_connected ? "LIVE" : "NO SIM");

@@ -12,6 +12,7 @@ Run:  uv run --with fastapi --with uvicorn --with httpx --with python-multipart 
 from __future__ import annotations
 
 import asyncio
+import difflib
 import hashlib
 import heapq
 import json
@@ -56,6 +57,7 @@ BEND_DEG = 12.0
 MAX_SPACING_M = 20.0
 LOAD_DWELL_S = float(os.environ.get("RADIO_LOAD_DWELL", "5"))
 DUMP_DWELL_S = float(os.environ.get("RADIO_DUMP_DWELL", "4"))
+EXC_WAIT = os.environ.get("RADIO_EXC_WAIT", "0").lower() in ("1", "true", "yes")  # trucks wait for a holding excavator
 OVERRIDE_GRACE_S = 1.5
 ORBIT_M = 12.0  # the straight-line policy can circle a goal inside its turning circle (R ~ 8.7 m)
 ORBIT_S = 5.0  # ... so if we hover within ORBIT_M this long, call it reached
@@ -96,6 +98,14 @@ def callsign(truck_id: str) -> str:
         return truck_id
     n = int(m.group(1)) + 1  # truck-0 is "Truck One"
     return f"Truck {NUM_NAMES[n] if n < len(NUM_NAMES) else n}"
+
+
+def exc_callsign(exc_id: str) -> str:
+    m = re.search(r"(\d+)$", exc_id)
+    if not m:
+        return exc_id
+    n = int(m.group(1)) + 1  # exc-0 is "Excavator One"
+    return f"Excavator {NUM_NAMES[n] if n < len(NUM_NAMES) else n}"
 
 
 @dataclass
@@ -160,7 +170,19 @@ class World:
             self.sites[s["id"]] = Site(s["id"], t, name, x, z, spoken, sorted(aliases, key=len, reverse=True),
                                        point, slots)
         self.trucks = {t["id"]: t for t in self.raw.get("trucks", [])}
+        # excavators (radio-only state): one per ore face, from world.equipment
+        self.excavators: dict[str, dict] = {}
+        for e in self.raw.get("equipment", []):
+            if e.get("type", "excavator") != "excavator" or "id" not in e:
+                continue
+            p3 = e.get("pos3") or [0.0, 0.0, 0.0]
+            self.excavators[e["id"]] = {"id": e["id"], "face": e.get("face"), "x": p3[0], "z": p3[2],
+                                        "heading_deg": e.get("heading_deg", 0.0), "name": e.get("name", e["id"]),
+                                        "pos3": [round(v, 2) for v in p3]}
         self._build_graph()
+
+    def exc_for_face(self, site_id: str | None) -> str | None:
+        return next((eid for eid, e in self.excavators.items() if e["face"] == site_id), None)
 
     def by_type(self, t: str) -> Site | None:
         return next((s for s in self.sites.values() if s.type == t), None)
@@ -402,6 +424,50 @@ STATUS_RE = re.compile(r"\b(status|report|sitrep|where are|where is|what are you
 HAUL_RE = re.compile(r"\b(haul|hauling|haulage|cycle|cycling|loads?|ferry|shuttle|production|start mining)\b")
 RETURN_RE = re.compile(r"\b(return|returning|go home|head home|back to base|come home|park up|rtb)\b")
 LOADS_RE = re.compile(rf"\b({NUM_RE}|seven|eight|nine|ten)\s+(?:loads?|runs?|trips?|cycles?)\b")
+EXCW = r"(?:excavators?|diggers?|shovels?)"
+EXC_WORD_RE = re.compile(rf"\b{EXCW}\b")
+EXC_NUM_RE = re.compile(rf"\b{EXCW}\s*(?:number\s*)?#?-?\s*({NUM_RE}(?:\s*(?:,|and|&|\+)\s*(?:{EXCW}\s*)?{NUM_RE})*)\b")
+EXC_LIT_RE = re.compile(r"\bexc-(\d+)\b")
+EXC_ALL_RE = re.compile(rf"\b(?:all|every|each|both)\s+(?:the\s+|of\s+the\s+)?{EXCW}")
+EXC_HOLD_RE = re.compile(r"\b(hold|holding|stop|stopped|pause|paused|halt|freeze|stand ?by|wait|cease|quit|shut down|stand down)\b")
+EXC_DIG_RE = re.compile(r"\b(dig|digs|digging|start|starts|begin|resume|work|working|commence)\b")
+EXC_GOTO_RE = re.compile(r"\b(go|goes|send|head|drive|move|proceed|unload|haul|hauling|bring|over to|load at|report to|meet)\b")
+EXC_HAUL_RE = re.compile(r"\b(haul|hauling|haulage|cycle|cycling|shuttle|ferry)\b|\bfrom\s+(?:the\s+)?(?:\w+\s+)?(?:excavators?|diggers?|shovels?|exc-)")
+VOCAB = ["truck", "trucks", "excavator", "excavators", "digger", "diggers", "shovel", "lower", "middle", "upper", "face",
+         "bench", "crusher", "dump", "waste", "ready", "line", "fuel", "bay", "haul", "stop", "status", "report",
+         "return", "dig", "digging", "hold", "start", "pause", "everyone", "unload", "load", "loads", "go", "send",
+         "parking", "one", "two", "three", "all", "from", "the", "to", "at"]
+EXC_MISHEAR = [
+    (re.compile(r"\bexcavate\s*(?:her|or|a|ur|er)\b"), "excavator"),
+    (re.compile(r"\b(?:x|ex|eggs?)\s*-?\s*cavat(?:or|er|ors|ers)\b"), "excavator"),
+    (re.compile(r"\bexcavat(?:er|ers|or s)\b"), "excavator"),
+]
+
+
+def exc_norm(t: str) -> str:
+    for rx, sub in EXC_MISHEAR:
+        t = rx.sub(sub, t)
+    return t
+
+
+def fuzzy_fix(t: str) -> str:
+    """Snap near-miss words ("truk", "lowr", "crasher", "excavaytor") to the radio vocabulary (difflib)."""
+    known = set(VOCAB) | set(NUMWORD)
+    toks, out, i = t.split(), [], 0
+    while i < len(toks):
+        w = toks[i]
+        if i + 1 < len(toks) and w not in known and toks[i + 1] not in known:  # "excava tor"
+            m = difflib.get_close_matches(w + toks[i + 1], VOCAB, 1, 0.84)
+            if m:
+                out.append(m[0])
+                i += 2
+                continue
+        if w not in known and len(w) >= 4 and not w.isdigit():
+            m = difflib.get_close_matches(w, VOCAB, 1, 0.78)
+            w = m[0] if m else w
+        out.append(w)
+        i += 1
+    return exc_norm(" ".join(out))
 
 
 def norm(text: str) -> str:
@@ -421,6 +487,8 @@ class Parser:
     def __init__(self, world: World, truck_ids):
         self.world = world
         self.truck_ids = truck_ids  # callable -> list[str]
+        self.exc_ids = sorted(world.excavators)
+        self.exc_state_fn = lambda: {}  # set by Radio; used in the LLM prompt
         self.alias_list = sorted(((a, s.id) for s in world.sites.values() for a in s.aliases), key=lambda x: -len(x[0]))
 
     # ---- helpers shared by LLM + regex
@@ -444,6 +512,52 @@ class Parser:
             if m and (v := num_value(m.group(1))) is not None and (tid := self.truck_from_number(v)):
                 out.append(tid)
         return list(dict.fromkeys(out))
+
+    def exc_from_number(self, n: int) -> str | None:
+        eid = f"exc-{0 if n == 0 else n - 1}"
+        return eid if eid in self.world.excavators else None
+
+    def norm_excavators(self, items) -> list[str]:
+        out: list[str] = []
+        if isinstance(items, str):
+            items = [items]
+        for it in items or []:
+            s = exc_norm(norm(str(it)))
+            if s in ("all", "*", "every", "everyone") or EXC_ALL_RE.search(s) or s in ("excavators", "all excavators"):
+                return list(self.exc_ids)
+            if s in self.world.excavators:
+                out.append(s)
+                continue
+            m = re.search(rf"({NUM_RE})\s*$", s)
+            if m and (v := num_value(m.group(1))) is not None and (eid := self.exc_from_number(v)):
+                out.append(eid)
+                continue
+            sid = self.site_id(s)
+            if sid and (eid := self.world.exc_for_face(sid)):
+                out.append(eid)
+        return list(dict.fromkeys(out))
+
+    def _segment_excavators(self, seg: str) -> list[str] | None:
+        """None = segment doesn't talk to excavators; [] = excavator mentioned but unresolved."""
+        if not (EXC_WORD_RE.search(seg) or EXC_LIT_RE.search(seg)):
+            return None
+        if EXC_ALL_RE.search(seg) or re.search(r"\b(?:all|every)\b.*\b(?:excavators|diggers|shovels)\b", seg):
+            return list(self.exc_ids)
+        found: list[str] = []
+        for m in EXC_LIT_RE.finditer(seg):
+            if f"exc-{m.group(1)}" in self.world.excavators:
+                found.append(f"exc-{m.group(1)}")
+        for m in EXC_NUM_RE.finditer(seg):
+            for w in re.split(rf"\s*(?:,|and|&|\+)\s*(?:{EXCW}\s*)?", m.group(1)):
+                v = num_value(w)
+                if v is not None and (eid := self.exc_from_number(v)):
+                    found.append(eid)
+        if not found:
+            body = EXC_NUM_RE.sub(" ", seg)
+            for sid in self.find_sites(body):
+                if self.world.sites[sid].type == "ore" and (eid := self.world.exc_for_face(sid)):
+                    found.append(eid)
+        return list(dict.fromkeys(found))
 
     def site_id(self, name) -> str | None:
         if not name:
@@ -471,19 +585,69 @@ class Parser:
 
     # ---- regex fallback
     def parse_regex(self, text: str) -> list[dict]:
-        t = norm(text)
-        segments = re.split(r"[.;!?]|\b(?:and|then|also)\s+(?=(?:trucks?\b|units?\b|all\b|everyone|everybody))", t)
+        t = exc_norm(norm(text))
+        calls = self._parse_text(t)
+        if not calls:  # unscripted speech: snap near-miss words to the radio vocabulary and retry
+            fixed = fuzzy_fix(t)
+            if fixed != t:
+                calls = self._parse_text(fixed)
+        return calls
+
+    def _parse_text(self, t: str) -> list[dict]:
+        exc_ahead = rf"(?:{EXCW}\b|exc-\d|the\s+(?:\w+\s+){{1,2}}{EXCW}\b)"
+        segments = re.split(rf"[.;!?]|\b(?:and|then|also)\s+(?=(?:trucks?\b|units?\b|all\b|every\b|everyone|everybody|{exc_ahead}))"
+                            rf"|,\s*(?=(?:{exc_ahead}|(?:all|every)\s+{EXCW}))", t)
         calls: list[dict] = []
         carry: list[str] = []
+        pending_exc: list[str] = []
         for seg in segments:
             seg = (seg or "").strip(" ,")
             if not seg:
+                continue
+            excs = self._segment_excavators(seg)
+            if excs is not None and (self._segment_trucks(seg)[0] or (
+                    not EXC_HOLD_RE.search(seg) and not STATUS_RE.search(seg) and not EXC_DIG_RE.search(seg)
+                    and EXC_GOTO_RE.search(seg))):
+                # excavator as a truck destination: "truck one go to excavator two", "send truck two to digger three"
+                call = self._truck_to_excavator(seg, excs, carry)
+                calls.append(call)
+                carry = call["args"].get("trucks") or carry
+                continue
+            if excs is not None:
+                excs = list(dict.fromkeys(pending_exc + excs))
+                if EXC_HOLD_RE.search(seg):
+                    calls.append({"name": "hold", "args": {"excavators": excs}})
+                elif STATUS_RE.search(seg):
+                    calls.append({"name": "exc_status", "args": {"excavators": excs}})
+                elif EXC_DIG_RE.search(seg):
+                    calls.append({"name": "dig", "args": {"excavators": excs}})
+                else:
+                    pending_exc = excs  # "excavator one and excavator two start digging"
+                    continue
+                pending_exc = []
                 continue
             call = self._parse_segment(seg, carry)
             if call:
                 calls.append(call)
                 carry = call["args"].get("trucks", carry)
         return calls
+
+    def _truck_to_excavator(self, seg: str, excs: list[str], carry: list[str]) -> dict:
+        trucks, is_all = self._segment_trucks(seg)
+        if is_all and not trucks and re.search(r"\b(all trucks|everyone|everybody|all units|fleet)\b", seg):
+            trucks = list(self.truck_ids())
+        trucks = trucks or carry
+        eid = excs[0] if excs else "nearest"
+        face = self.world.excavators[eid]["face"] if eid != "nearest" else None
+        if STOP_RE.search(seg) and not EXC_GOTO_RE.search(seg):
+            return {"name": "stop", "args": {"trucks": trucks or list(self.truck_ids())}}
+        body = EXC_NUM_RE.sub(" ", TRUCK_RE.sub(" ", LITERAL_ID_RE.sub(" ", seg)))
+        if EXC_HAUL_RE.search(seg) or LOADS_RE.search(body):
+            dests = [s for s in self.find_sites(body) if self.world.sites[s].type in ("crusher", "dump")]
+            loads = num_value(m.group(1)) if (m := LOADS_RE.search(body)) else None
+            return {"name": "haul", "args": {"trucks": trucks, "from_site": face, "to_site": dests[0] if dests else None,
+                                             "loads": loads, "excavator": eid}}
+        return {"name": "go_to", "args": {"trucks": trucks, "site": face, "excavator": eid}}
 
     def _segment_trucks(self, seg: str) -> tuple[list[str], bool]:
         ids = self.truck_ids()
@@ -538,6 +702,10 @@ class Parser:
         ids = self.truck_ids()
         trucks = {"type": "array", "items": {"type": "string", "enum": ids + ["all"]},
                   "description": "truck ids, or [\"all\"]. Empty array = let dispatch pick an idle truck."}
+        excs = {"type": "array", "items": {"type": "string", "enum": self.exc_ids + ["all"]},
+                "description": "excavator ids, or [\"all\"]."}
+        exc_one = {"type": "string", "enum": self.exc_ids + ["nearest"],
+                   "description": "excavator to go to / load at; 'nearest' = nearest digging excavator. Use instead of site."}
         site_enum = list(self.world.sites)
         ore_enum = [s.id for s in self.world.sites.values() if s.type == "ore"]
         dest_enum = [s.id for s in self.world.sites.values() if s.type in ("crusher", "dump")]
@@ -547,21 +715,27 @@ class Parser:
                     "parameters": {"type": "object", "properties": props, "required": req}}}
 
         return [
-            fn("go_to", "Send trucks to a site and stop there.", {"trucks": trucks, "site": {"type": "string", "enum": site_enum}}, ["trucks", "site"]),
-            fn("haul", "Haul cycle: load at an ore face, dump at crusher or waste dump, repeat.",
-               {"trucks": trucks, "from_site": {"type": "string", "enum": ore_enum},
+            fn("go_to", "Send trucks to a site, or to an excavator (its face load point), and stop there.",
+               {"trucks": trucks, "site": {"type": "string", "enum": site_enum}, "excavator": exc_one}, ["trucks"]),
+            fn("haul", "Haul cycle: load at an ore face (or an excavator's face), dump at crusher or waste dump, repeat.",
+               {"trucks": trucks, "excavator": exc_one, "from_site": {"type": "string", "enum": ore_enum},
                 "to_site": {"type": "string", "enum": dest_enum},
                 "loads": {"type": "integer", "description": "number of loads; omit for continuous"}},
-               ["trucks", "from_site", "to_site"]),
+               ["trucks"]),
             fn("return_to_parking", "Send trucks back to the ready line (parking).", {"trucks": trucks}, ["trucks"]),
             fn("stop", "Stop trucks immediately and cancel their tasks.", {"trucks": trucks}, ["trucks"]),
             fn("status", "Trucks report their status over the radio.", {"trucks": trucks}, ["trucks"]),
+            fn("dig", "Excavators start digging (loading trucks) at their ore face.", {"excavators": excs}, ["excavators"]),
+            fn("hold", "Excavators stop digging and hold.", {"excavators": excs}, ["excavators"]),
         ]
 
     def system_prompt(self) -> str:
         ids = self.truck_ids()
         tl = "\n".join(f"- {tid}: callsign \"{callsign(tid)}\"" for tid in ids)
         sl = "\n".join(f"- {s.id} ({s.type}): \"{s.name}\"; also called {', '.join(a for a in s.aliases[:8])}" for s in self.world.sites.values())
+        est = self.exc_state_fn() or {}
+        el = "\n".join(f"- {eid}: callsign \"{exc_callsign(eid)}\", digs at {e['face']} ({self.world.sites[e['face']].name if e['face'] in self.world.sites else e['face']}), currently {est.get(eid, 'holding')}"
+                       for eid, e in sorted(self.world.excavators.items()))
         return (
             "You are the dispatch parser for an autonomous open-pit mine radio. The operator speaks short radio "
             "commands; the text comes from speech-to-text and may contain mishearings (e.g. 'to'/'too' for 'two', "
@@ -570,9 +744,18 @@ class Parser:
             f"Trucks (callsign numbers start at One):\n{tl}\n'truck zero' also means truck-0. "
             "'all trucks', 'everyone', 'all units', 'fleet' -> [\"all\"].\n\n"
             f"Sites:\n{sl}\n\n"
+            f"Excavators (also called diggers or shovels; STT may write 'excavate her', 'x cavator', 'digger won'):\n{el}\n"
+            "'the excavator at the lower face' / 'the lower face excavator' -> the excavator whose face is that site. "
+            "'all excavators', 'every digger' -> [\"all\"]. 'start digging' / 'dig' / 'resume' -> dig. 'hold', 'stop digging', "
+            "'pause' (said to excavators) -> hold. 'everyone stop' / 'all stop' -> stop([\"all\"]) AND hold([\"all\"]).\n"
+            "Excavators are also truck destinations: 'truck one go to excavator two', 'truck one load at excavator one', "
+            "'truck one unload excavator', 'send truck two to digger three' -> go_to(trucks, excavator=...); no number -> "
+            "excavator='nearest'. 'truck one haul from excavator two' -> haul(excavator=exc-1).\n"
+            "The speaker talks freely (a visitor holding the phone). Map loose or odd phrasing to the closest tool; only call "
+            "no tool if nothing plausible matches.\n\n"
             "Rules: 'haul X to Y' / 'cycle' / 'run loads' -> haul (default to_site = crusher). 'return', 'ready line', "
             "'park' -> return_to_parking. 'stop', 'hold', 'halt', 'all stop' -> stop. 'status', 'report', 'where are you' "
-            "-> status (no trucks named = all). If nothing is a truck command, call no tool."
+            "-> status (no trucks named = all). If nothing is a truck or excavator command, call no tool."
         )
 
 
@@ -590,6 +773,7 @@ class TruckCtl:
     goal: tuple[float, float] | None = None
     goal_set_at: float = 0.0
     near_since: float | None = None  # orbit detection: time we first came within ORBIT_M of the current waypoint
+    waiting_exc: bool = False  # RADIO_EXC_WAIT: parked at the face until its excavator digs
 
     def task_text(self, world: World) -> str:
         if not self.job:
@@ -615,7 +799,9 @@ class Radio:
         self.events: deque = deque(maxlen=60)
         self.sockets: set[WebSocket] = set()
         self.parser = Parser(self.world, lambda: self.truck_ids())
+        self.parser.exc_state_fn = lambda: self.exc_state
         self.voices: dict[str, str] = {}
+        self.exc_state: dict[str, str] = {eid: "holding" for eid in self.world.excavators}  # nothing digs until told
         self.http = httpx.AsyncClient(timeout=20.0)
         self.last_error: str | None = None
         self.tasks: list[asyncio.Task] = []
@@ -697,6 +883,8 @@ class Radio:
                 return
             self.world, self.world_mtime = w, m
             self.parser = Parser(w, lambda: self.truck_ids())
+            self.parser.exc_state_fn = lambda: self.exc_state
+            self.exc_state = {eid: self.exc_state.get(eid, "holding") for eid in w.excavators}
             log.info("world.json changed -> reloaded (%d sites, %d road nodes)", len(w.sites), len(w.nodes))
 
     async def loop(self) -> None:
@@ -781,6 +969,16 @@ class Radio:
                 ctl.near_since = None
                 nxt = ctl.route[0]
                 await self.post_goal(ctl, nxt.x, nxt.z)
+        elif ctl.dwell_until and EXC_WAIT and ctl.phase == "loading" and ctl.job:
+            eid = self.world.exc_for_face(ctl.job.get("from"))
+            if eid and self.exc_state.get(eid) != "digging":
+                ctl.waiting_exc, ctl.dwell_until = True, now + LOAD_DWELL_S
+            elif ctl.waiting_exc:
+                ctl.waiting_exc, ctl.dwell_until = False, now + LOAD_DWELL_S
+                await self.radio_event(exc_callsign(eid), eid, f"{exc_callsign(eid)} loading {callsign(ctl.id)}.", kind="excavator")
+            elif now >= ctl.dwell_until:
+                ctl.dwell_until = 0.0
+                await self.on_dwell_done(ctl, t)
         elif ctl.dwell_until and now >= ctl.dwell_until:
             ctl.dwell_until = 0.0
             await self.on_dwell_done(ctl, t)
@@ -810,7 +1008,15 @@ class Radio:
         if kind == "haul":
             if ctl.phase == "to_load":
                 ctl.phase, ctl.dwell_until = "loading", time.monotonic() + LOAD_DWELL_S
-                await self.radio_event(cs, ctl.id, f"{cs}, at {self.world.sites[j['from']].name}, loading.", spoken=False)
+                eid = self.world.exc_for_face(j["from"])
+                face = self.world.sites[j["from"]].name
+                if eid and self.exc_state.get(eid) == "digging":
+                    await self.radio_event(exc_callsign(eid), eid, f"{exc_callsign(eid)} loading {cs}.", kind="excavator")
+                elif eid:
+                    ctl.waiting_exc = EXC_WAIT
+                    await self.radio_event(cs, ctl.id, f"{cs}, at {face}, waiting on {exc_callsign(eid)}.")
+                else:
+                    await self.radio_event(cs, ctl.id, f"{cs}, at {face}, loading.", spoken=False)
             elif ctl.phase == "to_dump":
                 ctl.phase, ctl.dwell_until = "dumping", time.monotonic() + DUMP_DWELL_S
                 await self.radio_event(cs, ctl.id, f"{cs}, tipping at {self.world.sites[j['to']].spoken}.", spoken=False)
@@ -846,10 +1052,13 @@ class Radio:
 
     # ---- commands
     async def parse(self, text: str) -> tuple[list[dict], str]:
+        """OpenAI tool calling when a key exists (handles free speech); regex + fuzzy fallback otherwise,
+        or when the LLM errors / returns nothing."""
         if OPENAI_KEY:
             try:
                 calls = await self.parse_llm(text)
-                return calls, "llm"
+                if calls:
+                    return calls, "llm"
             except Exception as e:
                 self.last_error = f"llm: {type(e).__name__}: {e}"
                 log.warning("LLM parse failed, regex fallback: %s", self.last_error)
@@ -880,8 +1089,23 @@ class Radio:
     async def execute(self, calls: list[dict]) -> tuple[list[dict], list[tuple[str, str | None, str]]]:
         actions, replies = [], []
         async with self.lock:
+            exc_replied: set[str] = set()
             for call in calls:
                 name, a = call["name"], call.get("args") or {}
+                if name in ("dig", "hold", "exc_status"):
+                    excs = self.parser.norm_excavators(a.get("excavators"))
+                    actions.append({"tool": name, "excavators": excs})
+                    if not excs:
+                        replies.append(("Control", None, "Control, say again which excavator."))
+                        actions[-1]["error"] = "unknown excavator"
+                    for eid in excs:
+                        if name == "hold" and eid in exc_replied and self.exc_state.get(eid) == "holding":
+                            continue  # already confirmed by an all-stop in this message
+                        if name != "exc_status":
+                            self.exc_state[eid] = "digging" if name == "dig" else "holding"
+                            exc_replied.add(eid)
+                        replies.append((exc_callsign(eid), eid, self.exc_status_text(eid, copy=name == "dig")))
+                    continue
                 trucks = self.parser.norm_trucks(a.get("trucks"))
                 if not trucks and name in ("stop", "status"):
                     trucks = self.truck_ids()
@@ -905,7 +1129,8 @@ class Radio:
                         replies.append((cs, tid, f"Copy, {cs} returning to the ready line."))
                         act["route_m"] = round(d)
                     elif name == "go_to":
-                        sid = self.parser.site_id(a.get("site"))
+                        eid = self.resolve_exc(a.get("excavator"), tid)
+                        sid = self.world.excavators[eid]["face"] if eid else self.parser.site_id(a.get("site"))
                         if not sid:
                             replies.append((cs, tid, f"{cs}, say again destination."))
                             act["error"] = "unknown site"
@@ -919,10 +1144,15 @@ class Radio:
                         else:
                             ctl.job, ctl.phase = {"kind": "goto", "site": sid}, "to_site"
                             d = await self.drive_to(ctl, sid)
-                            replies.append((cs, tid, f"Copy, {cs} heading to {site.spoken}."))
+                            if eid:
+                                replies.append((cs, tid, f"Copy, {cs} heading to {exc_callsign(eid)} at {site.name}."))
+                                act["excavator"] = eid
+                            else:
+                                replies.append((cs, tid, f"Copy, {cs} heading to {site.spoken}."))
                         act["route_m"] = round(d)
                     elif name == "haul":
-                        src = self.parser.site_id(a.get("from_site"))
+                        eid = self.resolve_exc(a.get("excavator"), tid)
+                        src = self.world.excavators[eid]["face"] if eid else self.parser.site_id(a.get("from_site"))
                         dst = self.parser.site_id(a.get("to_site")) or (self.world.by_type("crusher").id)
                         if not src or self.world.sites[src].type != "ore":
                             last = (ctl.job or {}).get("from")
@@ -943,7 +1173,47 @@ class Radio:
                         act["route_m"] = round(d)
                     else:
                         act["error"] = "unknown tool"
+                if set(trucks) >= set(self.truck_ids()):
+                    if name == "stop":  # safety: all stop also holds every excavator
+                        for eid in sorted(self.exc_state):
+                            if self.exc_state[eid] != "holding" and eid not in exc_replied:
+                                self.exc_state[eid] = "holding"
+                                exc_replied.add(eid)
+                                replies.append((exc_callsign(eid), eid, f"{exc_callsign(eid)} holding."))
+                        act["excavators_held"] = True
+                    elif name == "status":
+                        replies += [(exc_callsign(e), e, self.exc_status_text(e)) for e in sorted(self.exc_state)]
         return actions, replies
+
+    def resolve_exc(self, ref, tid: str) -> str | None:
+        """Excavator id from a tool arg; 'nearest' = nearest digging excavator (else nearest) to the truck."""
+        if not ref or not self.world.excavators:
+            return None
+        if str(ref).lower() not in ("nearest", "any", "the excavator", "excavator", "closest"):
+            got = self.parser.norm_excavators([ref])
+            if got:
+                return got[0]
+        t = self.truck(tid)
+        pos = (t["x"], t["z"]) if t else (0.0, 0.0)
+        pool = [e for e in self.world.excavators if self.exc_state.get(e) == "digging"] or list(self.world.excavators)
+        return min(pool, key=lambda e: math.dist(pos, (self.world.excavators[e]["x"], self.world.excavators[e]["z"])))
+
+    def exc_status_text(self, eid: str, copy: bool = False) -> str:
+        cs, e = exc_callsign(eid), self.world.excavators.get(eid, {})
+        site = self.world.sites.get(e.get("face") or "")
+        if self.exc_state.get(eid) == "digging":
+            return f"{'Copy, ' if copy else ''}{cs} digging at {site.name if site else 'the face'}."
+        return f"{cs} holding."
+
+    def exc_view(self) -> list[dict]:
+        out = []
+        for eid, e in sorted(self.world.excavators.items()):
+            site = self.world.sites.get(e.get("face") or "")
+            out.append({"id": eid, "callsign": exc_callsign(eid), "face": e.get("face"),
+                        "face_name": site.name if site else None, "state": self.exc_state.get(eid, "holding"),
+                        "x": round(e["x"], 2), "z": round(e["z"], 2), "heading_deg": e.get("heading_deg", 0.0),
+                        "pos3": e.get("pos3")})
+        return out
 
     async def clear_job(self, ctl: TruckCtl) -> None:
         ctl.route, ctl.job, ctl.phase, ctl.target, ctl.dwell_until = [], None, "idle", None, 0.0
@@ -968,6 +1238,8 @@ class Radio:
         async with self.lock:
             for tid in self.truck_ids():
                 await self.clear(self.c(tid))
+            for eid in self.exc_state:
+                self.exc_state[eid] = "holding"
 
     # ---- radio events + TTS
     async def radio_event(self, frm: str, truck_id: str | None, text: str, kind: str = "truck", spoken: bool = True,
@@ -982,7 +1254,7 @@ class Radio:
 
     async def pick_voices(self) -> None:
         override = [v.strip() for v in os.environ.get("ELEVENLABS_VOICE_IDS", "").split(",") if v.strip()]
-        keys = ["dispatch"] + self.truck_ids()
+        keys = ["dispatch"] + self.truck_ids() + ["excavator"]
         if override:
             self.voices = {k: override[i % len(override)] for i, k in enumerate(keys)}
             return
@@ -1006,8 +1278,13 @@ class Radio:
         truck_voices = [avail[n] for n in male if n in avail and avail[n] != disp]
         truck_voices += [v for v in avail.values() if v != disp and v not in truck_voices]
         self.voices = {"dispatch": disp}
-        for i, tid in enumerate(sorted(set(self.truck_ids()) | {f"truck-{k}" for k in range(3)})):
+        tids = sorted(set(self.truck_ids()) | {f"truck-{k}" for k in range(3)})
+        for i, tid in enumerate(tids):
             self.voices[tid] = truck_voices[i % len(truck_voices)] if truck_voices else disp
+        used = set(self.voices.values())
+        prefer = ["Bill", "Roger", "Brian", "Daniel", "Eric", "Chris", "Liam", "Will", "Charlie", "Arnold", "Josh"]
+        self.voices["excavator"] = next((avail[n] for n in prefer if n in avail and avail[n] not in used),
+                                        next((v for v in avail.values() if v not in used), disp))
         names = {v: n for n, v in avail.items()}
         log.info("voices: %s", {k: names.get(v, v[:6]) for k, v in self.voices.items()})
 
@@ -1016,6 +1293,8 @@ class Radio:
             return None
         if not self.voices:
             await self.pick_voices()
+        if speaker.startswith("exc-"):
+            speaker = "excavator"
         voice = self.voices.get(speaker) or self.voices.get("dispatch")
         if not voice:
             return None
@@ -1081,7 +1360,7 @@ class Radio:
     def state_msg(self) -> dict:
         return {"type": "state", "t": time.time(), "mode": self.brain.mode if self.brain else None,
                 "brain_ok": self.brain_ok, "sim_connected": self.state.get("sim_connected"),
-                "trucks": [self.truck_view(t) for t in self.state.get("trucks", [])]}
+                "trucks": [self.truck_view(t) for t in self.state.get("trucks", [])], "excavators": self.exc_view()}
 
     async def broadcast(self, msg: dict) -> None:
         dead = []
@@ -1097,7 +1376,7 @@ class Radio:
         return {
             "ok": True, "mode": self.brain.mode if self.brain else None, "mock": bool(self.brain and self.brain.mode == "mock"),
             "brain_url": BRAIN_URL, "brain_ok": self.brain_ok, "sim_connected": self.state.get("sim_connected"),
-            "world": self.world.raw.get("id"), "trucks": self.truck_ids(),
+            "world": self.world.raw.get("id"), "trucks": self.truck_ids(), "excavators": sorted(self.world.excavators),
             "stt": bool(EL_KEY or OPENAI_KEY), "stt_provider": "elevenlabs" if EL_KEY else ("openai" if OPENAI_KEY else None),
             "tts": bool(EL_KEY), "tts_model": EL_TTS_MODEL if EL_KEY else None,
             "llm": bool(OPENAI_KEY), "llm_model": OPENAI_MODEL if OPENAI_KEY else None,
@@ -1152,6 +1431,12 @@ def state():
     return dict(radio.state_msg(), log=list(radio.events)[-15:])
 
 
+@app.get("/api/radio/excavators")
+def excavators():
+    """Lightweight excavator state for pollers (Unity): [{id, face, state, heading_deg, pos3}]."""
+    return [{k: e[k] for k in ("id", "face", "state", "heading_deg", "pos3")} for e in radio.exc_view()]
+
+
 @app.get("/api/radio/world")
 def world():
     w = radio.world
@@ -1187,7 +1472,8 @@ async def command(cmd: Command):
     actions, replies = await radio.execute(calls)
     if not replies:
         replies = [("Control", None, "Control, say again, over.")]
-    evs = await asyncio.gather(*[radio.radio_event(frm, tid, txt, kind="control" if tid is None else "truck")
+    evs = await asyncio.gather(*[radio.radio_event(frm, tid, txt, kind="control" if tid is None else
+                                                   "excavator" if tid.startswith("exc-") else "truck")
                                  for frm, tid, txt in replies])
     return {
         "heard": text, "parser": parser, "actions": actions,
@@ -1200,7 +1486,7 @@ async def command(cmd: Command):
 @app.post("/api/radio/release")
 async def release():
     await radio.release()
-    await radio.radio_event("Control", None, "All radio tasks released. Trucks holding.", kind="control")
+    await radio.radio_event("Control", None, "All radio tasks released. Trucks and excavators holding.", kind="control")
     return {"ok": True}
 
 
