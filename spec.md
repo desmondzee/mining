@@ -153,7 +153,7 @@
 | Static time (s) | 1.5 | `brain/brain/planning/driver.py:STATIC_AFTER` |
 | Re-plan (waiting) | stopped for the wait time; all seen obstacles are blocked for A* | |
 | Wait time (s) | 4.0 | `brain/brain/planning/driver.py:REPLAN_AFTER` |
-| Re-plan cooldown (s) | 1.0 | `brain/brain/policy.py:REPLAN_COOLDOWN` |
+| Re-plan cooldown (s) | 1.0 | `brain/brain/planning/follow.py:REPLAN_COOLDOWN` |
 | Re-plan rejected | the new route starts more than 90° from the truck heading (no reverse) | |
 | Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
 | Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |

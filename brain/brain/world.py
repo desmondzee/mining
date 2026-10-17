@@ -17,7 +17,6 @@ class Truck:
     path: list[list[float]] = field(default_factory=list)
     path_idx: int = 0
     ghost_paths: list[list[list[float]]] = field(default_factory=list)
-    waiting_since: float | None = None
 
     def to_dict(self) -> dict:
         return asdict(self)

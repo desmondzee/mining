@@ -13,6 +13,7 @@ from .driver import (
     route_blocked,
     static_obstacles,
 )
+from .follow import follow, reset
 from .navmap import NavMap, load
 
 log = logging.getLogger(__name__)
@@ -24,9 +25,11 @@ __all__ = [
     "Decision",
     "NavMap",
     "drive",
+    "follow",
     "lidar_height",
     "nav_map",
     "plan_route",
+    "reset",
     "route_blocked",
     "scorer",
     "static_obstacles",
