@@ -23,7 +23,7 @@ docker compose up -d --build
 ```
 
 ```bash
-brev port-forward watson --port 8080:8080
+ssh -N -L 8080:127.0.0.1:8080 watson
 ```
 
 Open http://localhost:8080.

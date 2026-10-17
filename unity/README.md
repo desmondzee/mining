@@ -29,7 +29,7 @@ Protocol, resolutions and parameters: [../spec.md](../spec.md).
 | 2 | `BRAIN_HOST`, `BRAIN_PORT` |
 | 3 | inspector |
 
-Editor on Mac against watson: `brev port-forward watson --port 9000:9000`, host `127.0.0.1`.
+Editor on Mac against watson: `ssh -N -L 9000:127.0.0.1:9000 watson`, host `127.0.0.1`.
 
 ## Open items
 

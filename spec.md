@@ -23,8 +23,8 @@
 | Website + API port | 8080 | |
 | Sim TCP port | 9000 | `unity/Scripts/BrainClient.cs:port` |
 | Host binding | 127.0.0.1 | |
-| Remote access | `brev port-forward watson --port 8080:8080` | |
-| Editor → remote brain | `brev port-forward watson --port 9000:9000` | |
+| Remote access | `ssh -N -L 8080:127.0.0.1:8080 watson` | |
+| Editor → remote brain | `ssh -N -L 9000:127.0.0.1:9000 watson` | |
 
 ## World
 
