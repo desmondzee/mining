@@ -460,7 +460,9 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Item | Value | Source |
 |---|---|---|
 | Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| u16 LE meta_len \| meta JSON \| H.264 Annex B AU`; meta is the source frame's HUD metadata (see HUD), `meta_len` 0 if none | |
-| Video encoder | libx264 via PyAV (bundled in the aarch64/x86_64/macOS wheels, no NVENC), one encoder thread per camera shared by all viewers, `tune=zerolatency`, no B-frames, SPS/PPS in band on every keyframe, VBV cap = bitrate over 1 s | |
+| Video encoder | `VIDEO_ENCODER` `auto` (default: `h264_nvenc` when it opens, else libx264), `nvenc`, `x264`; a camera whose NVENC open fails drops to libx264. Docker image builds FFmpeg 9 with NVENC + libx264 and PyAV from source; the PyPI wheels have no NVENC. One encoder thread per camera shared by all viewers, no B-frames, SPS/PPS in band on every keyframe (IDR every keyframe interval), VBV cap = bitrate over 1 s | |
+| NVENC settings | preset `p4`, `tune=ull`, `rc=cbr`, `zerolatency=1`, `delay=0` (one AU out per frame in), profile `baseline` → constrained baseline | |
+| Video stats | `GET /api/video` → `{encoder, cameras:{name:{codec, encoded, dropped, encode_ms}}}` | `brain/brain/app.py` |
 | Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |
 | x264 preset | `veryfast` | |
 | Video frame rate (fps) | 15 | `brain/brain/video.py:FPS` |
@@ -642,7 +644,8 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Confidence threshold | 0.35 | `brain/brain/detector.py:CONF` |
 | NMS IoU | 0.5 | `brain/brain/detector.py:IOU` |
 | Max detections | 50 | `brain/brain/detector.py:MAX_DET` |
-| Runtime | onnxruntime (extra `detector`), providers from `DETECTOR_PROVIDERS` else all available (CPU on watson) | |
+| Runtime | onnxruntime: extra `detector` (CPU) or `gpu` (`onnxruntime-gpu[cuda,cudnn]`, CUDA 13, used by the Docker image); `DETECTOR_DEVICE` `auto` (default: CUDA EP when available, else CPU), `cuda`, `cpu`; CUDA session failure falls back to CPU; one warm-up run on CUDA | |
+| GPU | compose gives the brain `nvidia.com/gpu=all` (CDI) with `NVIDIA_DRIVER_CAPABILITIES=compute,utility,video` | |
 | Intra-op threads | 2 | `brain/brain/detector.py:THREADS` |
 | Worker threads | 2 | `brain/brain/detector.py:WORKERS` |
 | Scheduling | one pending frame per camera (newer replaces older), workers take the oldest pending camera; truck cameras only | |
@@ -651,5 +654,5 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Box | normalised to the frame, 4 decimals | |
 | Distance | depth at the box bottom band (bottom 20 %, centre half of the width), 20th percentile, × `hypot(1, (cx − W/2)/f)` | `brain/brain/detector.py` |
 | Depth percentile | 20 | `brain/brain/detector.py:DEPTH_PERCENTILE` |
-| Stats | `GET /api/detector` → `{enabled, model, input, classes, runs, dropped, infer_ms}` | `brain/brain/app.py` |
-| Throughput (YOLO11n, watson CPU, Isaac running) | 21 ms single stream at 4 threads; 56 inferences/s with 2 workers × 4 threads (target 45) | |
+| Stats | `GET /api/detector` → `{enabled, model, input, device, classes, runs, dropped, infer_ms}` | `brain/brain/app.py` |
+| Throughput (YOLO11n, watson, Isaac running) | CPU: 21 ms single stream at 4 threads; CUDA EP: 6 ms model, 5.6 ms full call incl. letterbox + NMS | |

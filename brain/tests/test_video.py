@@ -9,7 +9,8 @@ from fastapi.testclient import TestClient
 from brain.app import create_app
 from brain.fakesim import FakeQuarry
 from brain.protocol import compress_points, decompress_points, pack_points
-from brain.video import GOP_FRAMES, VIEWER_QUEUE, AccessUnit, VideoHub, pack_au, unpack_au
+from brain import video
+from brain.video import GOP_FRAMES, VIEWER_QUEUE, X264, AccessUnit, VideoHub, choose_encoder, pack_au, unpack_au
 
 
 def nal_types(au: bytes) -> set[int]:
@@ -32,9 +33,13 @@ async def collect(hub: VideoHub, viewer, count: int) -> list[bytes]:
     return got
 
 
-def test_encoder_output_decodes_with_keyframe_on_join():
+@pytest.mark.parametrize("codec", [X264, video.NVENC])
+def test_encoder_output_decodes_with_keyframe_on_join(codec):
+    if codec == video.NVENC and not video.nvenc_available():
+        pytest.skip("h264_nvenc unavailable")
+
     async def go():
-        hub = VideoHub()
+        hub = VideoHub(codec)
         early = hub.subscribe()
         imgs = frames(GOP_FRAMES + 5)
         for i, img in enumerate(imgs):
@@ -61,6 +66,8 @@ def test_encoder_output_decodes_with_keyframe_on_join():
 
     _, key, _, au, _ = unpack_au(joined[0])
     assert key and 7 in nal_types(au)
+    sps = next(au[i + 4 : i + 7] for i in range(len(au) - 4) if au[i : i + 3] == b"\0\0\1" and au[i + 3] & 0x1F == 7)
+    assert sps[0] == 66 and sps[1] & 0x40
 
 
 def test_fanout_shares_one_encoded_message():
@@ -106,3 +113,11 @@ def test_lidar_compression_roundtrip(seed):
     assert len(blob) < len(pack_points(pts)) / 2
     np.testing.assert_allclose(decompress_points(blob), pts, atol=0.006)
     assert len(zlib.decompress(blob)) == len(pts) * 6
+
+
+def test_choose_encoder_falls_back_to_x264(monkeypatch):
+    monkeypatch.setattr(video, "nvenc_available", lambda: False)
+    assert choose_encoder("auto") == choose_encoder("nvenc") == choose_encoder("x264") == X264
+    monkeypatch.setattr(video, "nvenc_available", lambda: True)
+    assert choose_encoder("auto") == choose_encoder("nvenc") == video.NVENC
+    assert choose_encoder("x264") == X264

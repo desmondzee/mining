@@ -16,6 +16,7 @@ from brain.detector import (
     ground_distance,
     letterbox,
     nms,
+    providers_for,
     to_meta,
     unletterbox,
 )
@@ -157,12 +158,21 @@ def test_detector_maps_model_boxes_to_frame_pixels(tmp_path):
     names = {i: f"c{i}" for i in range(80)} | {0: "person", 7: "truck"}
     det = Detector(constant_model(tmp_path / "m.onnx", out, names))
     assert det.size == (384, 640) and det.names[0] == "person" and len(det.names) == 80
+    assert det.device in ("cpu", "cuda")
     items = det(np.zeros((360, 640, 3), np.uint8))
     assert [d["cls"] for d in items] == ["person", "truck"]
     assert items[0]["box"] == [300.0, 40.0, 340.0, 160.0] and items[0]["conf"] == pytest.approx(0.92, abs=1e-3)
     assert items[1]["box"] == [70.0, 168.0, 130.0, 208.0]
     det.classes = {"truck"}
     assert [d["cls"] for d in det(np.zeros((360, 640, 3), np.uint8))] == ["truck"]
+
+
+def test_providers_for_device():
+    gpu = ["CUDAExecutionProvider", "CPUExecutionProvider"]
+    assert providers_for("auto", gpu) == gpu and providers_for("cuda", gpu) == gpu
+    assert providers_for("cpu", gpu) == ["CPUExecutionProvider"]
+    assert providers_for("auto", ["CPUExecutionProvider"]) == ["CPUExecutionProvider"]
+    assert providers_for("cuda", ["CPUExecutionProvider"]) == ["CPUExecutionProvider"]
 
 
 def test_from_env_is_noop_without_model(monkeypatch, tmp_path):

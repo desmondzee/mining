@@ -108,7 +108,11 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
             return {"enabled": False}
         model = det.detect
         return {"enabled": True, "model": os.path.basename(model.path), "input": list(model.size),
-                "classes": len(model.names), **det.stats()}
+                "device": model.device, "classes": len(model.names), **det.stats()}
+
+    @app.get("/api/video")
+    def get_video():
+        return {"encoder": h264.codec, "cameras": h264.stats()}
 
     @app.get("/api/world")
     def get_world():
