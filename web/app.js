@@ -1,4 +1,6 @@
 import { createLidarView } from "./lidar.js";
+import { lidarDecoder } from "./lidar_stream.js";
+import { videoFeed } from "./video.js";
 
 const COLOURS = ["#f0b428", "#3ca0f0", "#e65050", "#78dc78"];
 const feeds = document.getElementById("feeds");
@@ -151,11 +153,7 @@ function drawMap() {
   }
 }
 
-function onLidar(ev) {
-  const n = new Uint8Array(ev.data, 0, 1)[0];
-  const cm = new Int16Array(ev.data.slice(1 + n + 12));
-  lidarView.update(Float32Array.from(cm, (v) => v / 100));
-}
+const onLidar = lidarDecoder((points) => lidarView.update(points));
 
 function select(id) {
   if (id === selected) return;
@@ -212,5 +210,5 @@ map.addEventListener("click", (e) => {
   });
 });
 
-connect("/ws/video", onVideo, true);
+videoFeed(tileFor, onVideo).then((v) => connect(v.path, v.onMessage, true));
 connect("/ws/state", onState);

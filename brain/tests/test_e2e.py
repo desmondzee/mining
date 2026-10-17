@@ -13,6 +13,7 @@ def test_frame_produces_action_and_jpeg():
     async def go():
         app = create_app(sim_port=None, web_dir=None)
         bridge, world, video = app.state.bridge, app.state.world, app.state.video
+        video.subscribers = 1
         server = await asyncio.start_server(bridge.handle, "127.0.0.1", 0)
         port = server.sockets[0].getsockname()[1]
 
@@ -72,9 +73,9 @@ def test_lidar_api_and_policy_input():
         return app, pts, truck_id, msg
 
     app, pts, truck_id, msg = asyncio.run(go())
-    from brain.protocol import pack_points
+    from brain.protocol import compress_points
 
-    assert truck_id == "truck-0" and msg.endswith(pack_points(pts))
+    assert truck_id == "truck-0" and msg.endswith(compress_points(pts))
     r = TestClient(app).get("/api/trucks/truck-0/lidar")
     assert r.status_code == 200 and json.loads(r.headers["x-lidar"])["points"] == len(pts)
     np.testing.assert_allclose(np.frombuffer(r.content, "<f4").reshape(-1, 3), pts, atol=0.006)

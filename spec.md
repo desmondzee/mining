@@ -25,7 +25,17 @@
 |---|---|---|
 | Unity → brain, same host | localhost | 4 × ~10 KB JPEG × 15 fps + 3 × ~27 KB lidar × 10 Hz ≈ 1.4 MB/s |
 | Mac → watson (SSH via Brev) | 0.35–0.45 MB/s | too low for Unity on Mac with brain on watson; run brain locally |
-| watson → viewer (SSH via Brev) | 1.4–1.9 MB/s | ~0.6 MB/s video + ~0.27 MB/s lidar (selected truck) |
+| watson → viewer (SSH via Brev) | 1.4–1.9 MB/s | H.264: ≤0.3 MB/s video + ~0.04 MB/s lidar per viewer |
+
+| Per viewer, 4 cameras 640×360 15 fps + lidar 10 Hz (5 viewers, local) | Before (JPEG, raw lidar) | After (H.264, zlib lidar) |
+|---|---|---|
+| Photographic frames (quarry pano crops, ~22 KB JPEG) | 1346 KB/s video | 294 KB/s video |
+| Unity quarry trucks (35–41 KB JPEG, measured on watson) | ~2300 KB/s video | ≤275 KB/s video (bitrate cap) |
+| Fakesim flat world | 459 KB/s video | 60 KB/s video |
+| Lidar, selected truck (fakesim scan) | 34.5 KB/scan, 345 KB/s | 3.8 KB/scan, 38 KB/s |
+| H.264 keyframe size | | 15–19 KB |
+| Brain CPU (Mac M-series, 4 encodes + 4 JPEG decodes + policy) | 39% of a core (JPEG fallback, encoders still running) | 31% of a core |
+| x264 encode time per 640×360 frame (M-series) | | 1.8 ms |
 
 ## Network
 
@@ -280,12 +290,28 @@
 
 | Item | Value | Source |
 |---|---|---|
-| Video | `GET /ws/video` binary: `u8 name_len \| name \| JPEG` | |
-| Video delivery | latest frame per camera, slow clients skip frames | |
+| Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| H.264 Annex B AU` | |
+| Video encoder | libx264 via PyAV (bundled in the aarch64/x86_64/macOS wheels, no NVENC), one encoder thread per camera shared by all viewers, `tune=zerolatency`, no B-frames, SPS/PPS in band on every keyframe, VBV cap = bitrate over 1 s | |
+| Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |
+| x264 preset | `veryfast` | |
+| Video frame rate (fps) | 15 | `brain/brain/video.py:FPS` |
+| Keyframe interval (frames) | 15 | `brain/brain/video.py:GOP_FRAMES` |
+| Truck camera bitrate (kbps) | 600 | `brain/brain/video.py:TRUCK_KBPS` |
+| Overview bitrate (kbps) | 400 | `brain/brain/video.py:OVERVIEW_KBPS` |
+| Video join | new viewer gets the current GOP (latest keyframe + following AUs), then live AUs | |
+| Viewer queue (AUs per camera) | 30 | `brain/brain/video.py:VIEWER_QUEUE` |
+| Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
+| Encoder overload | latest frame wins, frames arriving while encoding are dropped | |
+| Browser decode | WebCodecs `VideoDecoder`, Annex B (no `description`), `web/video.js` | |
+| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| JPEG`, latest frame per camera; used when `VideoDecoder` lacks `avc1.42e01e` | |
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |
-| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 int16 cm points` | |
+| Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| zlib(planar delta int16 cm)` | |
+| Lidar payload | int16 cm, planes x[N], y[N], z[N], each delta coded from 0 (wrapping int16), zlib (`protocol.py compress_points`); browser inflates with `DecompressionStream("deflate")`, `web/lidar_stream.js` | |
+| Lidar zlib level | 6 | `brain/brain/protocol.py:LIDAR_ZLIB_LEVEL` |
+| Lidar compression | encoded once per scan in the bridge, shared by all viewers | |
+| Lidar viewer rate (Hz), env `LIDAR_VIEWER_HZ` | 10 | `brain/brain/app.py:LIDAR_VIEWER_HZ` |
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
 | Map | rocks, pedestrian paths, pedestrians, trucks, goals | |

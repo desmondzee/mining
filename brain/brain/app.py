@@ -12,11 +12,13 @@ from pydantic import BaseModel
 
 from .bridge import SimBridge
 from .hub import LatestHub
+from .video import VideoHub
 from .world import World
 
 log = logging.getLogger(__name__)
 
 STATE_HZ = 10
+LIDAR_VIEWER_HZ = 10
 DEFAULT_WEB_DIR = Path(__file__).resolve().parents[2] / "web"
 
 
@@ -29,7 +31,9 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     world = World()
     video = LatestHub()
     lidar = LatestHub()
-    bridge = SimBridge(world, video, lidar)
+    h264 = VideoHub()
+    bridge = SimBridge(world, video, lidar, h264)
+    lidar_period = 1 / float(os.environ.get("LIDAR_VIEWER_HZ", LIDAR_VIEWER_HZ))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -40,10 +44,12 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         yield
         if server:
             server.close()
+        h264.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.world = world
     app.state.video = video
+    app.state.h264 = h264
     app.state.lidar = lidar
     app.state.bridge = bridge
 
@@ -76,9 +82,21 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         return Response(scan.points.tobytes(), media_type="application/octet-stream", headers={"X-Lidar": json.dumps(meta)})
 
     @app.websocket("/ws/video")
-    async def ws_video(ws: WebSocket):
+    async def ws_video(ws: WebSocket, codec: str = "h264"):
         await ws.accept()
+        if codec == "h264":
+            viewer = h264.subscribe()
+            try:
+                while True:
+                    for msg in await viewer.next_batch():
+                        await ws.send_bytes(msg)
+            except (WebSocketDisconnect, RuntimeError):
+                pass
+            finally:
+                h264.unsubscribe(viewer)
+            return
         seen: dict[str, int] = {}
+        video.subscribers += 1
         try:
             while True:
                 for camera, jpeg in await video.wait_newer(seen):
@@ -86,16 +104,22 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
                     await ws.send_bytes(struct.pack("B", len(name)) + name + jpeg)
         except (WebSocketDisconnect, RuntimeError):
             pass
+        finally:
+            video.subscribers -= 1
 
     @app.websocket("/ws/lidar")
     async def ws_lidar(ws: WebSocket, truck: str):
         await ws.accept()
         seen: dict[str, int] = {}
+        loop = asyncio.get_running_loop()
+        next_send = 0.0
         try:
             while True:
+                await asyncio.sleep(max(0.0, next_send - loop.time()))
                 for truck_id, msg in await lidar.wait_newer(seen):
                     if truck_id == truck:
                         await ws.send_bytes(msg)
+                        next_send = loop.time() + lidar_period
         except (WebSocketDisconnect, RuntimeError):
             pass
 
