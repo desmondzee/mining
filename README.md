@@ -41,6 +41,17 @@ cp .env.example .env
 docker compose --profile public up -d tunnel
 ```
 
+## Detector
+
+```bash
+uv run tools/fetch_detector.py                 # team model from huggingface.co/pi-hack-mining
+uv run tools/fetch_detector.py --placeholder   # COCO YOLO11n
+scp models/*.onnx watson:~/Documents/mining/models/
+DETECTOR_MODEL=/app/models/<file>.onnx docker compose up -d brain
+```
+
+Stats at `/api/detector`. Ground truth boxes: palette, "Show ground truth boxes".
+
 ## Develop locally
 
 ```bash
