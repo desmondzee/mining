@@ -514,12 +514,15 @@
 | Path source | chosen planner candidate (`candidates[chosen]`, also `chosen_idx`/`candidate`/`candidate_idx`/`best`) blended into `route` beyond its end; else `route` (with `route_y`); else kinematic prediction toward `goal`; else 9 m grey stub | |
 | Alternatives | other `candidates` (or `ghost_paths` without candidates) as thin faint lines, opacity from normalised score (`score` field or `scores[i]`) | |
 | Hold | status `holding`/`hold`/`blocked`, or `candidates` present with no chosen index: short amber stub | |
-| Hold stub (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Hold bar (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Chosen candidate segment (m) | 30 | `web/hud.js:NEAR_LEN` |
+| Route ribbon far alpha | 0.14 | `web/hud.js:ROUTE_END_ALPHA` |
 | Front camera only | ribbon and candidates drawn when camera yaw is within the forward cone of truck yaw | |
 | Forward cone half-angle (deg) | 60 | `web/hud.js:FORWARD_DEG` |
 | Path length (m) | 80 | `web/hud.js:MAX_LEN` |
 | Ribbon half-width (m) | 2.65 | `web/hud.js:HALF_W` |
-| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |
+| Ribbon | global route (`route` + `route_y`) always drawn, 0.62 alpha near the truck fading to the far alpha; learned planner's chosen candidate (null-score candidates skipped) as a bright 0.6 × width near segment; other candidates faint thin lines; holding keeps the full route, tinted amber, with a solid stop bar at the hold distance | |
+| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object with a stop bar) | |
 | Stop clearance (m) | 8 | `web/hud.js:STOP_CLEAR` |
 | Warn clearance (m) | 20 | `web/hud.js:WARN_CLEAR` |
 | Objects | thin axis-aligned rectangle per object, label `class distance` above the top-left corner (confidence added when focused); white, amber within warn clearance, red within stop clearance (detections: box spanning the centre 24 % of the frame) | `web/hud.js` |

@@ -1,4 +1,4 @@
-import { NEAR, PathBuffer, Ribbon, buildRibbon, cameraModel, interpolateActors, nearestOnPolyline, predictPath, project, routePath, straightPath, toCamera } from "./hud_math.js";
+import { D2R, NEAR, PathBuffer, Ribbon, buildRibbon, cameraModel, interpolateActors, nearestOnPolyline, predictPath, project, routePath, straightPath, toCamera } from "./hud_math.js";
 
 const MAX_LEN = 80;
 const HALF_W = 2.65;
@@ -18,6 +18,9 @@ const LABEL_MIN_H = 14;
 const MAX_PIXELS = 2.6e6;
 const DETAIL_WIDTH = 960;
 const HOLD_LEN = 14;
+const NEAR_LEN = 30;
+const BEHIND_PROBE = 12;
+const ROUTE_END_ALPHA = 0.14;
 const ENGAGED = new Set(["driving", "avoiding", "holding", "hold", "blocked", "yielding"]);
 const CAUTION = new Set(["avoiding", "holding", "hold", "blocked", "yielding"]);
 const HOLD = new Set(["holding", "hold", "blocked"]);
@@ -69,7 +72,9 @@ function plannerPaths(truck) {
   source.forEach((c, i) => {
     const pts = polyline(c);
     if (!pts) return;
-    const score = Number(c && c.score != null ? c.score : scores ? scores[i] : 1);
+    const raw = c && c.score != null ? c.score : scores ? scores[i] : 1;
+    if (raw == null) return;
+    const score = Number(raw);
     list.push({ pts, score: Number.isFinite(score) ? score : 0, index: i });
   });
   let lo = Infinity, hi = -Infinity;
@@ -80,17 +85,8 @@ function plannerPaths(truck) {
   return { list, chosen: chosen ? chosen.pts : null, learned: truck.candidates === source };
 }
 
-function blendRoute(chosen, route, routeY, groundY) {
-  const out = chosen.map((p) => [p[0], p[1], groundY]);
-  if (!route) return out;
-  const [ex, ez] = chosen[chosen.length - 1];
-  let best = Infinity, k = -1;
-  for (let i = 0; i < route.length; i++) {
-    const d = Math.hypot(route[i][0] - ex, route[i][1] - ez);
-    if (d < best) { best = d; k = i; }
-  }
-  for (let i = k + 1; i < route.length; i++) out.push([route[i][0], route[i][1], routeY ? routeY[i] : groundY]);
-  return out;
+function onGround(pts, groundY) {
+  return pts.map((p) => [p[0], p[1], groundY]);
 }
 
 class TileHud {
@@ -103,6 +99,8 @@ class TileHud {
     this.dirty = false;
     this.path = new PathBuffer(512);
     this.ribbon = new Ribbon(160);
+    this.nearPath = new PathBuffer(256);
+    this.nearRib = new Ribbon(80);
     this.cam = {};
     this.pt = [0, 0, 0];
     this.objects = [];
@@ -206,18 +204,21 @@ class TileHud {
     const forward = Math.abs(((meta.cam.yaw - pose.yaw + 540) % 360) - 180) < FORWARD_DEG;
     const holding = engaged && (HOLD.has(status) || (plan.learned && !plan.chosen));
 
-    if (engaged && plan.chosen) routePath(ego, blendRoute(plan.chosen, route, truck.route_y, groundY), null, groundY, MAX_LEN + 20, this.path, 4);
-    else if (route) routePath(ego, route, truck.route_y, groundY, MAX_LEN + 20, this.path);
+    if (route) routePath(ego, route, truck.route_y, groundY, MAX_LEN + 20, this.path);
+    else if (engaged && plan.chosen) routePath(ego, onGround(plan.chosen, groundY), null, groundY, MAX_LEN + 20, this.path, 4);
     else if (engaged) predictPath(ego, truck.goal, groundY, MAX_LEN + 20, this.path);
     else straightPath(ego, groundY, 9, this.path);
+    if (route && this.behind(this.path, ego)) straightPath(ego, groundY, HOLD_LEN + 6, this.path);
+    const near = engaged && !!plan.chosen;
+    if (near) routePath(ego, onGround(plan.chosen, groundY), null, groundY, NEAR_LEN + 10, this.nearPath, 4);
 
     const t = meta.t || this.hud.latestT;
     const objs = this.collectObjects(meta, t, cam, ego, engaged);
     const lead = objs.lead;
 
     let tone = engaged ? (CAUTION.has(status) || holding ? "amber" : "blue") : "grey";
-    let len = holding ? HOLD_LEN : engaged ? MAX_LEN : 9;
-    let stopAt = null;
+    let len = engaged || route ? MAX_LEN : 9;
+    let stopAt = holding ? HOLD_LEN : null;
     if (engaged && lead && (lead.state === "warn" || lead.state === "stop")) {
       stopAt = Math.max(3, lead.along - lead.radius - 1.5);
       len = Math.min(len, stopAt);
@@ -226,7 +227,11 @@ class TileHud {
 
     if (forward && engaged) this.drawCandidates(ctx, plan, cam, groundY, full, u);
     buildRibbon(this.path, ego, cam, HALF_W, len, this.ribbon, 0.45);
-    if (forward) this.drawRibbon(ctx, this.ribbon, tone, engaged && !holding, full, u, now, stopAt != null && stopAt <= len + 0.01);
+    if (forward) this.drawRibbon(ctx, this.ribbon, tone, engaged && !holding, full, u, now, stopAt != null && stopAt <= len + 0.01 ? stopAt : null);
+    if (forward && near) {
+      buildRibbon(this.nearPath, ego, cam, HALF_W * 0.6, Math.min(len, stopAt ?? NEAR_LEN, NEAR_LEN), this.nearRib, 0.45);
+      this.drawNear(ctx, this.nearRib, tone);
+    }
     if (forward && engaged && !holding && truck.goal && !stopAt) this.drawGoal(ctx, cam, truck.goal, groundY, full, u, now);
     if (this.hud.showGroundTruth(this.name)) this.drawObjects(cam, objs.list, lead, full);
     this.drawDetections2D(vw, vh, full, engaged);
@@ -286,11 +291,11 @@ class TileHud {
     const n = rib.n;
     if (n < 2) return;
     const base = C[tone === "grey" ? "grey" : tone], hi = C[tone === "grey" ? "white" : tone + "Hi"];
-    const strength = engaged ? 1 : tone === "grey" ? 0.35 : 0.75;
+    const strength = tone === "grey" ? 0.35 : 1;
     const gx0 = rib.cx[0], gy0 = rib.cy[0], gx1 = rib.cx[n - 1], gy1 = rib.cy[n - 1];
     const ax = gx1 - gx0, ay = gy1 - gy0, al2 = ax * ax + ay * ay || 1;
     const len = rib.s[n - 1] || 1;
-    const endAlpha = stopBar ? 0.35 : 0;
+    const endAlpha = ROUTE_END_ALPHA;
     const makeGrad = (c, a0, a1) => {
       const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1);
       let last = 0;
@@ -360,14 +365,13 @@ class TileHud {
     for (let i = 0; i < n; i++) i ? ctx.lineTo(rib.rx[i], rib.ry[i]) : ctx.moveTo(rib.rx[i], rib.ry[i]);
     ctx.stroke();
 
-    if (stopBar) {
-      const k = n - 1;
+    if (stopBar != null) {
+      let k = 0;
+      while (k < n - 1 && rib.s[k] < stopBar) k++;
       ctx.save();
-      ctx.lineCap = "round";
+      ctx.lineCap = "butt";
       ctx.lineWidth = (full ? 5 : 3) * u;
-      ctx.strokeStyle = rgba(hi, 0.95);
-      ctx.shadowColor = rgba(base, 0.9);
-      ctx.shadowBlur = 12 * u * this.s;
+      ctx.strokeStyle = rgba(hi, 1);
       ctx.beginPath();
       ctx.moveTo(rib.lx[k], rib.ly[k]);
       ctx.lineTo(rib.rx[k], rib.ry[k]);
@@ -406,6 +410,28 @@ class TileHud {
       ctx.beginPath(); ctx.moveTo(x, yb); ctx.lineTo(x, top); ctx.stroke();
     }
     ctx.restore();
+  }
+
+  behind(path, ego) {
+    const p = this.pt;
+    path.sampleAt(Math.min(BEHIND_PROBE, path.length()), p);
+    return (p[0] - ego.x) * Math.sin(ego.yaw * D2R) + (p[2] - ego.z) * Math.cos(ego.yaw * D2R) < 1;
+  }
+
+  drawNear(ctx, rib, tone) {
+    const n = rib.n;
+    if (n < 2) return;
+    const hi = C[tone === "grey" ? "white" : tone + "Hi"];
+    const g = ctx.createLinearGradient(rib.cx[0], rib.cy[0], rib.cx[n - 1], rib.cy[n - 1]);
+    g.addColorStop(0, rgba(hi, 0.6));
+    g.addColorStop(1, rgba(hi, 0.08));
+    ctx.beginPath();
+    ctx.moveTo(rib.lx[0], rib.ly[0]);
+    for (let i = 1; i < n; i++) ctx.lineTo(rib.lx[i], rib.ly[i]);
+    for (let i = n - 1; i >= 0; i--) ctx.lineTo(rib.rx[i], rib.ry[i]);
+    ctx.closePath();
+    ctx.fillStyle = g;
+    ctx.fill();
   }
 
   drawCandidates(ctx, plan, cam, groundY, full, u) {
