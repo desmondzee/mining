@@ -5,12 +5,6 @@ const MOVE_MS = 360;
 const round = (v) => Math.round(v * 1e4) / 1e4;
 const sameBox = (a, b) => (a == null || b == null ? a == b : a.every((v, i) => Math.abs(v - b[i]) < 1e-3));
 
-export function squareBox([x0, y0, x1, y1]) {
-  const half = Math.max(x1 - x0, y1 - y0) / 2;
-  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2;
-  return [cx - half, cy - half, cx + half, cy + half];
-}
-
 export function createZoom({ camera = "overview" } = {}) {
   let tile = null;
   let box = null;
@@ -42,14 +36,19 @@ export function createZoom({ camera = "overview" } = {}) {
 
   function toImage([ax, ay], [bx, by]) {
     const c = cover();
-    const u = (x) => Math.min(Math.max((x - c.ox) / (c.vw * c.s), 0), 1);
-    const v = (y) => Math.min(Math.max((y - c.oy) / (c.vh * c.s), 0), 1);
-    return [u(Math.min(ax, bx)), v(Math.min(ay, by)), u(Math.max(ax, bx)), v(Math.max(ay, by))].map(round);
+    const { width: W, height: H } = c.r;
+    const k = Math.max(Math.abs(bx - ax) / W, Math.abs(by - ay) / H);
+    const w = W * k, h = H * k;
+    const x = Math.min(Math.max((ax + bx) / 2 - w / 2, 0), W - w);
+    const y = Math.min(Math.max((ay + by) / 2 - h / 2, 0), H - h);
+    const u = (px) => Math.min(Math.max((px - c.ox) / (c.vw * c.s), 0), 1);
+    const v = (py) => Math.min(Math.max((py - c.oy) / (c.vh * c.s), 0), 1);
+    return [u(x), v(y), u(x + w), v(y + h)].map(round);
   }
 
   function preview(target) {
     const c = cover();
-    const [x0, y0, x1, y1] = squareBox(target);
+    const [x0, y0, x1, y1] = target;
     const bw = (x1 - x0) * c.vw * c.s, bh = (y1 - y0) * c.vh * c.s;
     const k = Math.max(c.r.width / bw, c.r.height / bh);
     const cx = c.ox + ((x0 + x1) / 2) * c.vw * c.s, cy = c.oy + ((y0 + y1) / 2) * c.vh * c.s;

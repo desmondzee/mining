@@ -182,8 +182,8 @@ test("dragging on the overview zooms to the box and escape resets it", async () 
   const s = Math.max(r.width / cw, r.height / ch);
   const ox = (r.width - cw * s) / 2, oy = (r.height - ch * s) / 2;
   const norm = (x, y) => [(x - r.x - ox) / (cw * s), (y - r.y - oy) / (ch * s)];
-  const a = at(0.2, 0.3), b = at(0.6, 0.7);
-  await drag(a, b);
+  await drag(at(0.2, 0.3), at(0.6, 0.5));
+  const a = at(0.2, 0.2), b = at(0.6, 0.6);
   await page.waitForFunction(() => document.querySelector('.feed[data-camera="overview"]').classList.contains("zoomed"));
   await page.waitForTimeout(100);
   assert.equal(requests.length, 1);
