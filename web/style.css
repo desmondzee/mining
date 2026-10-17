@@ -680,14 +680,13 @@ kbd {
   .kpis { grid-template-columns: repeat(2, 1fr); row-gap: 28px; }
   .page-inner { justify-content: flex-start; padding-top: 128px; }
   .roster { margin-top: 36px; font-size: 11.5px; }
-  .roster li { grid-template-columns: 8ch minmax(0, 1fr) 9ch; }
-  .roster li .st { display: none; }
+  .roster li { grid-template-columns: 8ch minmax(0, 1fr) 8ch; }
+  .roster li .num { display: none; }
   .transcript { inset: 128px 0 32px; }
   .transcript .text { font-size: 16px; }
   .judge { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
   .judge-side { border-left: 0; border-top: 1px solid var(--rule); padding: 24px; }
   .alert { top: 116px; }
-  .wordmark .meta, .wordmark .rule-v { display: none; }
   .chrome-bottom { padding-bottom: max(16px, env(safe-area-inset-bottom)); }
   .fleet li:not(.selected) { display: none; }
   .fleet li { grid-template-columns: 7ch 8ch 8ch; }
