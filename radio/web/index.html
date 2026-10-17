@@ -231,7 +231,7 @@ window.addEventListener("resize", drawMap);
 let basemap = null;
 fetch("/api/radio/world").then((r) => r.json()).then((w) => {
   world = w;
-  if (w.basemap) { basemap = new Image(); basemap.onload = drawMap; basemap.src = w.basemap; }
+  // photo basemap available at w.basemap; intentionally not shown (road layout only)
   drawMap();
 }).catch(() => {});
 
