@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="hud.css">
   <script>
     try { document.documentElement.dataset.theme = localStorage.getItem("quarry-theme") || "dark"; } catch { document.documentElement.dataset.theme = "dark"; }
-    try { document.documentElement.dataset.view = localStorage.getItem("quarry-view") || "video"; } catch { document.documentElement.dataset.view = "video"; }
+    try { document.documentElement.dataset.view = localStorage.getItem("quarry-view") || "ops"; } catch { document.documentElement.dataset.view = "ops"; }
   </script>
 </head>
 <body>
@@ -58,6 +58,7 @@
 
   <header class="chrome bar">
     <nav class="bar-left tabs" aria-label="Views">
+      <button type="button" class="tab" data-tab="ops">ops</button>
       <button type="button" class="tab" data-tab="video">video</button>
       <button type="button" class="tab" data-tab="map">map</button>
       <button type="button" class="tab" data-tab="lidar">lidar</button>

@@ -98,7 +98,7 @@ test("escape closes the palette and view shortcuts switch tabs", async () => {
   await page.waitForFunction(() => document.getElementById("palette").hidden);
   await page.keyboard.press("m");
   await page.waitForFunction(() => document.documentElement.dataset.view === "map");
-  await page.keyboard.press("2");
+  await page.keyboard.press("1");
   await page.waitForFunction(() => document.documentElement.dataset.view === "video" && document.querySelector('.feed.active').dataset.camera === "truck-0");
 });
 
@@ -126,4 +126,16 @@ test("shift escape twice stops everything", async () => {
   await page.keyboard.press("Shift+Escape");
   await page.waitForTimeout(150);
   assert.equal(requests.filter((r) => r.method === "DELETE").length, 3);
+});
+
+test("ops layout keeps overview and map visible and swaps the primary truck", async () => {
+  await page.keyboard.press("o");
+  await page.waitForFunction(() => document.documentElement.dataset.view === "ops" && document.querySelector(".feed.primary"));
+  assert.equal(await page.locator(".feed.slot").count(), 4);
+  assert.equal(await page.locator('.feed.slot[data-camera="overview"]').count(), 1);
+  await page.locator('.feed.thumb[data-camera="truck-2"]').click();
+  await page.waitForFunction(() => document.querySelector(".feed.primary").dataset.camera === "truck-2");
+  await page.keyboard.press("2");
+  await page.waitForFunction(() => document.querySelector(".feed.primary").dataset.camera === "truck-1");
+  assert.equal(await page.evaluate(() => document.documentElement.dataset.view), "ops");
 });

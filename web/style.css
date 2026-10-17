@@ -167,6 +167,28 @@ kbd {
 [data-view="split"] .views { background: var(--rule); }
 
 .surface[data-surface="video"] { background: #0b0b0a; }
+[data-view="ops"] .views, [data-view="ops"] .surface[data-surface="video"] { background: var(--rule); }
+[data-view="ops"] .surface-empty { display: none; }
+
+.feed.slot { visibility: visible; opacity: 1; background: #0b0b0a; transition: left 360ms var(--ease-spring), top 360ms var(--ease-spring), width 360ms var(--ease-spring), height 360ms var(--ease-spring), opacity var(--t-slow) var(--ease-muji); }
+.feed.thumb { cursor: pointer; }
+.feed.thumb::after { content: ""; position: absolute; inset: 0; background: rgba(0, 0, 0, 0); transition: background var(--t-base) var(--ease-muji); pointer-events: none; }
+.feed.thumb:hover::after { background: rgba(255, 255, 255, 0.04); }
+.feed.thumb .hud-telemetry, .feed.thumb .hud-status { display: none; }
+
+.feed-name {
+  position: absolute;
+  left: 12px;
+  bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  color: var(--on-media-90);
+  text-shadow: 0 0 6px rgba(0, 0, 0, 0.55), 0 1px 2px rgba(0, 0, 0, 0.6);
+  pointer-events: none;
+  display: none;
+}
+
+.feed.slot:not(.primary) .feed-name { display: block; }
 .surface[data-surface="lidar"] { background: var(--lidar-bg); }
 .surface[data-surface="map"] { background: var(--map-bg); }
 
@@ -364,6 +386,7 @@ kbd {
   background: linear-gradient(rgba(0, 0, 0, 0), rgba(0, 0, 0, 0.46));
 }
 
+[data-view="ops"] .chrome-bottom,
 [data-view="fleet"] .chrome-bottom,
 [data-view="radio"] .chrome-bottom,
 [data-view="judge"] .chrome-bottom { opacity: 0; pointer-events: none; }
