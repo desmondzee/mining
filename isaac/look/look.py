@@ -166,7 +166,7 @@ class Look:
         dome = UsdLux.DomeLight.Define(self.stage, SKY)
         src = self.pano()
         sun = self.cfg["sun"]
-        elevation, azimuth = float(sun["elevation"]), sun["azimuth"]
+        elevation, azimuth = sun["elevation"], sun["azimuth"]
         if src is not None:
             from PIL import Image
 

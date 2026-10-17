@@ -110,36 +110,6 @@ def main() -> None:
             return None
         return apply_look(stage, item.get("preset", "day"), world_dir=world_dir, cache=Path(args.cache) / "look", **item.get("overrides", {}))
 
-    results = {}
-    if not args.no_fps:
-        truck_cams = [f"/World/Trucks/{t.id.replace('-', '_')}/front_camera" for t in sim.trucks]
-        rp = rep.create.render_product_tiled(truck_cams, (CAM_W, CAM_H))
-        ann = rep.AnnotatorRegistry.get_annotator("rgb")
-        ann.attach(rp)
-        for item in plan:
-            reset()
-            apply(item)
-            for _ in range(WARM):
-                drive()
-                step()
-            gpu = gpu_sampler()
-            hashes, t0 = set(), time.time()
-            for _ in range(args.frames):
-                drive()
-                step()
-                hashes.add(hash(np.asarray(ann.get_data())[::7, ::7].tobytes()))
-            dt = time.time() - t0
-            util = gpu_mean(gpu)
-            results[item["name"]] = {"fresh_fps": round(len(hashes) / dt, 2), "step_fps": round(args.frames / dt, 2), "gpu_util": None if util is None else round(util, 1)}
-            Image.fromarray(np.asarray(ann.get_data())[..., :3]).save(out / f"tiled_{item['name']}.jpg", quality=92)
-            print(f"LOOKBENCH {item['name']} {json.dumps(results[item['name']])}", flush=True)
-        ann.detach()
-        (out / "fps.json").write_text(json.dumps(results, indent=1))
-
-    if args.no_stills:
-        app.close()
-        return
-    reset()
     sites = np.array([to_isaac(s.pos) for s in sim.world.sites])
     road = np.array([to_isaac(p) for rd in sim.world.roads for p in rd.points])
     centre = sites.mean(axis=0)
@@ -158,34 +128,67 @@ def main() -> None:
         return cam.GetPath().pathString
 
     a, e = math.radians(225.0), math.radians(38.0)
-    dist = radius * 1.9
-    pit_eye = centre + dist * np.array([math.cos(e) * math.sin(a), math.cos(e) * math.cos(a), math.sin(e)])
+    pit_eye = centre + radius * 1.9 * np.array([math.cos(e) * math.sin(a), math.cos(e) * math.cos(a), math.sin(e)])
     cams = {
         "road": f"/World/Trucks/{t0.id.replace('-', '_')}/front_camera",
         "pit": look_cam("pit", pit_eye, centre, 60.0),
         "horizon": look_cam("horizon", base + [0, 0, 30], base + [math.sin(math.radians(40)) * 500, math.cos(math.radians(40)) * 500, 30 + 500 * math.tan(math.radians(14))], 100.0),
     }
     if args.sky_cams:
-        for az in (0, 90, 180, 270):
-            d = [math.sin(math.radians(az)), math.cos(math.radians(az)), math.tan(math.radians(25))]
-            cams[f"sky{az:03d}"] = look_cam(f"sky{az:03d}", base + [0, 0, 40], base + [0, 0, 40] + np.array(d) * 100, 90.0)
-    anns = {}
-    for name, path in cams.items():
-        prod = rep.create.render_product(path, (STILL_W, STILL_H))
-        an = rep.AnnotatorRegistry.get_annotator("rgb")
-        an.attach(prod)
-        anns[name] = an
-    for item in plan:
-        look = apply(item)
+        for az, el in ((0, 25), (90, 25), (180, 25), (270, 25), (220, 50)):
+            d = [math.sin(math.radians(az)), math.cos(math.radians(az)), math.tan(math.radians(el))]
+            cams[f"sky{az:03d}_{el}"] = look_cam(f"sky{az:03d}_{el}", base + [0, 0, 40], base + [0, 0, 40] + np.array(d) * 100, 100.0)
+
+    def stills(item, look):
+        prods = []
+        for name, path in cams.items():
+            prod = rep.create.render_product(path, (STILL_W, STILL_H))
+            an = rep.AnnotatorRegistry.get_annotator("rgb")
+            an.attach(prod)
+            prods.append((name, prod, an))
         for _ in range(WARM + 6):
             step()
         stats = {}
-        for name, an in anns.items():
+        for name, prod, an in prods:
             img = np.asarray(an.get_data())[..., :3]
             Image.fromarray(img).save(out / f"{name}_{item['name']}.jpg", quality=92)
             stats[name] = [round(float(img.mean()), 1), round(float((img.max(axis=2) >= 250).mean() * 100), 2)]
+            an.detach()
+            prod.destroy()
         extra = {} if look is None else {"sun_elev": round(look.elevation, 1), "sun_az": round(look.azimuth, 1), "dome_rot": round(look.dome_rotation, 1)}
         print(f"LOOKSTILL {item['name']} mean/clip%={json.dumps(stats)} {json.dumps(extra)}", flush=True)
+
+    def fps(item, ann):
+        for _ in range(WARM):
+            drive()
+            step()
+        gpu = gpu_sampler()
+        hashes, start = set(), time.time()
+        for _ in range(args.frames):
+            drive()
+            step()
+            hashes.add(hash(np.asarray(ann.get_data())[::7, ::7].tobytes()))
+        dt = time.time() - start
+        util = gpu_mean(gpu)
+        results[item["name"]] = {"fresh_fps": round(len(hashes) / dt, 2), "step_fps": round(args.frames / dt, 2), "gpu_util": None if util is None else round(util, 1)}
+        Image.fromarray(np.asarray(ann.get_data())[..., :3]).save(out / f"tiled_{item['name']}.jpg", quality=92)
+        print(f"LOOKBENCH {item['name']} {json.dumps(results[item['name']])}", flush=True)
+
+    results = {}
+    for item in plan:
+        reset()
+        look = apply(item)
+        if not args.no_stills:
+            stills(item, look)
+        if not args.no_fps:
+            truck_cams = [f"/World/Trucks/{t.id.replace('-', '_')}/front_camera" for t in sim.trucks]
+            rp = rep.create.render_product_tiled(truck_cams, (CAM_W, CAM_H))
+            ann = rep.AnnotatorRegistry.get_annotator("rgb")
+            ann.attach(rp)
+            fps(item, ann)
+            ann.detach()
+            rp.destroy()
+    (out / "fps.json").write_text(json.dumps(results, indent=1))
     app.close()
 
 
