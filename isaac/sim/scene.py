@@ -180,7 +180,7 @@ class IsaacRenderer:
         overrides = dict(look) if isinstance(look, dict) else {}
         preset = overrides.pop("preset", "day") if isinstance(look, dict) else look
         print(f"look: isaac.look.apply_look preset {preset}", flush=True)
-        result = apply_look(self.stage, preset, world.dir, cache, **overrides)
+        result = apply_look(self.stage, preset, world.dir, cache / "look", **overrides)
         settings = carb.settings.get_settings()
         for key, value in config.get("rtx", {}).items():
             settings.set(key, value)

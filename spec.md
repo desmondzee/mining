@@ -700,13 +700,13 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Item | Value | Source |
 |---|---|---|
 | Code | `isaac/look/`, presets `isaac/look/presets.json` | |
-| Hook | `apply_look(stage, preset, world_dir=, cache=, **overrides)` once after the stage is built | `isaac/look/look.py:apply_look` |
+| Hook | `apply_look(stage, preset, world_dir=, cache=, **overrides)` once after the stage is built | `isaac/look/look.py` `apply_look` |
 | Presets | `day`, `morning`, `golden_hour`, `overcast`, `dusty` | `isaac/look/presets.json` |
 | Sun | `/World/Sun` `DistantLight`, angle 0.53 deg, ShadowAPI shadows | |
 | Sun direction | azimuth compass from Isaac +Y toward +X; `"pano"` = brightest pano region (elev 56.1) at `sky.pano_azimuth` 220 | |
 | Sky | `/World/Sky` latlong dome, `sky_pano.jpg`, rotateZ so the pano sun sits on the sun direction | |
 | Latlong mapping | azimuth = 93 + 360·u − rotateZ | `presets.json:sky.latlong_offset` |
-| Derived sky textures | sun removed / desaturated / tinted PNG in `<cache>/look/` | `isaac/look/look.py:sky_variant` |
+| Derived sky textures | sun removed / desaturated / tinted PNG in `<cache>/look/` | `isaac/look/look.py` `sky_variant` |
 | Clouds | from the pano (no volumetric clouds in RealTimePathTracing 6.2) | |
 | Haze | `/rtx/fog/*` distance fog, Z-up, day density 0.04 from 200 m | |
 | Exposure | fixed, `filmIso = 100 · 2^ev`, shutter 50, f/5; day EV -1.3; histogram auto-exposure optional | |
