@@ -532,7 +532,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Send to | per-truck site select, `POST` `{site}` | |
 | Truck list | status, speed, `goal_site` | |
 | Read state | `GET /api/state`: `bounds`, `roads`, `sites`, `junctions`, `world_seq`, `cameras`, `truck_model`, `obstacles`, `paths`, `pedestrians`, `trucks[{id,x,z,yaw,speed,goal,goal_site,route,path_idx,ghost_paths,status,throttle,steer}]` | |
-| State stream | `/ws/state` = `/api/state` without `roads`, `sites`, `junctions`; refetch `/api/world` when `world_seq` changes | |
+| State stream | `/ws/state` = `/api/state` without `roads`, `sites`, `junctions`; refetch `/api/world` when `world_seq` changes; per connection `obstacles`, `paths`, `views`, `bounds`, `cameras` and each truck `route`/`route_y` are sent only on change, candidates top 8 scored | |
 | World | `GET /api/world` → `{bounds, roads, sites, junctions, preview, preview_bounds}` | |
 | World preview | `GET /api/world/preview` → `WORLD_DIR/world.json` `assets.preview` (PNG, top-down, north up, aligned to `bounds`), 404 if unset | |
 | Preview shown | when `preview_bounds` = hello `bounds` and roads exist | |

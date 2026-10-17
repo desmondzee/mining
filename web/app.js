@@ -540,8 +540,20 @@ function renderCaption() {
   captionHint.textContent = onVideo && cam && fps !== undefined ? `${fps} fps` : "";
 }
 
+function mergeState(prev, next) {
+  const before = new Map(prev.trucks.map((t) => [t.id, t]));
+  for (const t of next.trucks || []) {
+    const old = before.get(t.id);
+    if (old && t.route === undefined) {
+      t.route = old.route;
+      t.route_y = old.route_y;
+    }
+  }
+  return { ...prev, ...next };
+}
+
 function onState(ev) {
-  state = JSON.parse(ev.data);
+  state = mergeState(state, JSON.parse(ev.data));
   if (state.world_seq !== worldSeq) {
     worldSeq = state.world_seq;
     loadWorld();
