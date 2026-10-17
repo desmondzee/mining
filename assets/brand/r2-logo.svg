@@ -8,5 +8,6 @@
     </g>
     <rect x="88" y="8" width="20" height="20" rx="3" fill="#C96442"/>
   </g>
-  <text x="150" y="86" font-family="Georgia, 'Times New Roman', serif" font-size="46" fill="#1F1E1D" letter-spacing="0.5">Rocky Robotics</text>
+  <text x="150" y="78" font-family="Georgia, 'Times New Roman', serif" font-size="46" fill="#1F1E1D" letter-spacing="0.5">Rocky Robotics</text>
+  <text x="152" y="108" font-family="-apple-system, 'Helvetica Neue', Arial, sans-serif" font-size="15" fill="#6B6A65" letter-spacing="3">MINING AUTONOMY</text>
 </svg>

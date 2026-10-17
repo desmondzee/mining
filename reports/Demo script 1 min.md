@@ -25,7 +25,7 @@
 | 1:40–2:05 | Judge | **"Truck one, haul to the crusher."** or **"Truck two, go to the middle face."** | Second machine moves; truck bed tips at the crusher |
 | 2:05–2:30 | Judge | Free speech. Let them improvise ("send the second truck to fill up with fuel", "status report"). | The LLM interprets loose phrasing; every machine reports in its own voice |
 | 2:30–2:45 | You or judge | **"Everyone stop."** | All trucks halt, excavators hold: "Truck One, stopped…" |
-| 2:45–3:30 | You | Pod in hand: "The retrofit pod bolts onto trucks a quarry already owns. A 10-truck quarry on two shifts pays it back in about a year, in four months at 24/7. A new site takes a drone flight, not months of mapping. We're raising $7M for three paid pilots and the ISO 17757 safety case. R², talk to your quarry." | R² logo / business slide |
+| 2:45–3:30 | You | Pod in hand: "The retrofit pod bolts onto trucks a quarry already owns. A 10-truck quarry on two shifts pays it back in about a year, in four months at 24/7. A new site takes a drone flight, not months of mapping. We're raising $7M for three paid pilots and the ISO 17757 safety case. R². Mining autonomy." | R² logo / business slide |
 
 **Tips**
 - Mock trucks drive up to 8 m/s, so routes of 300–700 m take 40–90 s. Keep talking over the drive, or pick the nearest targets (Lower Face, Waste Dump).
