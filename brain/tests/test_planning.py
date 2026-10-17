@@ -166,7 +166,7 @@ def test_lidar_bins_run_left_to_right():
     ranges = lidar_ranges(np.array([[-10.0, 10.0], [0.5, 20.0], [10.0, 10.0]]))
     hits = np.flatnonzero(ranges < 100)
     assert len(hits) == 3 and hits[0] < 30 <= hits[1] < hits[2]
-    assert ranges[30] == pytest.approx(math.hypot(0.5, 20.0))
+    assert ranges[30] == math.ceil(math.hypot(0.5, 20.0))
 
 
 def test_holds_behind_vehicle_blocking_narrow_ramp(nav):

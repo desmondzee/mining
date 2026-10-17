@@ -31,7 +31,7 @@ const tiles = new Map();
 const decoder = new TextDecoder();
 let stopLidar = null;
 
-const shell = createShell({ onView: (v) => { renderCaption(); resizeMap(); if (v === "judge") ops.renderQr(); }, onCamera: (name) => { hud.setDetail(name); renderCaption(); renderTruckList(); } });
+const shell = createShell({ onView: (v) => { layoutOps(); renderCaption(); resizeMap(); if (v === "judge") ops.renderQr(); }, onCamera: (name) => { hud.setDetail(name); renderCaption(); renderTruckList(); } });
 const kpis = createKpis();
 const radio = createRadio({ onEvent: (ev) => ops.addLine(ev), onState: (msg) => kpis.update(msg) });
 const ops = createOps({ radio, kpis });
@@ -42,6 +42,8 @@ fetch("/radio/data/worlds/quarry/world.json").then((r) => (r.ok ? r.json() : nul
 }).catch(() => {});
 const help = createDialog(document.getElementById("help"));
 const commandPalette = createPalette({ root: document.getElementById("palette"), commands });
+const schedulePalette = createPalette({ root: document.getElementById("schedule"), commands: schedule, recents: false });
+setInterval(() => schedulePalette.refresh(), 500);
 
 function wsUrl(path) {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${path}`;
@@ -72,8 +74,79 @@ function truckColour(id) {
 }
 
 function cameraOrder() {
-  return [...tiles.keys()].sort((a, b) => (a === "overview" ? -1 : b === "overview" ? 1 : a.localeCompare(b)));
+  return [...tiles.keys()].sort((a, b) => (a === "overview" ? 1 : b === "overview" ? -1 : a.localeCompare(b)));
 }
+
+function truckCams() {
+  return state.trucks.map((t) => t.id).filter((id) => tiles.has(id));
+}
+
+const SEAM = 0.5;
+const opsSlots = new Set();
+
+function place(el, [x, y, w, h]) {
+  el.style.left = `calc(${x}% + ${x > 0 ? SEAM : 0}px)`;
+  el.style.top = `calc(${y}% + ${y > 0 ? SEAM : 0}px)`;
+  el.style.width = `calc(${w}% - ${(x > 0 ? SEAM : 0) + (x + w < 100 ? SEAM : 0)}px)`;
+  el.style.height = `calc(${h}% - ${(y > 0 ? SEAM : 0) + (y + h < 100 ? SEAM : 0)}px)`;
+  el.style.right = el.style.bottom = "auto";
+}
+
+function unplace(el) {
+  for (const k of ["left", "top", "width", "height", "right", "bottom"]) el.style[k] = "";
+}
+
+function opsRects() {
+  const trucks = truckCams();
+  const primary = trucks.includes(shell.camera) ? shell.camera : trucks[0];
+  const others = trucks.filter((id) => id !== primary);
+  const overview = tiles.has("overview");
+  const W = innerWidth, H = innerHeight;
+  const r = new Map();
+  if (W <= 720) {
+    const S = others.length ? Math.min(20, ((100 / others.length) * W * 9) / 16 / H) : 0;
+    const P = 48 - S / 2;
+    if (primary) r.set(primary, [0, 0, 100, P]);
+    others.forEach((id, i) => r.set(id, [(i * 100) / others.length, P, 100 / others.length, S]));
+    if (overview) r.set("overview", [0, P + S, 50, 100 - P - S]);
+    r.set("map", overview ? [50, P + S, 50, 100 - P - S] : [0, P + S, 100, 100 - P - S]);
+  } else {
+    const L = primary ? 60 : 0;
+    const S = others.length ? Math.min(30, ((L / others.length) * W * 9) / 16 / H) : 0;
+    if (primary) r.set(primary, [0, 0, L, 100 - S]);
+    others.forEach((id, i) => r.set(id, [(i * L) / others.length, 100 - S, L / others.length, S]));
+    if (overview) r.set("overview", [L, 0, 100 - L, 50]);
+    r.set("map", overview ? [L, 50, 100 - L, 50] : [L, 0, 100 - L, 100]);
+  }
+  return { r, primary };
+}
+
+function layoutOps() {
+  const on = shell.view === "ops";
+  const mapSurface = document.getElementById("surface-map");
+  if (!on) {
+    for (const name of opsSlots) {
+      const t = tiles.get(name);
+      if (t) { unplace(t.el); t.el.classList.remove("slot", "primary", "thumb"); }
+    }
+    opsSlots.clear();
+    mapSurface.style.width = mapSurface.style.height = "";
+    return;
+  }
+  const { r, primary } = opsRects();
+  if (primary && shell.camera !== primary) shell.setCamera(primary, tiles);
+  if (primary && selected !== primary) select(primary);
+  for (const [name, t] of tiles) {
+    const rect = r.get(name);
+    t.el.classList.toggle("slot", !!rect);
+    t.el.classList.toggle("primary", name === primary);
+    t.el.classList.toggle("thumb", !!rect && name !== primary && name !== "overview");
+    if (rect) { place(t.el, rect); opsSlots.add(name); } else unplace(t.el);
+  }
+  place(mapSurface, r.get("map"));
+}
+
+addEventListener("resize", () => { if (shell.view === "ops") layoutOps(); });
 
 function tileFor(name) {
   let tile = tiles.get(name);
@@ -81,7 +154,9 @@ function tileFor(name) {
   const el = document.createElement("div");
   el.className = "feed";
   el.dataset.camera = name;
-  el.innerHTML = `<canvas></canvas><div class="feed-wait">no signal</div>`;
+  el.innerHTML = `<canvas></canvas><div class="feed-wait">no signal</div><span class="feed-name"></span>`;
+  el.querySelector(".feed-name").textContent = name;
+  el.addEventListener("click", () => { if (el.classList.contains("thumb")) showCamera(name); });
   el.querySelector("canvas").setAttribute("aria-label", `${name} camera`);
   feeds.append(el);
   tile = { el, canvas: el.querySelector("canvas"), frames: 0, fps: 0, busy: false };
@@ -89,8 +164,9 @@ function tileFor(name) {
   hud.attach(name, el, tile.canvas);
   tile.onFrame = (meta) => hud.frame(name, meta);
   document.getElementById("feeds-empty").hidden = true;
-  const active = shell.camera && tiles.has(shell.camera) ? shell.camera : tiles.has("overview") ? "overview" : name;
+  const active = shell.camera && tiles.has(shell.camera) ? shell.camera : name;
   if (!feeds.querySelector(".feed.active") || active === name) shell.setCamera(active, tiles);
+  if (shell.view === "ops") layoutOps();
   return tile;
 }
 
@@ -297,6 +373,23 @@ function drawMap() {
       }
       ctx.beginPath(); ctx.arc(gx, gy, 6 * PX, 0, Math.PI * 2); ctx.stroke();
     }
+    const cands = t.candidates || [];
+    const scores = t.candidate_scores || [];
+    if (cands.length) {
+      ctx.save();
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = 1 * PX;
+      ctx.globalAlpha = 0.18;
+      cands.forEach((c, i) => { if (scores[i] != null && i !== t.choice) { polyline([[t.x, t.z], ...c]); ctx.stroke(); } });
+      const chosen = cands[t.choice];
+      if (chosen) {
+        ctx.globalAlpha = 0.9;
+        ctx.lineWidth = 4 * PX;
+        polyline([[t.x, t.z], ...chosen]);
+        ctx.stroke();
+      }
+      ctx.restore();
+    }
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate((t.yaw * Math.PI) / 180);
@@ -315,6 +408,7 @@ const onLidar = lidarDecoder((points) => lidarView.update(points));
 function select(id) {
   if (id === selected) return;
   selected = id;
+  if (shell.view === "ops" && tiles.has(id) && shell.camera !== id) { shell.setCamera(id, tiles); layoutOps(); }
   if (stopLidar) stopLidar();
   lidarView.clear();
   stopLidar = connect(`/ws/lidar?truck=${encodeURIComponent(id)}`, onLidar, true);
@@ -407,7 +501,7 @@ function renderCaption() {
   const cam = shell.camera;
   const fps = tiles.get(cam)?.fps;
   ops.renderKpis();
-  const onVideo = view === "video" || (view === "split" && shell.split.includes("video"));
+  const onVideo = view === "video" || view === "ops" || (view === "split" && shell.split.includes("video"));
   caption.toggleAttribute("data-only", onVideo && state.trucks.some((t) => t.id === cam));
   barCamera.textContent = onVideo ? cam || "" : view === "lidar" ? selected || "" : "";
   captionHint.textContent = onVideo && cam && fps !== undefined ? `${fps} fps` : "";
@@ -438,6 +532,7 @@ map.addEventListener("click", (e) => {
 function showCamera(name) {
   if (!tiles.has(name)) return;
   shell.setCamera(name, tiles);
+  if (shell.view === "ops") { if (name === "overview") shell.setView("video"); else layoutOps(); return; }
   if (!(shell.view === "video" || (shell.view === "split" && shell.split.includes("video")))) shell.setView("video");
 }
 
@@ -446,7 +541,7 @@ function focusTruck(id) {
   if (tiles.has(id)) showCamera(id);
 }
 
-const VIEW_KEYS = { video: "V", map: "M", lidar: "L", fleet: "F", radio: "R", judge: "J", split: "S" };
+const VIEW_KEYS = { ops: "O", video: "V", map: "M", lidar: "L", fleet: "F", radio: "R", judge: "J", split: "S" };
 const VIEW_BY_KEY = Object.fromEntries(Object.entries(VIEW_KEYS).map(([v, k]) => [k.toLowerCase(), v]));
 const SPLIT_LABEL = (s) => s.split(" ").join(" · ");
 const URLISH = /^(?:radio url|url)\s+(\S+)$/i;
@@ -480,15 +575,51 @@ function commands(query = "") {
     : { id: "judge:pin", group: "radio", title: "Set access code…", keywords: "pin judge", searchOnly: true, run: () => setTimeout(() => commandPalette.open("pin "), 160) });
   const theme = storedTheme();
   for (const th of THEMES) out.push({ id: `theme:${th}`, group: "appearance", title: `Theme ${th}`, keywords: "appearance colour mode", detail: theme === th ? "current" : "", run: () => applyTheme(th) });
+  out.push({ id: "hud:ground-truth", group: "appearance", title: hud.groundTruth ? "Hide ground truth boxes" : "Show ground truth boxes", keywords: "hud detector detections objects overlay", run: () => hud.toggleGroundTruth() });
   out.push({ id: "help:keys", group: "help", title: "Keyboard shortcuts", keywords: "help keys", keys: ["?"], run: () => help.open() });
   if (query && !url && !pin) out.push({ id: "radio:send", group: "radio", title: `Send to radio: “${query}”`, always: true, run: () => sendRadio(query) });
+  return out;
+}
+
+const PHASE_LABEL = { idle: "idle", to_site: "en route", to_load: "to load", loading: "loading", to_dump: "hauling", dumping: "dumping", returning: "returning" };
+
+function eta(m, speed) {
+  if (m == null || !(speed > 0.5)) return "";
+  const s = Math.round(m / speed);
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function scheduleTruck(id) {
+  schedulePalette.close(true);
+  select(id);
+  if (shell.view !== "ops") shell.setView("ops");
+  if (tiles.has(id)) shell.setCamera(id, tiles);
+  layoutOps();
+}
+
+function schedule() {
+  const pad = (v, n) => String(v ?? "").padEnd(n);
+  const lpad = (v, n) => String(v ?? "").padStart(n);
+  const out = state.trucks.map((t) => {
+    const r = radio.online ? radio.trucks.get(t.id) : null;
+    const phase = r?.phase && r.phase !== "idle" ? PHASE_LABEL[r.phase] || r.phase : t.status;
+    const dest = r?.target || (t.goal_site ? siteName(t.goal_site) : "");
+    const metres = r?.remaining_m ?? null;
+    const load = r?.load ?? t.load;
+    const detail = [pad(dest, 16), lpad(metres != null ? `${metres} m` : "", 7), lpad(eta(metres, t.speed), 6), lpad(kmh(t.speed), 8), lpad(load != null ? `${load} t` : "", 5)].join("  ");
+    return { id: `sched:${t.id}`, group: "trucks", title: `${t.id} · ${phase}`, keywords: `${dest} ${r?.task || ""}`, detail, run: () => scheduleTruck(t.id) };
+  });
+  for (const e of radio.online ? radio.state.excavators || [] : []) {
+    out.push({ id: `sched:${e.id}`, group: "excavators", title: `${e.id} · ${e.state || ""}`, keywords: e.face || "", detail: pad(e.face_name || "", 16), run: () => {} });
+  }
   return out;
 }
 
 const SHORTCUTS = [
   ["Command palette", ["/"]],
   ["Command palette", ["⌘", "K"]],
-  ["Video · map · lidar", ["V", "M", "L"]],
+  ["Schedule", ["\\"]],
+  ["Ops · video · map · lidar", ["O", "V", "M", "L"]],
   ["Fleet · radio · judge · split", ["F", "R", "J", "S"]],
   ["Stop everything (twice)", ["⇧", "esc"]],
   ["Camera", ["1", "–", "9"]],
@@ -514,13 +645,15 @@ addEventListener("keydown", (e) => {
   if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
     e.preventDefault();
     if (help.isOpen()) help.close();
+    schedulePalette.close();
     commandPalette.toggle();
     return;
   }
   if (e.key === "Escape" && e.shiftKey) { e.preventDefault(); armedStop(); return; }
-  if (commandPalette.isOpen() || help.isOpen() || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (commandPalette.isOpen() || schedulePalette.isOpen() || help.isOpen() || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
   const key = e.key.toLowerCase();
   if (e.key === "/") { e.preventDefault(); commandPalette.open(); }
+  else if (e.key === "\\") { e.preventDefault(); schedulePalette.open(); }
   else if (e.key === "?") { e.preventDefault(); help.open(); }
   else if (VIEW_BY_KEY[key] && !e.shiftKey) shell.setView(VIEW_BY_KEY[key]);
   else if (/^[1-9]$/.test(e.key)) { const name = cameraOrder()[Number(e.key) - 1]; if (name) showCamera(name); }

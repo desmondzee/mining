@@ -19,6 +19,10 @@ class Truck:
     path: list[list[float]] = field(default_factory=list)
     path_idx: int = 0
     ghost_paths: list[list[list[float]]] = field(default_factory=list)
+    planner: str = "rules"
+    choice: int = -1
+    candidates: list[list[list[float]]] = field(default_factory=list)
+    candidate_scores: list[float | None] = field(default_factory=list)
 
     def to_dict(self) -> dict:
         d = asdict(self)
@@ -28,6 +32,7 @@ class Truck:
     def set_goal(self, goal: tuple[float, float] | None, site: str | None = None) -> None:
         self.goal, self.goal_site = goal, site
         self.path, self.path_idx, self.ghost_paths = [], 0, []
+        self.choice, self.candidates, self.candidate_scores = -1, [], []
         self.status = "driving" if goal else "idle"
 
 

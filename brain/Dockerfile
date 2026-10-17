@@ -5,10 +5,10 @@ ENV UV_LINK_MODE=copy UV_COMPILE_BYTECODE=1
 
 WORKDIR /app/brain
 COPY brain/pyproject.toml brain/uv.lock ./
-RUN uv sync --frozen --no-dev --no-install-project
+RUN uv sync --frozen --no-dev --extra detector --no-install-project
 
 COPY brain/ ./
-RUN uv sync --frozen --no-dev
+RUN uv sync --frozen --no-dev --extra detector
 COPY web/ /app/web/
 COPY data/worlds/default/world.json data/worlds/default/navgrid.json /app/data/worlds/default/
 COPY data/worlds/quarry/world.json data/worlds/quarry/navgrid.json /app/data/worlds/quarry/

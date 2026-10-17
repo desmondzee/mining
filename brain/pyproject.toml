@@ -14,15 +14,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Learned path scorer (PLANNER_CKPT). Optional so the default image stays small.
+# Only to export or load a .pt planner checkpoint; the brain runs the exported .npz with numpy.
 model = ["torch>=2.2"]
+detector = ["onnxruntime>=1.20"]
 
 [project.scripts]
 brain = "brain.app:main"
 fakesim = "brain.fakesim:main"
 
 [dependency-groups]
-dev = ["pytest>=8", "httpx>=0.27"]
+dev = ["pytest>=8", "httpx>=0.27", "onnx>=1.16"]
 
 [build-system]
 requires = ["hatchling"]
