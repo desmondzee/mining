@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from brain.app import create_app
 from brain.fakesim import FakeQuarry
+from brain.hud import unpack_meta
 from brain.protocol import encode, encode_frame, encode_lidar, read_message
 
 QUARRY = Path(__file__).resolve().parents[2] / "data" / "worlds" / "quarry"
@@ -31,7 +32,8 @@ def test_frame_produces_action_and_jpeg():
         world.trucks[t.id].goal = (t.x + 40, t.z)
 
         rgb, depth = quarry.render_truck(t)
-        writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose={"x": t.x, "z": t.z, "yaw": 0}))
+        cam = {"x": t.x, "y": 3.6, "z": t.z, "yaw": 0, "pitch": 0, "roll": 0, "hfov": 90}
+        writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose={"x": t.x, "z": t.z, "yaw": 0}, cam=cam))
         await writer.drain()
         header, _ = await asyncio.wait_for(read_message(reader), 5)
         frames = await asyncio.wait_for(video.wait_newer({}), 5)
@@ -44,8 +46,10 @@ def test_frame_produces_action_and_jpeg():
     header, frames, connected = asyncio.run(go())
     assert header["type"] == "action" and header["truck"] == "truck-0"
     assert header["steer"] > 0 and header["throttle"] > 0
-    (camera, jpeg), = frames
-    assert camera == "truck-0" and jpeg[:2] == b"\xff\xd8"
+    (camera, msg), = frames
+    meta, offset = unpack_meta(msg)
+    assert camera == "truck-0" and msg[offset : offset + 2] == b"\xff\xd8"
+    assert meta["truck"] == "truck-0" and meta["cam"]["hfov"] == 90 and meta["pose"]["yaw"] == 0 and meta["t"] > 0
     assert connected
 
 

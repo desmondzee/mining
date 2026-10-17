@@ -367,7 +367,7 @@
 
 | Item | Value | Source |
 |---|---|---|
-| Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| H.264 Annex B AU` | |
+| Video | `GET /ws/video` binary, one H.264 access unit per message: `u8 name_len \| name \| u8 flags (bit0 keyframe) \| u32 LE timestamp_ms \| u16 LE meta_len \| meta JSON \| H.264 Annex B AU`; meta is the source frame's HUD metadata (see HUD), `meta_len` 0 if none | |
 | Video encoder | libx264 via PyAV (bundled in the aarch64/x86_64/macOS wheels, no NVENC), one encoder thread per camera shared by all viewers, `tune=zerolatency`, no B-frames, SPS/PPS in band on every keyframe, VBV cap = bitrate over 1 s | |
 | Video profile | x264 `baseline` → constrained baseline, level 2.2 at 640×360 (`avc1.42c016`); browser reads the codec string from the SPS | |
 | x264 preset | `veryfast` | |
@@ -380,7 +380,7 @@
 | Slow viewer | queue full → drop that camera's AUs until the next keyframe | |
 | Encoder overload | latest frame wins, frames arriving while encoding are dropped | |
 | Browser decode | WebCodecs `VideoDecoder`, Annex B (no `description`), `web/video.js` | |
-| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| JPEG`, latest frame per camera; used when `VideoDecoder` lacks `avc1.42e01e` | |
+| Video fallback | `GET /ws/video?codec=jpeg` binary: `u8 name_len \| name \| u16 LE meta_len \| meta JSON \| JPEG`, latest frame per camera; used when `VideoDecoder` lacks `avc1.42e01e` | |
 | JPEG quality | 75 | `brain/brain/bridge.py:JPEG_QUALITY` |
 | State | `GET /ws/state` JSON | |
 | State rate (Hz) | 10 | `brain/brain/app.py:STATE_HZ` |
@@ -495,3 +495,27 @@
 | Pedestrian IDs | `Pedestrian_NN` | |
 | Pedestrian visual | orange capsule | |
 | Dry run | `--dry-run`: no Isaac imports, black JPEG frames, Warp raycasts when `warp` is importable, heightmap otherwise | |
+
+## HUD
+
+| Item | Value | Source |
+|---|---|---|
+| Sim → brain camera pose | optional `frame` header field `cam{x,y,z,yaw,pitch,roll,hfov}`: camera world position (m, Unity axes) and Unity Euler angles (deg): `yaw` = `eulerAngles.y` (0 = +z, clockwise), `pitch` = `eulerAngles.x` in −180..180 (positive looks down), `roll` = `eulerAngles.z` in −180..180, `hfov` horizontal FOV | `unity/Assets/Scripts/SensorCamera.cs` |
+| Truck ground height | optional `pose.y` in `frame` (truck transform y) | |
+| Fake sim camera | truck position (renderer origin), y = ground + `CAM_HEIGHT` (ground from the nav-grid terrain in `--world` mode, else 0; `pose.y` = ground), pitch 0, roll 0, hfov `FOV_DEG`; pinhole columns `atan((col + 0.5 − W/2) / f)` | `brain/brain/fakesim.py` |
+| Frame metadata | JSON `{t, cam, pose, speed, truck}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit | `brain/brain/hud.py` |
+| State additions | `t` (brain wall clock, s); with a heightmap: `y` on trucks, pedestrians, obstacles and `route_y` (one height per `route` point) | `brain/brain/hud.py` |
+| Heightmap | `WORLD_DIR/heightmap.raw` + `heightmap_meta.json` (uint16, row 0 = min z, col 0 = min x), bilinear; none when `WORLD_DIR` unset or files missing | |
+| Ground fallback | horizontal plane at state truck `y`, else `pose.y`, else `cam.y − 3.6` | `web/hud.js` |
+| Projection | pinhole, square pixels, `f = W/2 / tan(hfov/2)`, `R = Ry(yaw)·Rx(pitch)·Rz(roll)` | `web/hud_math.js` |
+| Sync | overlay is drawn when the video frame is drawn, with that frame's `cam`; actors interpolated between 10 Hz state snapshots at the frame's `t` | |
+| Path source | truck `route` (with `route_y`) if present, else kinematic prediction toward `goal`, else 9 m grey stub | |
+| Path length (m) | 80 | `web/hud.js:MAX_LEN` |
+| Ribbon half-width (m) | 2.65 | `web/hud.js:HALF_W` |
+| Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |
+| Stop clearance (m) | 8 | `web/hud.js:STOP_CLEAR` |
+| Warn clearance (m) | 20 | `web/hud.js:WARN_CLEAR` |
+| Objects | ground truth: pedestrians (0.6 × 1.8 m capsule), other trucks (5.3 × 4.5 × 9.35 m box), obstacles (2r box); `hud.setDetections(camera, list)` adds 3D `{x,z,size,kind}` or 2D `{box:[x0,y0,x1,y1] normalised, cls, conf}` detections | |
+| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
+| Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
+| Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
