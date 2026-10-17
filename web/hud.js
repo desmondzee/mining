@@ -15,8 +15,11 @@ const STATE_BUFFER = 30;
 const UNIT_KEY = "quarry-hud-unit";
 const MAX_PIXELS = 2.6e6;
 const DETAIL_WIDTH = 960;
+const HOLD_LEN = 14;
 const ENGAGED = new Set(["driving", "avoiding", "holding", "hold", "blocked", "yielding"]);
 const CAUTION = new Set(["avoiding", "holding", "hold", "blocked", "yielding"]);
+const HOLD = new Set(["holding", "hold", "blocked"]);
+const FORWARD_DEG = 60;
 const KIND_LABEL = { person: "Pedestrian", truck: "Haul truck", obstacle: "Obstacle", equipment: "Equipment" };
 
 const C = {
@@ -71,6 +74,46 @@ function roundedBrackets(ctx, x0, y0, x1, y1, r, len) {
   ctx.moveTo(x1, y1 - l); ctx.arcTo(x1, y1, x1 - l, y1, rr); ctx.lineTo(x1 - l, y1);
   ctx.moveTo(x0 + l, y1); ctx.arcTo(x0, y1, x0, y1 - l, rr); ctx.lineTo(x0, y1 - l);
   ctx.stroke();
+}
+
+function polyline(c) {
+  const pts = Array.isArray(c) ? c : c && (c.points || c.path);
+  if (!Array.isArray(pts) || pts.length < 2) return null;
+  return pts.map((p) => (Array.isArray(p) ? p : [p.x, p.z]));
+}
+
+function plannerPaths(truck) {
+  const empty = { list: [], chosen: null };
+  if (!truck) return empty;
+  const source = Array.isArray(truck.candidates) && truck.candidates.length ? truck.candidates : truck.ghost_paths;
+  if (!Array.isArray(source) || !source.length) return empty;
+  const scores = Array.isArray(truck.scores) ? truck.scores : Array.isArray(truck.candidate_scores) ? truck.candidate_scores : null;
+  const list = [];
+  source.forEach((c, i) => {
+    const pts = polyline(c);
+    if (!pts) return;
+    const score = Number(c && c.score != null ? c.score : scores ? scores[i] : 1);
+    list.push({ pts, score: Number.isFinite(score) ? score : 0, index: i });
+  });
+  let lo = Infinity, hi = -Infinity;
+  for (const c of list) { lo = Math.min(lo, c.score); hi = Math.max(hi, c.score); }
+  for (const c of list) c.weight = hi > lo ? (c.score - lo) / (hi - lo) : 1;
+  const idx = ["chosen", "chosen_idx", "choice", "candidate", "candidate_idx", "best"].map((k) => truck[k]).find((v) => Number.isInteger(v));
+  const chosen = truck.candidates === source && idx != null && idx >= 0 ? list.find((c) => c.index === idx) : null;
+  return { list, chosen: chosen ? chosen.pts : null, learned: truck.candidates === source };
+}
+
+function blendRoute(chosen, route, routeY, groundY) {
+  const out = chosen.map((p) => [p[0], p[1], groundY]);
+  if (!route) return out;
+  const [ex, ez] = chosen[chosen.length - 1];
+  let best = Infinity, k = -1;
+  for (let i = 0; i < route.length; i++) {
+    const d = Math.hypot(route[i][0] - ex, route[i][1] - ez);
+    if (d < best) { best = d; k = i; }
+  }
+  for (let i = k + 1; i < route.length; i++) out.push([route[i][0], route[i][1], routeY ? routeY[i] : groundY]);
+  return out;
 }
 
 class TileHud {
@@ -184,8 +227,12 @@ class TileHud {
     const status = truck ? truck.status : "idle";
     const engaged = ENGAGED.has(status) && !!(truck && truck.goal);
     const route = truck && Array.isArray(truck.route) && truck.route.length >= 2 ? truck.route : null;
+    const plan = plannerPaths(truck);
+    const forward = Math.abs(((meta.cam.yaw - pose.yaw + 540) % 360) - 180) < FORWARD_DEG;
+    const holding = engaged && (HOLD.has(status) || (plan.learned && !plan.chosen));
 
-    if (route) routePath(ego, route, truck.route_y, groundY, MAX_LEN + 20, this.path);
+    if (engaged && plan.chosen) routePath(ego, blendRoute(plan.chosen, route, truck.route_y, groundY), null, groundY, MAX_LEN + 20, this.path, 4);
+    else if (route) routePath(ego, route, truck.route_y, groundY, MAX_LEN + 20, this.path);
     else if (engaged) predictPath(ego, truck.goal, groundY, MAX_LEN + 20, this.path);
     else straightPath(ego, groundY, 9, this.path);
 
@@ -193,8 +240,8 @@ class TileHud {
     const objs = this.collectObjects(meta, t, cam, ego, engaged);
     const lead = objs.lead;
 
-    let tone = engaged ? (CAUTION.has(status) ? "amber" : "blue") : "grey";
-    let len = engaged ? MAX_LEN : 9;
+    let tone = engaged ? (CAUTION.has(status) || holding ? "amber" : "blue") : "grey";
+    let len = holding ? HOLD_LEN : engaged ? MAX_LEN : 9;
     let stopAt = null;
     if (engaged && lead && (lead.state === "warn" || lead.state === "stop")) {
       stopAt = Math.max(3, lead.along - lead.radius - 1.5);
@@ -202,10 +249,10 @@ class TileHud {
       tone = lead.state === "stop" ? "red" : "amber";
     }
 
-    if (full && engaged) this.drawCandidates(ctx, truck, cam, groundY, u);
+    if (forward && engaged) this.drawCandidates(ctx, plan, cam, groundY, full, u);
     buildRibbon(this.path, ego, cam, HALF_W, len, this.ribbon, 0.45);
-    this.drawRibbon(ctx, this.ribbon, tone, engaged, full, u, now, stopAt != null && stopAt <= len + 0.01);
-    if (engaged && truck.goal && !stopAt) this.drawGoal(ctx, cam, truck.goal, groundY, full, u, now);
+    if (forward) this.drawRibbon(ctx, this.ribbon, tone, engaged && !holding, full, u, now, stopAt != null && stopAt <= len + 0.01);
+    if (forward && engaged && !holding && truck.goal && !stopAt) this.drawGoal(ctx, cam, truck.goal, groundY, full, u, now);
     this.drawObjects(ctx, cam, objs.list, lead, full, u);
     this.drawDetections2D(ctx, vw, vh, full, u);
     this.hideLabels();
@@ -264,7 +311,7 @@ class TileHud {
     const n = rib.n;
     if (n < 2) return;
     const base = C[tone === "grey" ? "grey" : tone], hi = C[tone === "grey" ? "white" : tone + "Hi"];
-    const strength = engaged ? 1 : 0.35;
+    const strength = engaged ? 1 : tone === "grey" ? 0.35 : 0.75;
     const gx0 = rib.cx[0], gy0 = rib.cy[0], gx1 = rib.cx[n - 1], gy1 = rib.cy[n - 1];
     const ax = gx1 - gx0, ay = gy1 - gy0, al2 = ax * ax + ay * ay || 1;
     const len = rib.s[n - 1] || 1;
@@ -386,23 +433,20 @@ class TileHud {
     ctx.restore();
   }
 
-  drawCandidates(ctx, truck, cam, groundY, u) {
-    const sets = truck.candidates || truck.ghost_paths;
-    if (!Array.isArray(sets) || !sets.length) return;
+  drawCandidates(ctx, plan, cam, groundY, full, u) {
+    if (!plan.list.length) return;
     const pt = this.pt;
     ctx.save();
-    ctx.lineWidth = 1.25 * u;
-    ctx.strokeStyle = rgba(C.white, 0.22);
-    ctx.setLineDash([4 * u, 5 * u]);
-    for (const cand of sets) {
-      const pts = Array.isArray(cand) ? cand : cand && cand.points;
-      if (!Array.isArray(pts)) continue;
+    ctx.lineWidth = (full ? 1.25 : 0.9) * u;
+    ctx.lineJoin = "round";
+    ctx.lineCap = "round";
+    for (const c of plan.list) {
+      if (c.pts === plan.chosen) continue;
+      ctx.strokeStyle = rgba(C.white, (full ? 0.05 + 0.25 * c.weight : 0.04 + 0.12 * c.weight));
       ctx.beginPath();
       let started = false;
-      for (const p of pts) {
-        const y = p.length > 2 ? p[1] : groundY;
-        const z = p.length > 2 ? p[2] : p[1];
-        if (project(cam, p[0], y, z, pt) < NEAR) { started = false; continue; }
+      for (const p of c.pts) {
+        if (project(cam, p[0], p.length > 2 ? p[2] : groundY, p[1], pt) < NEAR) { started = false; continue; }
         started ? ctx.lineTo(pt[0], pt[1]) : ctx.moveTo(pt[0], pt[1]);
         started = true;
       }
@@ -410,6 +454,7 @@ class TileHud {
     }
     ctx.restore();
   }
+
 
   styleFor(o) {
     switch (o.state) {

@@ -509,7 +509,12 @@
 | Ground fallback | horizontal plane at state truck `y`, else `pose.y`, else `cam.y − 3.6` | `web/hud.js` |
 | Projection | pinhole, square pixels, `f = W/2 / tan(hfov/2)`, `R = Ry(yaw)·Rx(pitch)·Rz(roll)` | `web/hud_math.js` |
 | Sync | overlay is drawn when the video frame is drawn, with that frame's `cam`; actors interpolated between 10 Hz state snapshots at the frame's `t` | |
-| Path source | truck `route` (with `route_y`) if present, else kinematic prediction toward `goal`, else 9 m grey stub | |
+| Path source | chosen planner candidate (`candidates[chosen]`, also `chosen_idx`/`candidate`/`candidate_idx`/`best`) blended into `route` beyond its end; else `route` (with `route_y`); else kinematic prediction toward `goal`; else 9 m grey stub | |
+| Alternatives | other `candidates` (or `ghost_paths` without candidates) as thin faint lines, opacity from normalised score (`score` field or `scores[i]`) | |
+| Hold | status `holding`/`hold`/`blocked`, or `candidates` present with no chosen index: short amber stub | |
+| Hold stub (m) | 14 | `web/hud.js:HOLD_LEN` |
+| Front camera only | ribbon and candidates drawn when camera yaw is within the forward cone of truck yaw | |
+| Forward cone half-angle (deg) | 60 | `web/hud.js:FORWARD_DEG` |
 | Path length (m) | 80 | `web/hud.js:MAX_LEN` |
 | Ribbon half-width (m) | 2.65 | `web/hud.js:HALF_W` |
 | Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |

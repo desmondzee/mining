@@ -197,6 +197,15 @@ export function buildRibbon(path, ego, cam, halfWidth, maxLen, rib, smooth = 0) 
     L[i * 3 + 1] = tmp[1];
     L[i * 3 + 2] = dx * sy + dz * cy;
   }
+  for (let pass = 0; pass < 3; pass++) {
+    let px = L[0], pz = L[2];
+    for (let i = 1; i < n - 1; i++) {
+      const cx = L[i * 3], cz = L[i * 3 + 2];
+      L[i * 3] = (px + 2 * cx + L[(i + 1) * 3]) / 4;
+      L[i * 3 + 2] = (pz + 2 * cz + L[(i + 1) * 3 + 2]) / 4;
+      px = cx; pz = cz;
+    }
+  }
   if (smooth > 0 && rib.prevLen > 0) {
     const a = 1 - smooth;
     const m = Math.min(n, rib.prevLen);
