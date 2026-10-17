@@ -1,0 +1,29 @@
+{
+    "name": "MineSim.Splines.Editor",
+    "rootNamespace": "MineSim.EditorTools",
+    "references": [
+        "MineSim.Runtime",
+        "MineSim.Editor",
+        "Unity.Splines",
+        "Unity.Mathematics"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "MINESIM_SPLINES"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.splines",
+            "expression": "2.0.0",
+            "define": "MINESIM_SPLINES"
+        }
+    ],
+    "noEngineReferences": false
+}

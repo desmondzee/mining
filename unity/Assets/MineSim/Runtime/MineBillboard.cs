@@ -12,9 +12,13 @@ namespace MineSim
         public float maxScale = 6f;
 
         private Vector3 baseScale;
+        private bool hasBase;
         private Camera cam;
 
-        private void Awake() { baseScale = transform.localScale; }
+        /// <summary>Authored localScale (captured in Awake). Used by per-camera label facing (MineMultiViewLabels).</summary>
+        public Vector3 BaseScale => hasBase ? baseScale : transform.localScale;
+
+        private void Awake() { baseScale = transform.localScale; hasBase = true; }
 
         private void LateUpdate()
         {

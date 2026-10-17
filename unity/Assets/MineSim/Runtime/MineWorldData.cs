@@ -51,6 +51,21 @@ namespace MineSim
         public string frame = "";
     }
 
+    /// <summary>
+    /// world.json "scan_transform" (source "scan"): p_world = scale * (R @ p_gltf) + translation, with p_gltf a
+    /// visual.glb vertex in glTF scene space (Y up). <see cref="matrix"/> is that 4x4 (column vectors).
+    /// </summary>
+    [Serializable]
+    public class MineScanTransform
+    {
+        public bool present;
+        public float scale = 1f;
+        public Vector3 translation;
+        /// <summary>Full affine map glTF scene space -> contract/world space (column vectors).</summary>
+        public Matrix4x4 matrix = Matrix4x4.identity;
+        public string frame = "";
+    }
+
     [Serializable]
     public class MineHeightmapMeta
     {
@@ -83,6 +98,7 @@ namespace MineSim
         public Vector2 origin = new Vector2(-200, -200);
         public Dictionary<string, string> assets = new Dictionary<string, string>();
         public MineSplatTransform splatTransform = new MineSplatTransform();
+        public MineScanTransform scanTransform = new MineScanTransform();
         public List<MineSiteInfo> sites = new List<MineSiteInfo>();
         public List<MineJunctionInfo> junctions = new List<MineJunctionInfo>();
         public List<MineRoadInfo> roads = new List<MineRoadInfo>();
@@ -131,6 +147,43 @@ namespace MineSim
                 w.splatTransform.groundOffset = (float)MiniJson.Num(st, "ground_offset", 0);
                 w.splatTransform.rotationEulerDeg = V3(MiniJson.Arr(st, "rotation_euler_deg"), Vector3.zero);
                 w.splatTransform.frame = MiniJson.Str(st, "frame", "");
+            }
+
+            var sc = MiniJson.Obj(root, "scan_transform");
+            if (sc != null)
+            {
+                var t = w.scanTransform;
+                t.present = true;
+                t.scale = (float)MiniJson.Num(sc, "scale", 1);
+                t.translation = V3(MiniJson.Arr(sc, "translation"), Vector3.zero);
+                t.frame = MiniJson.Str(sc, "frame", "");
+                var rows = MiniJson.Arr(sc, "matrix");
+                if (rows != null && rows.Count >= 3)
+                {
+                    // row-major rows of a column-vector matrix: m[r, c] = rows[r][c]
+                    var m = Matrix4x4.identity;
+                    for (int r = 0; r < Mathf.Min(4, rows.Count); r++)
+                    {
+                        var row = MiniJson.Nums(rows[r]);
+                        if (row == null) continue;
+                        for (int c = 0; c < Mathf.Min(4, row.Length); c++) m[r, c] = (float)row[c];
+                    }
+                    t.matrix = m;
+                }
+                else
+                {
+                    // compose from scale, rotation_matrix (R) and translation
+                    var R = Matrix4x4.identity;
+                    var rm = MiniJson.Arr(sc, "rotation_matrix");
+                    if (rm != null)
+                        for (int r = 0; r < Mathf.Min(3, rm.Count); r++)
+                        {
+                            var row = MiniJson.Nums(rm[r]);
+                            if (row == null) continue;
+                            for (int c = 0; c < Mathf.Min(3, row.Length); c++) R[r, c] = (float)row[c];
+                        }
+                    t.matrix = Matrix4x4.Translate(t.translation) * R * Matrix4x4.Scale(Vector3.one * t.scale);
+                }
             }
 
             var sites = MiniJson.Arr(root, "sites");

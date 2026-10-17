@@ -1,13 +1,10 @@
 using UnityEngine;
-#if MINESIM_INPUTSYSTEM && ENABLE_INPUT_SYSTEM
-using UnityEngine.InputSystem;
-#endif
 
 namespace MineSim
 {
     /// <summary>
     /// Runtime hotkeys: L toggles all MineLabel objects, R toggles road LineRenderers.
-    /// Works with the Input System package (if installed + active) or the legacy Input Manager.
+    /// Uses MineInput: the Input System (optional MineSim.InputSystem assembly) or the legacy Input Manager.
     /// </summary>
     public class MineLabelToggle : MonoBehaviour
     {
@@ -38,20 +35,7 @@ namespace MineSim
 
         private static bool Pressed(KeyCode key)
         {
-            if (key == KeyCode.None) return false;
-#if MINESIM_INPUTSYSTEM && ENABLE_INPUT_SYSTEM
-            var kb = Keyboard.current;
-            if (kb != null && System.Enum.TryParse(key.ToString(), out Key k) && k != Key.None)
-            {
-                try { return kb[k].wasPressedThisFrame; }
-                catch (System.ArgumentOutOfRangeException) { return false; }
-            }
-            return false;
-#elif ENABLE_LEGACY_INPUT_MANAGER
-            return Input.GetKeyDown(key);
-#else
-            return false;
-#endif
+            return MineInput.GetKeyDown(key);
         }
     }
 }

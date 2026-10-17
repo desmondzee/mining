@@ -1,6 +1,6 @@
 // Tools/Mine Sim/Import World... : builds MineWorld_<id> from data/worlds/<id>/ (see CONTRACT.md).
 // Optional packages are detected via versionDefines in MineSim.Editor.asmdef:
-//   MINESIM_SPLINES (com.unity.splines), MINESIM_TMP (com.unity.ugui 2.x / com.unity.textmeshpro),
+//   TextMeshPro and Splines come through MineImporterHooks (optional assemblies under Editor/Integrations).
 //   MINESIM_GLTFAST (com.unity.cloud.gltfast / com.atteneder.gltfast).
 using System;
 using System.Collections.Generic;
@@ -12,9 +12,6 @@ using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.SceneManagement;
 using Object = UnityEngine.Object;
-#if MINESIM_SPLINES
-using UnityEngine.Splines;
-#endif
 
 namespace MineSim.EditorTools
 {
@@ -29,6 +26,10 @@ namespace MineSim.EditorTools
         public static float SiteLabelHeight = 5f;         // world-space text height (m) at reference distance
         public static float RoadLabelHeight = 3f;
         public static float JunctionLabelHeight = 2.5f;
+        /// <summary>Scan worlds (source "scan" / assets.visual): the scan mesh is the ground, so no Terrain by default.</summary>
+        public static bool BuildTerrainForScanWorlds = false;
+        /// <summary>Layer for the scan ground collider if it exists in Tags and Layers; otherwise Default.</summary>
+        public static string GroundLayerName = "MineGround";
 
         // ------------------------------------------------------------------ menu
         [MenuItem("Tools/Mine Sim/Import World...")]
@@ -72,6 +73,8 @@ namespace MineSim.EditorTools
             public Terrain terrain;
             public TerrainData td;
             public Material lineMat;
+            public Collider ground;     // scan worlds: ground MeshCollider (built before sites so GroundY can raycast it)
+            public bool isScan;
         }
 
         /// <summary>Import a world folder into the active scene. Returns the root GameObject (or null on failure).</summary>
@@ -122,10 +125,21 @@ namespace MineSim.EditorTools
 
                 CopyWorldJson(c, worldJson);
 
-                EditorUtility.DisplayProgressBar("Mine Sim", "Building terrain", 0.15f);
-                c.terrain = BuildTerrain(c, root.transform);
+                c.isScan = c.w.source == "scan" || c.w.Asset("visual") != null;
+                if (!c.isScan || BuildTerrainForScanWorlds)
+                {
+                    EditorUtility.DisplayProgressBar("Mine Sim", "Building terrain", 0.15f);
+                    c.terrain = BuildTerrain(c, root.transform);
+                }
                 c.td = c.terrain != null ? c.terrain.terrainData : null;
                 wr.terrain = c.terrain;
+
+                if (c.isScan)
+                {
+                    EditorUtility.DisplayProgressBar("Mine Sim", "Scan collider + visual mesh (can take a minute)", 0.3f);
+                    BuildScan(c, root.transform);
+                    wr.groundCollider = c.ground;
+                }
 
                 c.lineMat = LineMaterial(c);
 
@@ -143,7 +157,7 @@ namespace MineSim.EditorTools
                 BuildDesignSpec(c, root);
 
                 EditorUtility.DisplayProgressBar("Mine Sim", "Optional assets", 0.85f);
-                BuildCollider(c, root.transform);
+                if (!c.isScan) BuildCollider(c, root.transform);
                 BuildSplatNote(c, root.transform);
 
                 Undo.RegisterCreatedObjectUndo(root, "Import Mine World");
@@ -153,7 +167,7 @@ namespace MineSim.EditorTools
 
                 Debug.Log($"[MineSim] Imported world '{c.w.id}' ({c.w.name}) from {worldDir}: " +
                           $"{c.w.sites.Count} sites, {c.w.junctions.Count} junctions, {c.w.roads.Count} roads, " +
-                          $"terrain {(c.terrain != null ? "yes" : "no")}. Generated assets in {c.gen}");
+                          $"terrain {(c.terrain != null ? "yes" : "no")}, scan ground {(c.ground != null ? "yes" : "no")}. Generated assets in {c.gen}");
             }
             catch (Exception e)
             {
@@ -414,7 +428,13 @@ namespace MineSim.EditorTools
 
         private static float GroundY(Ctx c, float x, float z)
         {
-            if (c.terrain == null || c.td == null) return 0f;
+            if (c.terrain == null || c.td == null)
+            {
+                if (c.ground != null &&
+                    c.ground.Raycast(new Ray(new Vector3(x, 10000f, z), Vector3.down), out RaycastHit hit, 20000f))
+                    return hit.point.y;
+                return 0f;
+            }
             Vector3 tp = c.terrain.transform.position;
             Vector3 s = c.td.size;
             float nx = Mathf.Clamp01((x - tp.x) / s.x), nz = Mathf.Clamp01((z - tp.z) / s.z);
@@ -536,20 +556,11 @@ namespace MineSim.EditorTools
                 if (pts.Length > 0)
                     CreateLabel(go, r.name, mr.Midpoint - go.position + new Vector3(0, 5f, 0), new Color(1f, 0.92f, 0.5f), RoadLabelHeight, "road");
 
-#if MINESIM_SPLINES
-                if (pts.Length >= 2)
+                if (pts.Length >= 2 && MineImporterHooks.AddRoadSpline != null)
                 {
-                    var sc = go.gameObject.AddComponent<SplineContainer>();
-                    var spline = sc.Spline;
-                    if (spline != null)
-                    {
-                        spline.Clear();
-                        foreach (var p in pts)
-                            spline.Add(new BezierKnot(new Unity.Mathematics.float3(p.x, p.y, p.z)), TangentMode.AutoSmooth);
-                    }
-                    else Debug.LogWarning("[MineSim] SplineContainer had no default spline for road " + r.id);
+                    try { MineImporterHooks.AddRoadSpline(go.gameObject, pts); }
+                    catch (Exception e) { Debug.LogWarning("[MineSim] spline hook failed for road " + r.id + ": " + e.Message); }
                 }
-#endif
             }
         }
 
@@ -668,6 +679,163 @@ namespace MineSim.EditorTools
 #endif
         }
 
+        // ------------------------------------------------------------------ scan worlds (source "scan")
+        // Transform composition (see README "Scanned worlds"):
+        //   contract:  p_world = M * p_gltf, M = scan_transform.matrix = [s*R | t]  (glTF axes == contract axes == Unity axes)
+        //   glTFast:   u = F * p_gltf with F = diag(-1, 1, 1) (it negates X on import and re-winds triangles)
+        //   holder H:  p_world = H * u  =>  H = M * F^-1 = M * F = [s*R*F | t]
+        //   => localPosition = t, rotation/scale decomposed from s*R*F; for R = I that is rotation identity, scale (-s, s, s).
+        //   t is NOT mirrored: it is applied after F has been undone. The negative-determinant holder makes Unity invert
+        //   culling, which cancels glTFast's re-winding, so faces stay front-facing.
+        // collider.glb is already in world frame (contract), so it does NOT get scan_transform. It is read verbatim by
+        // MineGlbMeshReader (no glTFast, no flip) into a Mesh asset on an identity transform.
+        private static void BuildScan(Ctx c, Transform root)
+        {
+            var holder = NewChild(root, "Scan");
+
+            string colFile = c.w.Asset("collider");
+            if (colFile != null) c.ground = BuildScanCollider(c, holder, colFile);
+            else Debug.LogWarning("[MineSim] scan world without assets.collider: depth camera/lidar raycasts will hit nothing");
+
+            string visFile = c.w.Asset("visual");
+            if (visFile != null) BuildScanVisual(c, holder, visFile);
+        }
+
+        /// <summary>Copies a world file into Generated/&lt;id&gt;/ (skips when unchanged). Returns the asset path or null.</summary>
+        private static string CopyIntoProject(Ctx c, string file)
+        {
+            string src = Path.Combine(c.dir, file);
+            if (!File.Exists(src))
+            {
+                Debug.LogWarning("[MineSim] asset listed in world.json but missing: " + src);
+                return null;
+            }
+            string dst = c.gen + "/" + Path.GetFileName(file);
+            string full = Path.GetFullPath(dst);
+            var si = new FileInfo(src);
+            var di = new FileInfo(full);
+            bool changed = !di.Exists || di.Length != si.Length || di.LastWriteTimeUtc < si.LastWriteTimeUtc;
+            if (changed)
+            {
+                File.Copy(src, full, true);
+                AssetDatabase.ImportAsset(dst, ImportAssetOptions.ForceUpdate);
+            }
+            else AssetDatabase.ImportAsset(dst);
+            return dst;
+        }
+
+        private static Collider BuildScanCollider(Ctx c, Transform holder, string file)
+        {
+            string src = Path.Combine(c.dir, file);
+            if (!File.Exists(src))
+            {
+                Debug.LogError("[MineSim] scan collider missing: " + src);
+                return null;
+            }
+            CopyIntoProject(c, file);   // keep the .glb with the project, as requested; the Mesh asset below is what is used
+
+            if (!MineGlbMeshReader.TryRead(src, out var verts, out var tris, out string err))
+            {
+                Debug.LogError("[MineSim] could not read " + file + ": " + err);
+                return null;
+            }
+            var mesh = new Mesh { name = "ScanGround" };
+            mesh.indexFormat = verts.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
+            mesh.SetVertices(verts);
+            mesh.SetTriangles(tris, 0, true);
+            mesh.RecalculateNormals();
+            string meshPath = c.gen + "/ScanGround_collider.asset";
+            ReplaceAsset(mesh, meshPath);
+
+            var go = NewChild(holder, "Collider");   // identity: collider.glb is already in world frame
+            int layer = LayerMask.NameToLayer(GroundLayerName);
+            go.gameObject.layer = layer >= 0 ? layer : 0;
+            var mc = go.gameObject.AddComponent<MeshCollider>();
+            mc.sharedMesh = mesh;
+            Physics.SyncTransforms();
+            var note = go.gameObject.AddComponent<MineAssetNote>();
+            note.assetFile = file;
+            note.assetPath = meshPath;
+            note.note = "Invisible ground MeshCollider from " + file + " (" + verts.Count + " verts, " + (tris.Count / 3) + " tris), " +
+                        "read verbatim (already in world frame), identity transform, layer " +
+                        (layer >= 0 ? GroundLayerName : "Default (add a '" + GroundLayerName + "' layer and reimport to use it)") + ".";
+            Debug.Log("[MineSim] scan ground collider: " + verts.Count + " verts, " + (tris.Count / 3) + " tris, bounds " + mesh.bounds);
+            return mc;
+        }
+
+        private static void BuildScanVisual(Ctx c, Transform holder, string file)
+        {
+            var st = c.w.scanTransform;
+            if (!st.present) Debug.LogWarning("[MineSim] scan world has no scan_transform: visual placed with identity");
+#if MINESIM_GLTFAST
+            EditorUtility.DisplayProgressBar("Mine Sim", "Importing " + file + " with glTFast (large file)", 0.4f);
+            string dst = CopyIntoProject(c, file);
+            if (dst == null) return;
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(dst);
+            if (prefab == null)
+            {
+                Debug.LogError("[MineSim] glTFast did not produce a GameObject for " + dst);
+                return;
+            }
+            var vis = NewChild(holder, "Visual");
+            ApplyScanTransform(st, vis);
+            var inst = PrefabUtility.InstantiatePrefab(prefab, vis) as GameObject;
+            if (inst == null) inst = Object.Instantiate(prefab, vis, false);
+            inst.name = "visual_mesh";
+            inst.transform.localPosition = Vector3.zero;
+            inst.transform.localRotation = Quaternion.identity;
+            inst.transform.localScale = Vector3.one;
+            foreach (var col in inst.GetComponentsInChildren<Collider>(true)) col.enabled = false;   // the ground collider is the physics
+            var note = vis.gameObject.AddComponent<MineAssetNote>();
+            note.assetFile = file;
+            note.assetPath = dst;
+            note.note = "Scan visual (glTFast). Holder = scan_transform composed with glTFast's X flip: " +
+                        "localPosition = t, localRotation/localScale from s*R*diag(-1,1,1). See README 'Scanned worlds'.";
+            if (c.ground != null)
+            {
+                var vb = new Bounds();
+                bool any = false;
+                foreach (var r in inst.GetComponentsInChildren<Renderer>(true))
+                {
+                    if (!any) { vb = r.bounds; any = true; }
+                    else vb.Encapsulate(r.bounds);
+                }
+                if (any)
+                    Debug.Log("[MineSim] scan visual bounds " + vb + " vs collider bounds " + c.ground.bounds +
+                              " (they should overlap; if X is mirrored, negate Visual localScale.x)");
+            }
+#else
+            var holderNote = NewChild(holder, "Visual (needs glTFast)");
+            ApplyScanTransform(st, holderNote);
+            var note = holderNote.gameObject.AddComponent<MineAssetNote>();
+            note.assetFile = file;
+            note.assetPath = Path.Combine(c.dir, file);
+            note.note = "Scan world visual.glb needs glTFast (com.unity.cloud.gltfast). Install it and reimport. " +
+                        "This object already carries the scan_transform (glTFast X flip included).";
+            Debug.LogError("[MineSim] scan world '" + c.w.id + "' needs glTFast (com.unity.cloud.gltfast) to import " + file +
+                           ". The ground collider was still built.");
+#endif
+        }
+
+        /// <summary>Sets t so that a glTFast-imported child (X negated) lands at p_world = M * p_gltf.</summary>
+        private static void ApplyScanTransform(MineScanTransform st, Transform t)
+        {
+            Matrix4x4 m = st.present ? st.matrix : Matrix4x4.identity;
+            Matrix4x4 h = m * Matrix4x4.Scale(new Vector3(-1f, 1f, 1f));   // H = M * F
+            Vector3 c0 = h.GetColumn(0), c1 = h.GetColumn(1), c2 = h.GetColumn(2);
+            float sx = c0.magnitude, sy = c1.magnitude, sz = c2.magnitude;
+            if (h.determinant < 0f) sx = -sx;
+            if (Mathf.Abs(sx) < 1e-8f || sy < 1e-8f || sz < 1e-8f)
+            {
+                Debug.LogWarning("[MineSim] degenerate scan_transform matrix");
+                return;
+            }
+            Vector3 fwd = c2 / sz, up = c1 / sy;
+            t.localPosition = h.GetColumn(3);
+            t.localRotation = Quaternion.LookRotation(fwd, up);
+            t.localScale = new Vector3(sx, sy, sz);
+        }
+
         private static void ApplyMarbleTransform(Ctx c, Transform t)
         {
             var st = c.w.splatTransform;
@@ -715,20 +883,11 @@ namespace MineSim.EditorTools
             ml.text = text;
 
             bool made = false;
-#if MINESIM_TMP
-            if (TmpReady())
+            if (MineImporterHooks.CreateTextLabel != null)
             {
-                var tmp = go.AddComponent<TMPro.TextMeshPro>();
-                tmp.text = text;
-                tmp.fontSize = height * 10f;   // 3D TMP: ~fontSize/10 world units
-                tmp.alignment = TMPro.TextAlignmentOptions.Center;
-                tmp.color = color;
-                tmp.rectTransform.sizeDelta = new Vector2(Mathf.Max(20f, text.Length * height * 1.2f), height * 3f);
-                var r = go.GetComponent<MeshRenderer>();
-                if (r != null) r.shadowCastingMode = ShadowCastingMode.Off;
-                made = true;
+                try { made = MineImporterHooks.CreateTextLabel(go, text, color, height); }
+                catch (Exception e) { Debug.LogWarning("[MineSim] text label hook failed: " + e.Message); made = false; }
             }
-#endif
             if (!made)
             {
                 if (builtinFont == null) builtinFont = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
@@ -752,20 +911,6 @@ namespace MineSim.EditorTools
             go.AddComponent<MineBillboard>();
         }
 
-#if MINESIM_TMP
-        private static bool TmpReady()
-        {
-            try
-            {
-                var settings = Resources.Load<TMPro.TMP_Settings>("TMP Settings");
-                return settings != null && TMPro.TMP_Settings.defaultFontAsset != null;
-            }
-            catch (Exception)
-            {
-                return false;
-            }
-        }
-#endif
 
         // ------------------------------------------------------------------ materials
         private static bool IsSrp => GraphicsSettings.currentRenderPipeline != null;

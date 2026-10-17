@@ -2,10 +2,7 @@
     "name": "MineSim.Editor",
     "rootNamespace": "MineSim.EditorTools",
     "references": [
-        "MineSim.Runtime",
-        "Unity.TextMeshPro",
-        "Unity.Splines",
-        "Unity.Mathematics"
+        "MineSim.Runtime"
     ],
     "includePlatforms": [
         "Editor"
@@ -17,21 +14,6 @@
     "autoReferenced": true,
     "defineConstraints": [],
     "versionDefines": [
-        {
-            "name": "com.unity.splines",
-            "expression": "2.0.0",
-            "define": "MINESIM_SPLINES"
-        },
-        {
-            "name": "com.unity.textmeshpro",
-            "expression": "3.0.0",
-            "define": "MINESIM_TMP"
-        },
-        {
-            "name": "com.unity.ugui",
-            "expression": "2.0.0",
-            "define": "MINESIM_TMP"
-        },
         {
             "name": "com.unity.cloud.gltfast",
             "expression": "5.0.0",

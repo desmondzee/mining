@@ -1,0 +1,33 @@
+{
+    "name": "MineSim.TMP.Editor",
+    "rootNamespace": "MineSim.EditorTools",
+    "references": [
+        "MineSim.Runtime",
+        "MineSim.Editor",
+        "Unity.TextMeshPro"
+    ],
+    "includePlatforms": [
+        "Editor"
+    ],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [
+        "MINESIM_TMP"
+    ],
+    "versionDefines": [
+        {
+            "name": "com.unity.ugui",
+            "expression": "2.0.0",
+            "define": "MINESIM_TMP"
+        },
+        {
+            "name": "com.unity.textmeshpro",
+            "expression": "3.0.0",
+            "define": "MINESIM_TMP"
+        }
+    ],
+    "noEngineReferences": false
+}

@@ -93,6 +93,12 @@ def main():
     ap.add_argument("--cell", type=float, help="navgrid cell (m), default extent/200")
     ap.add_argument("--ref-pct", type=float, default=90.0, help="terrain height percentile mapped to y=0")
     ap.add_argument("--n-ore", type=int, default=3)
+    ap.add_argument("--layout", choices=["auto", "hillside", "pit"], default="auto",
+                    help="site layout rules: pit (ore on the floor, plant on the rim) or hillside (plant on the "
+                         "floor at the base of the face, ore on bench faces); auto detects")
+    ap.add_argument("--site", action="append", default=[], metavar="ID=X,Z",
+                    help="pin crusher/dump/parking/fuel near world [x, z] (repeatable), e.g. crusher=-88,12")
+    ap.add_argument("--steep-note", action="append", default=[], help="extra text for design.notes")
     ap.add_argument("--truck", default=MS.DEFAULT_TRUCK, choices=list(MS.TRUCKS))
     a = ap.parse_args()
     import trimesh
@@ -189,12 +195,43 @@ def main():
         from scipy.ndimage import binary_opening
         veg = binary_opening(veg, iterations=1)
         cost = np.where((cost > 0) & veg, cost * 2.0, cost)
-    sites = C.place_sites_auto(H, cost, origin, cell, n_ore=a.n_ore, avoid=veg)
+    fixed = {k: [float(v) for v in xz.split(",")] for k, xz in (p.split("=") for p in a.site)}
+    layout = C.detect_layout(H, hole, origin, cell) if a.layout == "auto" else a.layout
+    if layout == "hillside":
+        sites = C.place_sites_hillside(H, cost, origin, cell, n_ore=a.n_ore, avoid=veg, fixed=fixed)
+        ores = sorted([x for x in sites if x["type"] == "ore"], key=lambda x: x["pos"][1] * 0 + C.bilinear(
+            H, origin, cell, [x["pos"]], centred=True)[0])
+        order = ["crusher"] + [x["id"] for x in ores] + ["dump", "parking", "fuel"]
+        spur = {"fuel": "parking"}
+    else:
+        sites = C.place_sites_auto(H, cost, origin, cell, n_ore=a.n_ore, avoid=veg, fixed=fixed)
+        order, spur = None, {"fuel": "parking"}
     junctions, roads, road_mask = C.build_road_network(H, cost, origin, cell, sites, spec.road_width_m,
-                                                       spec.ramp_width_m, max_grade=0.10)
+                                                       spec.ramp_width_m, max_grade=0.10, order=order,
+                                                       spur_to=spur)
     cost = np.where(road_mask & (cost > 0), 1.0, cost)
     trucks = C.make_trucks(sites, roads, cost, origin, cell, spec.truck)
     grades = C.road_grade_stats(roads)
+    sustained = C.road_grade_stats(roads, window=50.0)
+    haul = C.haul_cycle_roads({"sites": sites, "roads": roads})
+    steep = [r for r in roads if sustained[r["id"]] > 10.0]
+    notes = ("Scanned terrain (" + layout + " layout): geometry is as-scanned. Roads are least-cost paths on the "
+             "navgrid with grades above 10% strongly penalised; widths follow the design truck spec.")
+    for r in steep:
+        notes += (f" EXCEPTION: {r['id']} ({r['name']}) is {sustained[r['id']]}% sustained over 50 m "
+                  f"(max {grades[r['id']]}% over 20 m); "
+                  + ("ON the haul cycle - terrain allows nothing flatter." if r["id"] in haul
+                     else "off the haul cycle."))
+    best = None
+    for o in [x for x in sites if x["type"] == "ore"]:
+        route = C.road_route(roads, o["id"], "crusher") or []
+        worst = max([sustained[r] for r in route] or [0.0])
+        if best is None or worst < best[2]:
+            best = (o, route, worst)
+    if best:
+        notes += (f" Main demo haul cycle: {best[0]['name']} ({best[0]['id']}) -> crusher via {', '.join(best[1])}, "
+                  f"max {best[2]}% sustained.")
+    notes += "".join(" " + t for t in a.steep_note)
 
     # ---- colours, outputs
     col = C.terrain_colors(H, sl, hole)
@@ -232,9 +269,9 @@ def main():
                    "ramp_width_m": spec.ramp_width_m, "ramp_grade_pct": spec.ramp_grade_pct,
                    "max_road_grade_pct": 10.0, "safety_berm_height_m": design["safety_berm_height_m"],
                    "references": design["references"],
-                   "notes": "Scanned terrain: pit geometry is as-scanned. Roads are least-cost paths on the navgrid "
-                            "with grades above 10% strongly penalised; widths follow the design truck spec.",
-                   "as_built": {"pit_depth_m": round(depth, 1), "road_max_grade_pct_20m": grades}},
+                   "notes": notes, "layout": layout, "haul_cycle_roads": sorted(haul),
+                   "as_built": {"pit_depth_m": round(depth, 1), "road_max_grade_pct_20m": grades,
+                                "road_sustained_grade_pct_50m": sustained}},
         "scan": {"pit_depth_m": round(depth, 1), "floor_y": round(floor, 2),
                  "max_y": round(float(H[~hole].max()), 2), "hole_fraction": round(float(hole.mean()), 3),
                  "tris": int(len(F)), "collider_tris": int(len(col_mesh.faces))},
@@ -244,8 +281,17 @@ def main():
     C.write_preview(out / "preview.png", H, col, cell, world)
     bad = C.check_reachability(world, nav)
     print(f"  sites: " + ", ".join(f"{x['id']}@{x['pos3']}" for x in sites))
-    print(f"  roads: {len(roads)} ({', '.join(r['id'] + f' {r['grade_pct']}%/max{grades[r['id']]}%' for r in roads)}),"
-          f" junctions {len(junctions)}")
+    print(f"  roads ({len(roads)}, junctions {len(junctions)}): id from->to len | mean / sustained50 / max20 grade")
+    for r in roads:
+        L = sum(np.hypot(p[0] - q[0], p[2] - q[2]) for p, q in zip(r["points"][:-1], r["points"][1:]))
+        print(f"    {r['id']:8s} {r['from']:>8s} -> {r['to']:<8s} {L:5.0f} m | {r['grade_pct']:4.1f} / "
+              f"{sustained[r['id']]:4.1f} / {grades[r['id']]:4.1f} %{'  HAUL' if r['id'] in haul else ''}")
+    by = {x["id"]: np.array(x["pos"]) for x in sites}
+    print(f"  fuel<->crusher {np.linalg.norm(by['fuel'] - by['crusher']):.0f} m, parking<->crusher "
+          f"{np.linalg.norm(by['parking'] - by['crusher']):.0f} m, fuel<->parking "
+          f"{np.linalg.norm(by['fuel'] - by['parking']):.0f} m, dump<->crusher {np.linalg.norm(by['dump'] - by['crusher']):.0f} m")
+    if steep:
+        print(f"  design.notes exceptions: {[r['id'] for r in steep]}")
     print(f"  road graph: {errs or 'OK'}; unreachable: {bad or 'none'}")
     print(f"wrote {out} in {time.time() - T0:.1f}s: {n}x{n} cells @ {cell:.2f} m, passable {(cost > 0).mean():.0%}")
 

@@ -15,6 +15,8 @@ namespace MineSim
         public Vector2 sizeM;
         public Vector2 origin;
         public Terrain terrain;
+        [Tooltip("Scan worlds: the invisible ground MeshCollider (used for GroundHeight when there is no Terrain)")]
+        public Collider groundCollider;
         public MineRoadGraph graph;
 
         public MineSiteMarker FindSite(string id)
@@ -37,10 +39,16 @@ namespace MineSim
             return null;
         }
 
-        /// <summary>Terrain height at world (x, z); falls back to 0 without a terrain.</summary>
+        /// <summary>Terrain (or scan ground collider) height at world (x, z); falls back to 0 without either.</summary>
         public float GroundHeight(float x, float z)
         {
-            if (terrain == null) return 0f;
+            if (terrain == null)
+            {
+                if (groundCollider != null &&
+                    groundCollider.Raycast(new Ray(new Vector3(x, 10000f, z), Vector3.down), out RaycastHit hit, 20000f))
+                    return hit.point.y;
+                return 0f;
+            }
             return terrain.SampleHeight(new Vector3(x, 0f, z)) + terrain.transform.position.y;
         }
     }
