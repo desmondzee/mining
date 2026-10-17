@@ -526,3 +526,40 @@
 | API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
 | Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
 | Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
+
+## Bucket material
+
+| Item | Value | Source |
+|---|---|---|
+| Code | `isaac/material/` (`model.py` numpy core, `stage.py` stage writer, `rig.py` dig cycle, `geometry.py` bucket/bed shapes) | |
+| API | `BucketMaterial(stage, excavators_cfg, trucks_cfg, config, sites)`, `update(dt, excavators=[(id, bucket_4x4, phase, phase_t)], trucks=[(id, truck_4x4, under_excavator_id)])`, `empty_truck(id)`, `load(id)`, `tonnes(id)`, `meshes()`, `aim_points()` | |
+| Bucket matrix | rigged GLB `bucket` node frame (pin origin, glTF axes) → Isaac world, column vectors (Gf row-major accepted) | |
+| Truck matrix | truck prim world matrix (`isaac_matrix(rotation, position)`), local X lateral, Y forward, Z up | |
+| Dig cycle | same keys and smootherstep as `envgen/preview/index.html` `EXC_KEYS`, `MineExcavatorRig.RigKeys` | `isaac/material/rig.py:KEYS` |
+| Cycle period (s) | 8 | `isaac/material/rig.py:CYCLE_S` |
+| Dump yaw (rad, toward cab side) | 1.7 | `isaac/material/rig.py:DUMP_YAW` |
+| Joint tracking / rest rate (1/s) | 8 / 2.5 | `isaac/material/rig.py:TRACK_RATE`, `REST_RATE` |
+| Phases (cycle fraction) | reach 0, dig 0.12, lift 0.30, swing 0.42, dump 0.60, return 0.78; `hold` when not digging | `isaac/material/rig.py:PHASES` |
+| Optional boom raise at the truck side (deg, compensated by bucket curl) | 0 (25 in the demo) | `isaac/material/rig.py:pose` |
+| Truck payload (t) | 55 | `isaac/material/model.py:Config.payload_t` |
+| Passes to full | 4 | `isaac/material/model.py:Config.passes` |
+| Loose density (t/m³) | 1.8 | `isaac/material/model.py:Config.density` |
+| Angle of repose (deg) | 37 | `isaac/material/model.py:Config.repose_deg` |
+| Bucket fill factor per pass | 0.92–1.06 | `isaac/material/model.py:Config.fill_lo`, `fill_hi` |
+| Breakout spill (fraction) | 0.02 | `isaac/material/model.py:Config.breakout` |
+| Pour time (s) | 0.9 | `isaac/material/model.py:Config.pour_s` |
+| Cohesion before flow (fraction of full) | 0.3 | `isaac/material/model.py:Config.cohesion` |
+| Particles per tonne | 14 | `isaac/material/model.py:Config.particles_per_t` |
+| Particle pool | 768 | `isaac/material/model.py:Config.max_particles` |
+| Face pile cap (passes) | 3 | `isaac/material/model.py:Config.pile_passes` |
+| Truck empty slide (s) | 2.5 | `isaac/material/model.py:Config.empty_s` |
+| Auto empty: site radius (m) / stop speed (m/s) / stopped for (s) | 30 / 0.3 / 1.5 | `isaac/material/model.py:Config` |
+| Bucket heap grid | 9 × 24 | `isaac/material/geometry.py:BUCKET_NX`, `BUCKET_NZ` |
+| Bed grid cell (m) | 0.2 | `isaac/material/geometry.py:BED_CELL` |
+| Bed heap above rim (m) | 0.9 | `isaac/material/geometry.py:BED_HEAP` |
+| Chunks riding per bucket / per bed | 8 / 14 | `isaac/material/model.py:CHUNKS_BUCKET`, `CHUNKS_BED` |
+| Bucket capacity | level plane (world up, or bucket up while digging) clipped to the cavity columns, heap dome when upright | |
+| Bed load | height field over the HD465 body floor (derived from the GLB dump body), 3 × 3 deposit kernel, repose relaxation, child prim of the truck | |
+| No truck under the bucket | material lands at the face pile; the next dig takes from the pile first | |
+| Colour | per excavator `colour`, or `face_colour(world_dir, x, z)` from `minimap.png` | |
+| Dust puffs (off by default) | 0 | `isaac/material/model.py:Config.max_dust` |
