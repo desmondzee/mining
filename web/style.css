@@ -384,6 +384,9 @@ h1 { font-size: 14px; font-weight: 600; letter-spacing: .06em; text-transform: u
 .lg-rock { background: #8a8a90; }
 .lg-ped { background: #ff7814; }
 .lg-path { width: 14px !important; height: 0 !important; border-top: 1.5px dashed #ff7814; border-radius: 0 !important; }
+.lg-road { width: 14px !important; height: 4px !important; background: #8a8a90; border-radius: 2px !important; }
+.lg-site { background: #4cc3a0; }
+.lg-route { width: 14px !important; height: 0 !important; border-top: 2px solid var(--accent); border-radius: 0 !important; }
 
 .truck-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
 
@@ -459,6 +462,9 @@ select.btn { padding-right: 28px; appearance: none; background-image: linear-gra
   .feed-bar.bottom { bottom: 8px; }
   .feed:not(.featured) .chip { height: 22px; padding: 0 8px; font-size: 10px; }
 }
+
+#trucks select { max-width: 120px; background: var(--panel); }
+#trucks select[hidden] { display: none; }
 
 @media (max-width: 900px) {
   .layout { grid-template-columns: minmax(0, 1fr); }

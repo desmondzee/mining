@@ -80,6 +80,9 @@ class SimBridge:
         self.world.obstacles = list(header.get("obstacles", []))
         self.world.paths = [list(p.get("points", [])) for p in header.get("paths", [])]
         self.world.truck_model = str(header.get("truck_model", ""))
+        self.world.set_network(
+            list(header.get("roads", [])), list(header.get("sites", [])), list(header.get("junctions", []))
+        )
         for truck_id in header.get("trucks", []):
             self.world.truck(truck_id)
         log.info("sim hello: trucks=%s cameras=%s", header.get("trucks"), self.world.cameras)
@@ -114,7 +117,8 @@ class SimBridge:
         action = policy.act(truck, rgb, depth, scan.points if scan else None)
         truck.throttle, truck.steer, truck.status = action.throttle, action.steer, action.status
         if action.status == "arrived":
-            truck.goal = None
+            truck.set_goal(None)
+            truck.status = "arrived"
         writer.write(
             encode({"type": "action", "truck": truck_id, "throttle": action.throttle, "steer": action.steer})
         )
