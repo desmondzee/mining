@@ -50,6 +50,8 @@
 | Frame rate | 15 | `unity/Assets/Scripts/SensorCamera.cs:fps` |
 | Horizontal FOV | 90 | `unity/Assets/Scripts/SensorCamera.cs:horizontalFov` |
 | Readback format | RGBA32, bottom-up (`flip: true`) | |
+| Transport encoding | JPEG in Unity, passed through to viewers unchanged | |
+| Unity JPEG quality | 80 | `unity/Assets/Scripts/SensorCamera.cs:jpegQuality` |
 | Depth width | 64 | `unity/Assets/Scripts/SensorCamera.cs:depthWidth` |
 | Depth height | 36 | `unity/Assets/Scripts/SensorCamera.cs:depthHeight` |
 | Depth range (m) | 100 | `unity/Assets/Scripts/SensorCamera.cs:depthRange` |
@@ -207,7 +209,7 @@
 | Message | Direction | Header | Payload |
 |---|---|---|---|
 | `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]` | none |
-| `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | RGB(A) bytes, then depth float32 |
+| `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels,format,bytes}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | `format` raw: RGB(A) `w·h·channels` bytes; `format` jpeg: `bytes` JPEG bytes; then depth float32 |
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `pose{x,z,yaw}` | `points` × 3 float32 |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |

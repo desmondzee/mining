@@ -1,5 +1,6 @@
 using Unity.Collections;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 
 [RequireComponent(typeof(Camera))]
@@ -14,6 +15,7 @@ public class SensorCamera : MonoBehaviour
     public float depthRange = 100f;
     public LayerMask depthMask = ~0;
     public bool flipRows = true;
+    public int jpegQuality = 80;
 
     Camera cam;
     float nextCapture;
@@ -54,10 +56,23 @@ public class SensorCamera : MonoBehaviour
             pending = false;
             if (req.hasError) return;
             var rgb = req.GetData<byte>();
+            byte[] image;
+            if (jpegQuality > 0)
+            {
+                using var jpeg = ImageConversion.EncodeNativeArrayToJPG(rgb, GraphicsFormat.R8G8B8A8_UNorm, (uint)width, (uint)height, 0, jpegQuality);
+                image = jpeg.ToArray();
+                header.rgb.format = "jpeg";
+                header.rgb.flip = false;
+                header.rgb.bytes = image.Length;
+            }
+            else
+            {
+                image = rgb.ToArray();
+            }
             int depthBytes = depth != null ? depth.Length * 4 : 0;
-            var payload = new byte[rgb.Length + depthBytes];
-            NativeArray<byte>.Copy(rgb, payload, rgb.Length);
-            if (depth != null) System.Buffer.BlockCopy(depth, 0, payload, rgb.Length, depthBytes);
+            var payload = new byte[image.Length + depthBytes];
+            System.Buffer.BlockCopy(image, 0, payload, 0, image.Length);
+            if (depth != null) System.Buffer.BlockCopy(depth, 0, payload, image.Length, depthBytes);
             client.Send(BrainProtocol.Encode(JsonUtility.ToJson(header), payload));
         });
     }

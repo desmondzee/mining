@@ -1,8 +1,10 @@
 import asyncio
+import io
 import json
 import struct
 
 import numpy as np
+from PIL import Image
 
 PREFIX = struct.Struct("<II")
 MAX_HEADER = 64 * 1024
@@ -55,13 +57,14 @@ def decode_lidar(header: dict, payload: bytes) -> np.ndarray:
     return np.frombuffer(payload, "<f4").reshape(n, 3)
 
 
-def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray | None]:
+def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray | None, bytes | None]:
     rgb_meta = header["rgb"]
     w, h = rgb_meta["w"], rgb_meta["h"]
+    jpeg = rgb_meta.get("format") == "jpeg"
     channels = rgb_meta.get("channels", 3)
-    if channels not in (3, 4):
+    if not jpeg and channels not in (3, 4):
         raise ProtocolError(f"unsupported channel count {channels}")
-    rgb_len = w * h * channels
+    rgb_len = rgb_meta["bytes"] if jpeg else w * h * channels
     depth_meta = header.get("depth")
     if depth_meta and not (depth_meta.get("w") and depth_meta.get("h")):
         depth_meta = None
@@ -69,11 +72,16 @@ def decode_frame(header: dict, payload: bytes) -> tuple[np.ndarray, np.ndarray |
     if len(payload) != rgb_len + depth_len:
         raise ProtocolError(f"frame payload is {len(payload)} bytes, expected {rgb_len + depth_len}")
 
-    rgb = np.frombuffer(payload, np.uint8, rgb_len).reshape(h, w, channels)[..., :3]
-    if rgb_meta.get("flip"):
-        rgb = rgb[::-1]
+    if jpeg:
+        encoded = payload[:rgb_len]
+        rgb = np.asarray(Image.open(io.BytesIO(encoded)).convert("RGB"))
+    else:
+        encoded = None
+        rgb = np.frombuffer(payload, np.uint8, rgb_len).reshape(h, w, channels)[..., :3]
+        if rgb_meta.get("flip"):
+            rgb = rgb[::-1]
 
     depth = None
     if depth_meta:
         depth = np.frombuffer(payload, "<f4", offset=rgb_len).reshape(depth_meta["h"], depth_meta["w"])
-    return rgb, depth
+    return rgb, depth, encoded

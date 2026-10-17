@@ -4,7 +4,7 @@ using System.Text;
 public static class BrainProtocol
 {
     [Serializable] public class Size { public int w; public int h; }
-    [Serializable] public class RgbMeta { public int w; public int h; public bool flip; public int channels = 4; }
+    [Serializable] public class RgbMeta { public int w; public int h; public bool flip; public int channels = 4; public string format = "raw"; public int bytes; }
     [Serializable] public class Pose { public float x; public float z; public float yaw; }
 
     [Serializable]

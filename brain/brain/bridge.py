@@ -90,8 +90,9 @@ class SimBridge:
         await self.lidar.publish(truck_id, lidar_message(truck_id, scan))
 
     async def _on_frame(self, header: dict, payload: bytes, writer: asyncio.StreamWriter) -> None:
-        rgb, depth = decode_frame(header, payload)
-        jpeg = await asyncio.to_thread(encode_jpeg, rgb)
+        rgb, depth, jpeg = decode_frame(header, payload)
+        if jpeg is None:
+            jpeg = await asyncio.to_thread(encode_jpeg, rgb)
         await self.video.publish(header["camera"], jpeg)
 
         truck_id = header.get("truck")
