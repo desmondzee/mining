@@ -17,6 +17,8 @@ class View:
     height: int = 720
     hfov: float = 70.0
     truck: str = ""
+    excavator: str = ""
+    azimuth: float = 0.0
     distance: float = 30.0
     elevation: float = 18.0
     target_height: float = 2.0
@@ -51,6 +53,13 @@ def view_pose(view: View, sim, dt: float) -> tuple[np.ndarray, np.ndarray]:
         ground = sim.height(cx, cz)
         p = np.array([cx + view.radius * math.sin(a), ground + view.position[1], cz + view.radius * math.cos(a)])
         return p, look(p, [cx, ground, cz])
+    if view.mode == "excavator":
+        box = next((b for b in sim.excavators if b.id == view.excavator), sim.excavators[0])
+        base = np.array([box.x, box.y, box.z])
+        e = math.radians(view.elevation)
+        offset = yaw_matrix(sim.excavator_yaw(box) + view.azimuth) @ np.array([0.0, math.sin(e), math.cos(e)]) * view.distance
+        p = base + offset
+        return p, look(p, base + [0.0, view.target_height, 0.0])
     truck = next((t for t in sim.trucks if t.id == view.truck), sim.trucks[0])
     base = np.array([truck.x, truck.y, truck.z])
     e = math.radians(view.elevation)
