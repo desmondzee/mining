@@ -88,8 +88,10 @@ def quarry_app():
 
     world_dir = Path(__file__).resolve().parents[2] / "data" / "worlds" / "quarry"
     app = create_app(sim_port=None, web_dir=None, world_dir=world_dir)
-    q = FakeQuarry(3, world=load_world(world_dir))
+    world = load_world(world_dir)
+    q = FakeQuarry(3, world=world)
     app.state.bridge._on_hello(q.hello())
+    app.state.sites = {s["id"]: [s["x"], s["z"]] for s in world["sites"]}
     for t in q.trucks:
         truck = app.state.world.truck(t.id)
         truck.x, truck.z, truck.yaw = t.x, t.z, t.yaw
@@ -101,7 +103,8 @@ def test_site_goal_routes_over_roads():
     r = client.post("/api/trucks/truck-0/goal", json={"site": "crusher"})
     body = r.json()
     assert r.status_code == 200 and body["goal_site"] == "crusher"
-    assert body["goal"] == [-159.86, 22.84] and body["route"][-1] == [-159.86, 22.84]
+    crusher = app.state.sites["crusher"]
+    assert body["goal"] == crusher and body["route"][-1] == crusher
     assert len(body["route"]) > 20
     assert client.post("/api/trucks/truck-0/goal", json={"site": "nope"}).status_code == 404
     assert client.post("/api/trucks/truck-0/goal", json={}).status_code == 422
@@ -113,9 +116,10 @@ def test_site_goal_routes_over_roads():
 
 
 def test_xy_goal_snaps_to_nearest_node():
-    _, client = quarry_app()
-    body = client.post("/api/trucks/truck-1/goal", json={"x": 80, "z": 50}).json()
-    assert body["goal_site"] == "ore_2" and body["goal"] == [81.56, 57.64]
+    app, client = quarry_app()
+    ox, oz = app.state.sites["ore_2"]
+    body = client.post("/api/trucks/truck-1/goal", json={"x": ox + 3, "z": oz - 4}).json()
+    assert body["goal_site"] == "ore_2" and body["goal"] == [ox, oz]
 
 
 def test_xy_goal_without_roads_is_straight_line():
