@@ -18,3 +18,13 @@ services:
     command: ["fakesim", "--host", "brain", "--port", "9000", "--trucks", "3"]
     depends_on: [brain]
     restart: unless-stopped
+
+  tunnel:
+    profiles: ["public"]
+    image: cloudflare/cloudflared:2026.9.3
+    command: ["tunnel", "--no-autoupdate", "run"]
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?set TUNNEL_TOKEN in .env}
+    network_mode: host
+    depends_on: [brain]
+    restart: unless-stopped

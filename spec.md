@@ -35,6 +35,9 @@
 | Sim TCP port | 9000 | `unity/Assets/Scripts/BrainClient.cs:port` |
 | Host binding | 127.0.0.1 | |
 | Remote access | `ssh -N -L 8080:127.0.0.1:8080 watson` | |
+| Public access | Cloudflare Tunnel, compose profile `public`, `cloudflared` 2026.9.3, token `TUNNEL_TOKEN` in gitignored `.env` | |
+| Tunnel origin | `http://localhost:8080` (public hostname set in Cloudflare dashboard) | |
+| Access control | Cloudflare Access policy: allowed emails (one-time PIN and/or Google login) | |
 | Editor → remote brain | `ssh -N -L 9000:127.0.0.1:9000 watson` | |
 
 ## World
