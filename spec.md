@@ -505,7 +505,7 @@
 | Sim → brain camera pose | optional `frame` header field `cam{x,y,z,yaw,pitch,roll,hfov}`: camera world position (m, Unity axes) and Unity Euler angles (deg): `yaw` = `eulerAngles.y` (0 = +z, clockwise), `pitch` = `eulerAngles.x` in −180..180 (positive looks down), `roll` = `eulerAngles.z` in −180..180, `hfov` horizontal FOV | `unity/Assets/Scripts/SensorCamera.cs` |
 | Truck ground height | optional `pose.y` in `frame` (truck transform y) | |
 | Fake sim camera | truck position (renderer origin), y = ground + `CAM_HEIGHT` (ground from the nav-grid terrain in `--world` mode, else 0; `pose.y` = ground), pitch 0, roll 0, hfov `FOV_DEG`; pinhole columns `atan((col + 0.5 − W/2) / f)` | `brain/brain/fakesim.py` |
-| Frame metadata | JSON `{t, cam, pose, speed, truck}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit | `brain/brain/hud.py` |
+| Frame metadata | JSON `{t, cam, pose, speed, truck, det}`, `t` = brain wall clock (s) when the frame arrived; travels with the same frame through the encoder, one per access unit; `det` on truck frames when the detector is on (see Detector) | `brain/brain/hud.py` |
 | State additions | `t` (brain wall clock, s); with a heightmap: `y` on trucks, pedestrians, obstacles and `route_y` (one height per `route` point) | `brain/brain/hud.py` |
 | Heightmap | `WORLD_DIR/heightmap.raw` + `heightmap_meta.json` (uint16, row 0 = min z, col 0 = min x), bilinear; none when `WORLD_DIR` unset or files missing | |
 | Ground fallback | horizontal plane at state truck `y`, else `pose.y`, else `cam.y − 3.6` | `web/hud.js` |
@@ -522,7 +522,39 @@
 | Ribbon colour | blue engaged, amber avoiding/holding or object within 20 m clear, red within 8 m clear (ribbon ends at the object) | |
 | Stop clearance (m) | 8 | `web/hud.js:STOP_CLEAR` |
 | Warn clearance (m) | 20 | `web/hud.js:WARN_CLEAR` |
-| Objects | ground truth: pedestrians (0.6 × 1.8 m capsule), other trucks (5.3 × 4.5 × 9.35 m box), obstacles (2r box); `hud.setDetections(camera, list)` adds 3D `{x,z,size,kind}` or 2D `{box:[x0,y0,x1,y1] normalised, cls, conf}` detections | |
-| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
+| Objects | thin axis-aligned rectangle per object, label `class distance` above the top-left corner (confidence added when focused); white, amber within warn clearance, red within stop clearance (detections: box spanning the centre 24 % of the frame) | `web/hud.js` |
+| Detections | `meta.det.items` → `hud.setDetections(camera, items)`; 2D `{box:[x0,y0,x1,y1] normalised, cls, conf, dist}` or 3D `{x,z,size,kind}`; expire after the TTL | `web/hud.js` |
+| Detection TTL (ms) | 1000 | `web/hud.js:DETECTION_TTL_MS` |
+| Ground truth boxes | pedestrians (0.6 × 1.8 m), other trucks (5.3 × 4.5 × 9.35 m), obstacles (2r) projected to their image bounds; drawn when the palette toggle "Show ground truth boxes" is on (stored in `localStorage`) or the camera has no live detections | |
+| Label min box height (px) | 14 | `web/hud.js:LABEL_MIN_H` |
+| API | `createHud({focusOnClick})`, `attach(container, cameraId)`, `frame(cameraId, meta)`, `setState(state)`, `setDetections(cameraId, list)`, `toggleGroundTruth()`, `setFocused(cameraId)`, `setDetail(cameraId)` | `web/hud.js` |
 | Detail level | full HUD when focused, `setDetail`, or container at least the detail width | |
 | Detail width (px) | 960 | `web/hud.js:DETAIL_WIDTH` |
+
+## Detector
+
+| Item | Value | Source |
+|---|---|---|
+| Model | YOLO detector as ONNX at `DETECTOR_MODEL` (compose default `/app/models/yolo11n.onnx`, `./models` mounted read-only); off when unset or missing | `brain/brain/detector.py` |
+| Team model | `uv run tools/fetch_detector.py` downloads the first `pi-hack-mining` Hugging Face model (`--repo`, `--file` to choose; `.pt` exported to ONNX) into `models/` | `tools/fetch_detector.py` |
+| Placeholder | `uv run tools/fetch_detector.py --placeholder`: Ultralytics YOLO11n COCO (2.6 M params), exported at 384 × 640 | `tools/fetch_detector.py` |
+| Classes | from ONNX metadata `names`; `DETECTOR_CLASSES` comma list filters; COCO models keep person, bicycle, car, motorcycle, bus, truck | `brain/brain/detector.py` |
+| Output layouts | `(1, 4+nc, N)` YOLOv8/11, `(1, N, 5+nc)` YOLOv5, `(1, N, 6)` end-to-end (metadata `end2end`) | `brain/brain/detector.py` |
+| Input height (px) | 384 | `brain/brain/detector.py:INPUT_H` |
+| Input width (px) | 640 | `brain/brain/detector.py:INPUT_W` |
+| Preprocess | letterbox (bilinear resize, centred pad), RGB, /255, NCHW; fixed model input shape wins over the defaults | |
+| Pad value | 114 | `brain/brain/detector.py:PAD_VALUE` |
+| Confidence threshold | 0.35 | `brain/brain/detector.py:CONF` |
+| NMS IoU | 0.5 | `brain/brain/detector.py:IOU` |
+| Max detections | 50 | `brain/brain/detector.py:MAX_DET` |
+| Runtime | onnxruntime (extra `detector`), providers from `DETECTOR_PROVIDERS` else all available (CPU on watson) | |
+| Intra-op threads | 4 | `brain/brain/detector.py:THREADS` |
+| Worker threads | 2 | `brain/brain/detector.py:WORKERS` |
+| Scheduling | one pending frame per camera (newer replaces older), workers take the oldest pending camera; truck cameras only | |
+| Meta | `det: {t, items:[{box, cls, conf, dist}]}`; `t` = arrival time of the frame the boxes came from; latest result per camera carried on every later frame | `brain/brain/bridge.py` |
+| Max carry age (s) | 1 | `brain/brain/detector.py:MAX_AGE_S` |
+| Box | normalised to the frame, 4 decimals | |
+| Distance | depth at the box bottom band (bottom 20 %, centre half of the width), 20th percentile, × `hypot(1, (cx − W/2)/f)` | `brain/brain/detector.py` |
+| Depth percentile | 20 | `brain/brain/detector.py:DEPTH_PERCENTILE` |
+| Stats | `GET /api/detector` → `{enabled, model, input, classes, runs, dropped, infer_ms}` | `brain/brain/app.py` |
+| Throughput (YOLO11n, watson CPU, Isaac running) | 21 ms single stream at 4 threads; 56 inferences/s with 2 workers × 4 threads (target 45) | |
