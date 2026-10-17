@@ -49,9 +49,8 @@ TRUCK_HALF_W = 2.12
 
 def body_over_edge(nav, truck: Truck) -> bool:
     yaw = math.radians(truck.yaw)
-    rx, rz = math.cos(yaw) * TRUCK_HALF_W, -math.sin(yaw) * TRUCK_HALF_W
-    xs = np.array([truck.x, truck.x + rx, truck.x - rx])
-    zs = np.array([truck.z, truck.z + rz, truck.z - rz])
+    offs = np.linspace(-TRUCK_HALF_W, TRUCK_HALF_W, 9)
+    xs, zs = truck.x + math.cos(yaw) * offs, truck.z - math.sin(yaw) * offs
     return bool(nav.blocked_at(xs, zs).any())
 
 

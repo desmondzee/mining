@@ -134,9 +134,16 @@ def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.n
 
 
 def off_road(nav: NavMap, x, z, yaw, half_w: float) -> np.ndarray:
-    """True where the centre or either side of the truck at (x, z, yaw) is on a blocked cell."""
-    rx, rz = np.cos(yaw) * half_w, -np.sin(yaw) * half_w
-    return nav.blocked_at(x, z) | nav.blocked_at(x + rx, z + rz) | nav.blocked_at(x - rx, z - rz)
+    """True where any point across the truck width at (x, z, yaw) is on a blocked cell.
+
+    Samples are at most half a cell apart, so a one-cell wall between the centre and a side is not missed.
+    """
+    n = int(math.ceil(2 * half_w / (nav.cell / 2))) + 1
+    rx, rz = np.cos(yaw), -np.sin(yaw)
+    out = np.zeros(np.shape(x), dtype=bool)
+    for off in np.linspace(-half_w, half_w, n):
+        out |= nav.blocked_at(x + rx * off, z + rz * off)
+    return out
 
 
 def static_obstacles(seen: dict[tuple[int, int], float], obstacles: np.ndarray, now: float) -> np.ndarray:
