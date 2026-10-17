@@ -51,3 +51,4 @@ deploy/secrets/*
 !deploy/secrets/README.md
 .venv*/
 unity/_stale_unreadable/
+assets/models/**/*_source.glb
