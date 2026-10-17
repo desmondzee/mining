@@ -195,3 +195,12 @@ def test_reset_api_without_sim():
     r = TestClient(app).post("/api/reset")
     assert r.json() == {"trucks": ["truck-0"], "sim": False}
     assert app.state.world.trucks["truck-0"].goal is None
+
+
+def test_web_files_are_not_cached():
+    from fastapi.testclient import TestClient
+    from brain.app import create_app
+
+    with TestClient(create_app()) as c:
+        r = c.get("/app.js")
+        assert r.status_code == 200 and r.headers["cache-control"] == "no-store"

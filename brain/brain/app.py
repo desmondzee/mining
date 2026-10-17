@@ -41,6 +41,13 @@ class View(BaseModel):
     box: list[float]
 
 
+
+class NoStoreStatic(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["cache-control"] = "no-store"
+        return response
+
 def check_box(box: list[float]) -> list[float]:
     if len(box) != 4 or not all(math.isfinite(v) for v in box):
         raise HTTPException(422, "box must be [x0, y0, x1, y1]")
@@ -280,7 +287,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
 
     radio_proxy.mount(app)
     if web_dir and web_dir.is_dir():
-        app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+        app.mount("/", NoStoreStatic(directory=web_dir, html=True), name="web")
 
     return app
 
