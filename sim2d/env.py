@@ -342,10 +342,16 @@ class DriveEnv:
         return True
 
     def _off_road(self, x, z, yaw, half_w: float) -> np.ndarray:
-        """True where the centre or either side of the truck at (x, z, yaw) is on a blocked cell."""
-        rx, rz = np.cos(yaw) * half_w, -np.sin(yaw) * half_w
+        """True where any point across the truck width at (x, z, yaw) is on a blocked cell.
+
+        Points are at most half a cell apart, so a one-cell blocked strip cannot sit between two of them.
+        """
         w = self.world
-        return w.blocked_at(x, z) | w.blocked_at(x + rx, z + rz) | w.blocked_at(x - rx, z - rz)
+        rx, rz = np.cos(yaw), -np.sin(yaw)
+        out = np.zeros(np.shape(x), dtype=bool)
+        for off in np.linspace(-half_w, half_w, int(math.ceil(2 * half_w / (w.cell / 2))) + 1):
+            out |= w.blocked_at(x + rx * off, z + rz * off)
+        return out
 
     def _nearest_idx(self) -> int:
         lo = max(0, self.route_idx - 5)
