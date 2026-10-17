@@ -106,10 +106,23 @@ if (world.assets.surround) {
 }
 
 // --- roads as glowing amber ribbons, sites as beacons with labels
-const roadMat = new THREE.LineBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.9 });
+// roads at their real design width (world.json width_m), as ribbons draped just above the terrain
+const roadMat = new THREE.MeshBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.38, depthWrite: false,
+  polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide });
+const edgeMat = new THREE.LineBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.85 });
 for (const r of world.roads || []) {
-  const pts = r.points.map(p => new THREE.Vector3(p[0], p[1] + 0.6, p[2]));
-  scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), roadMat));
+  const P = r.points.map(p => new THREE.Vector3(p[0], p[1] + 0.35, p[2])), w = (r.width_m || 15) / 2;
+  const pos = [], idx = [], left = [], right = [];
+  P.forEach((p, k) => {
+    const a = P[Math.max(0, k - 1)], b = P[Math.min(P.length - 1, k + 1)];
+    const dir = new THREE.Vector3(b.x - a.x, 0, b.z - a.z).normalize(), n = new THREE.Vector3(-dir.z, 0, dir.x).multiplyScalar(w);
+    const L = p.clone().add(n), R = p.clone().sub(n); left.push(L); right.push(R);
+    pos.push(L.x, L.y, L.z, R.x, R.y, R.z);
+    if (k) idx.push(2*k-2, 2*k-1, 2*k, 2*k-1, 2*k+1, 2*k);
+  });
+  const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
+  const ribbon = new THREE.Mesh(g, roadMat); ribbon.renderOrder = 2; scene.add(ribbon);
+  for (const edge of [left, right]) scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(edge), edgeMat));
 }
 const siteColor = { ore: 0x3fd0b0, crusher: 0xe5484d, dump: 0x9b6bd6, parking: 0x4a8fe0, fuel: 0xf2b63c };
 const labels = [];

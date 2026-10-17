@@ -21,7 +21,7 @@ namespace MineSim.EditorTools
         private const string GeneratedRoot = "Assets/MineSim/Generated";
 
         // Tweakables
-        public static float RoadLineWidthScale = 0.35f;   // LineRenderer width = width_m * this
+        public static float RoadLineWidthScale = 1.0f;    // LineRenderer width = width_m * this (1 = real design width)
         public static float RoadLineLift = 0.4f;          // metres above the centreline
         public static float SiteLabelHeight = 5f;         // world-space text height (m) at reference distance
         public static float RoadLabelHeight = 3f;
