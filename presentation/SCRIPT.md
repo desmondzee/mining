@@ -1,4 +1,4 @@
-# R² pitch script (about 3 min of slides + 2–3 min live demo)
+# R² pitch script (about 3.5 min of slides + 2–3 min live demo)
 
 **Before you start:** the deck is open on slide 1. In other tabs: `localhost:8090/view` (aerial view) and `localhost:8090` (radio). RELEASE has been pressed so everything is idle. Physical sensor pod on the table.
 
@@ -38,7 +38,15 @@ And it keeps learning: every truck's camera and lidar footage flows back into th
 The vision policy trains there. On site, ElevenLabs transcribes the radio, an LLM turns speech into goals, and the machines reply.
 Let me show you."
 
-**8 · Live demo: Give the quarry an order (2–3 min)**
+**8 · Built today: Software running, hardware-ready (35 s)**
+"Everything you're about to see, we built today.
+A pipeline that turns a drone scan into a sim world in seconds, with roads, berms, grades, loading points and design checks.
+It runs in NVIDIA Isaac Sim and Unity, with RTX cameras, lidar, rigged excavators, tipping truck beds and a keep-in-bounds safety layer.
+A voice radio on ElevenLabs and an LLM, where every machine talks back. A live 3D ops view, and a Gym environment to train the policy.
+And it's built for the physical layer. The sim sensors match the pod's spec: a 90-degree camera at 640 by 360, and lidar at 120 by 30 degrees, 10 hertz, 100 metres. The sim and a real truck speak the same protocol of camera frames, lidar and actions. The policy outputs throttle and steer, ready for a drive-by-wire kit.
+Next is the pod hardware, drive-by-wire, and the ISO 17757 safety case."
+
+**9 · Live demo: Give the quarry an order (2–3 min)**
 *(Switch to `/view`, then hand a judge the laptop with the radio tab, or say it yourself. Hold Space to talk.)*
 - "This is a real limestone quarry, drone-scanned. Three Komatsu haul trucks on the ready line, three excavators at the faces." *(Drag or zoom the view, then press `2` for the cab and excavator cameras.)*
 - Judge: **"Excavator one, start digging."** The excavator digs at the face and replies in its own voice.
