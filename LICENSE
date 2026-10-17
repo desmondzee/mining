@@ -1,0 +1,34 @@
+R² · Rocky Robotics — Proprietary License
+
+Copyright (c) 2026 the R² · Rocky Robotics team and contributors. All rights reserved.
+
+This repository, including its source code, data, generated worlds, models
+derived by the team, documentation, designs, branding (the "R²" name, mark and
+"Mining autonomy" tagline), business materials and pitch content (together, the
+"Software"), is confidential and proprietary.
+
+1. No license is granted. Except as expressly permitted in writing by the
+   copyright holders, no person may use, copy, modify, merge, publish,
+   distribute, sublicense, sell, deploy, host, operate as a service, or create
+   derivative works of the Software, in whole or in part.
+
+2. Evaluation only. Viewing the Software for the sole purpose of evaluating it
+   (for example as a hackathon judge or prospective partner) is permitted. This
+   permission grants no right to use, reproduce or commercialise the Software
+   or the systems and methods it implements.
+
+3. Commercial use, deployment on any mine, quarry or other site, use in any
+   product or service, and use to train machine-learning models require a
+   separate written agreement with the copyright holders.
+
+4. Third-party components keep their own licenses, which take precedence for
+   those components: see assets/models/CREDITS.md (CC-BY-4.0 models and the
+   quarry scan, attribution required) and the licenses of any dependencies.
+
+5. No warranty. THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+   EXPRESS OR IMPLIED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY
+   CLAIM, DAMAGES OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+   Autonomous-machine functionality is experimental and must not be used to
+   control real equipment without an independent safety case.
+
+For licensing enquiries, contact the repository owners.
