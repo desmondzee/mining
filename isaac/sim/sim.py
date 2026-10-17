@@ -16,6 +16,8 @@ PEDESTRIAN_PROBE = 30.0
 LOAD_REACH = 16.0
 LOAD_SPEED = 0.5
 AIM_RANGE = (40.0, 160.0)
+DUMP_PROBE = (4.0, 8.0, 12.0, 16.0)
+SIDE_MARGIN = 0.5
 CAB = np.array([-1.6, 3.2, -0.35])
 CAB_PITCH = 15.0
 CAB_HFOV = 75.0
@@ -47,6 +49,9 @@ class Sim:
         self.excavators = W.excavators(self.world, height, repo, extra_excavators or [])
         idle = {e["id"] for e in extra_excavators or []}
         self.rigs = {b.id: DigRig(b.id, digging=b.id in idle) for b in self.excavators}
+        self.dump_side = {b.id: self.open_side(b, height) for b in self.excavators}
+        for b in self.excavators:
+            self.rigs[b.id].dump_yaw = self.dump_side[b.id]
         self.rig_matrix, _ = W.model_box(repo / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
         nodes = read_glb(repo / W.EXCAVATOR_GLB).nodes
         self.rig_origins = {j: (self.rig_matrix @ nodes[j][0][:, 3])[:3] for j in JOINTS if j in nodes}
@@ -119,13 +124,21 @@ class Sim:
     def aim(self, targets: dict[str, tuple[float, float]]) -> None:
         for b in self.excavators:
             rig, target = self.rigs[b.id], targets.get(b.id)
-            rig.dump_yaw = TRUCK_SIDE_YAW
+            rig.dump_yaw = self.dump_side[b.id]
             if target is None:
                 continue
             local = yaw_matrix(self.excavator_yaw(b)).T @ np.array([target[0] - b.x, 0.0, target[1] - b.z])
             yaw = math.degrees(math.atan2(local[0], local[2]))
             if AIM_RANGE[0] <= abs(yaw) <= AIM_RANGE[1]:
                 rig.dump_yaw = yaw
+
+    @staticmethod
+    def open_side(box, height) -> float:
+        def ground(yaw: float) -> float:
+            d = yaw_matrix(box.yaw + yaw) @ np.array([0.0, 0.0, 1.0])
+            return max(float(height(box.x + d[0] * r, box.z + d[2] * r)) for r in DUMP_PROBE)
+
+        return TRUCK_SIDE_YAW if ground(TRUCK_SIDE_YAW) <= ground(-TRUCK_SIDE_YAW) + SIDE_MARGIN else -TRUCK_SIDE_YAW
 
     def excavator_yaw(self, box) -> float:
         return self.radio.headings.get(box.id, box.yaw) if self.radio else box.yaw

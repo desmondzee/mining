@@ -64,7 +64,7 @@ def test_extra_excavator_digs_and_loading_aim(sim):
     sim.aim({b.id: (b.x - 10 * math.sin(yaw), b.z - 10 * math.cos(yaw))})
     assert sim.rigs[b.id].dump_yaw == pytest.approx(90.0)
     sim.aim({})
-    assert sim.rigs[b.id].dump_yaw == E.TRUCK_SIDE_YAW
+    assert sim.rigs[b.id].dump_yaw == sim.dump_side[b.id] and abs(sim.dump_side[b.id]) == -E.TRUCK_SIDE_YAW
 
 
 def test_cab_cameras_follow_house():
