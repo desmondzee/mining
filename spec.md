@@ -110,18 +110,34 @@
 |---|---|---|
 | Control | fixed waypoint paths, no policy | |
 | Script | `PedestrianWalker` | |
-| Walking speed (m/s) | 1.4 | `unity/Assets/Scripts/PedestrianWalker.cs:speed` |
+| Count | 12 | |
+| Pedestrians per path | 3 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PedestriansPerPath` |
+| Start positions | path fractions 0, 1/3, 2/3 | |
+| Min walking speed (m/s) | 1.2 | `unity/Assets/Editor/QuarrySceneBuilder.cs:MinWalkSpeed` |
+| Max walking speed (m/s) | 1.6 | `unity/Assets/Editor/QuarrySceneBuilder.cs:MaxWalkSpeed` |
+| Speed assignment | seeded uniform per pedestrian | |
+| Walk clip natural speed (m/s) | 1.4 | `unity/Assets/Scripts/PedestrianWalker.cs:clipSpeed` |
+| Animation speed | walking speed / clip speed | |
 | Turn rate (deg/s) | 360 | `unity/Assets/Scripts/PedestrianWalker.cs:turnRate` |
 | Path modes | loop (3+ waypoints), ping-pong (2 waypoints) | |
 | Height (m) | 1.8 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PedestrianHeight` |
 | Collider radius (m) | 0.3 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PedestrianRadius` |
 | Body | kinematic `Rigidbody`, `CapsuleCollider` | |
-| Visual | capsule placeholder until a rigged model is chosen | |
+| Models | Microsoft Rocketbox, MIT, fetched by `tools/fetch_rocketbox.py` into `unity/Assets/Models/People/` (gitignored) | |
+| Avatars | Construction_Male_01–08, Construction_Female_01, Male_Adult_01, Female_Adult_01, Security_Male_01 | |
+| Assignment | avatars sorted by path, round-robin over pedestrians | |
+| Texture format | TGA RLE | |
+| Texture max size (px) | 1024 | `tools/fetch_rocketbox.py:TEXTURE_SIZE` |
+| Rig | Humanoid, avatar per model | |
+| Walk clips | `m_walk_neutral_01`, `f_walk_neutral_01` (Rocketbox `motextr_xy`), loop, root motion off | |
+| LOD levels | hipoly, midpoly, lowpoly, ultralowpoly | |
+| LOD screen heights | 0.25, 0.08, 0.03, 0.005 | |
+| Materials | URP Lit, base colour white, `opacity` materials alpha-clipped at 0.5, double-sided | |
+| Fallback | capsule placeholder when `Models/People` is empty | |
 | Paths | 4 | |
 | Rock clearance from paths (m) | 4 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PathClearance` |
 | Position report rate (Hz) | 10 | `unity/Assets/Scripts/BrainClient.cs:actorsRate` |
-| Pedestrian IDs | Unity: GameObject name (`Pedestrian_N`); fake sim: `pedestrian-N` | |
-| Model source | Microsoft Rocketbox candidate, not imported | |
+| Pedestrian IDs | Unity: `Pedestrian_NN`; fake sim: `pedestrian-NN` | |
 
 | Path | Waypoints (x, z) | Mode |
 |---|---|---|
@@ -142,7 +158,9 @@
 | Camera height (m) | 3.6 | `brain/brain/fakesim.py:CAM_HEIGHT` |
 | Rendering | per-column raycast, far-to-near layers, ground plane depth | |
 | Obstacles | rocks (cylinders, height 1.5 r), trucks, pedestrians, 15 m walls | |
-| Pedestrian speed (m/s) | 1.4 | `brain/brain/fakesim.py:PEDESTRIAN_SPEED` |
+| Pedestrians per path | 3 | `brain/brain/fakesim.py:PEDESTRIANS_PER_PATH` |
+| Pedestrian min speed (m/s) | 1.2 | `brain/brain/fakesim.py:MIN_WALK_SPEED` |
+| Pedestrian max speed (m/s) | 1.6 | `brain/brain/fakesim.py:MAX_WALK_SPEED` |
 | Pedestrian radius (m) | 0.3 | `brain/brain/fakesim.py:PEDESTRIAN_RADIUS` |
 | Pedestrian height (m) | 1.8 | `brain/brain/fakesim.py:PEDESTRIAN_HEIGHT` |
 | Pedestrian colour | RGB (255, 120, 20) | |

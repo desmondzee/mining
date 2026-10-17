@@ -29,7 +29,9 @@ LIDAR_COLS = 240
 LIDAR_CHANNELS = 30
 LIDAR_HEIGHT = 3.0
 ACTORS_HZ = 10
-PEDESTRIAN_SPEED = 1.4
+PEDESTRIANS_PER_PATH = 3
+MIN_WALK_SPEED = 1.2
+MAX_WALK_SPEED = 1.6
 PEDESTRIAN_RADIUS = 0.3
 PEDESTRIAN_HEIGHT = 1.8
 PEDESTRIAN_PATHS = [
@@ -62,12 +64,21 @@ class Truck:
 
 
 class Pedestrian:
-    def __init__(self, pedestrian_id: str, path: list[tuple[float, float]]) -> None:
-        self.id, self.path = pedestrian_id, path
-        self.x, self.z = path[0]
-        self.yaw = 0.0
+    def __init__(self, pedestrian_id: str, path: list[tuple[float, float]], start: float = 0.0, speed: float = 1.4) -> None:
+        self.id, self.path, self.speed = pedestrian_id, path, speed
         self.loop = len(path) > 2
-        self.target, self.direction = 1, 1
+        self.direction = 1
+        segments = [(path[i], path[(i + 1) % len(path)]) for i in range(len(path) if self.loop else len(path) - 1)]
+        remaining = start * sum(math.dist(a, b) for a, b in segments)
+        for i, (a, b) in enumerate(segments):
+            length = math.dist(a, b)
+            if remaining <= length or i == len(segments) - 1:
+                f = min(remaining / length, 1.0) if length else 0.0
+                self.x, self.z = a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f
+                self.yaw = math.degrees(math.atan2(b[0] - a[0], b[1] - a[1])) % 360.0
+                self.target = (i + 1) % len(path)
+                break
+            remaining -= length
 
     def step(self, dt: float) -> None:
         gx, gz = self.path[self.target]
@@ -77,7 +88,7 @@ class Pedestrian:
             self._advance()
             return
         self.yaw = math.degrees(math.atan2(dx, dz)) % 360.0
-        move = min(PEDESTRIAN_SPEED * dt, dist)
+        move = min(self.speed * dt, dist)
         self.x += dx / dist * move
         self.z += dz / dist * move
 
@@ -113,7 +124,16 @@ class FakeQuarry:
         keep = [math.hypot(x, z + 70) > 20 and path_distance(x, z) > r + 4 for x, z, r in rocks[:, :3]]
         self.rocks = rocks[keep]
         self.trucks = [Truck(f"truck-{i}", -15.0 + 15.0 * i, -70.0, 0.0) for i in range(n_trucks)]
-        self.pedestrians = [Pedestrian(f"pedestrian-{i}", p) for i, p in enumerate(PEDESTRIAN_PATHS)]
+        self.pedestrians = [
+            Pedestrian(
+                f"pedestrian-{i * PEDESTRIANS_PER_PATH + k:02d}",
+                path,
+                k / PEDESTRIANS_PER_PATH,
+                float(rng.uniform(MIN_WALK_SPEED, MAX_WALK_SPEED)),
+            )
+            for i, path in enumerate(PEDESTRIAN_PATHS)
+            for k in range(PEDESTRIANS_PER_PATH)
+        ]
 
     def step(self, dt: float) -> None:
         for t in self.trucks:
@@ -228,7 +248,7 @@ class FakeQuarry:
             "bounds": self.bounds,
             "truck_model": "fakesim",
             "obstacles": [{"x": x, "z": z, "r": r} for x, z, r, _, _ in self.rocks.tolist()],
-            "paths": [{"points": [{"x": x, "z": z} for x, z in p.path]} for p in self.pedestrians],
+            "paths": [{"points": [{"x": x, "z": z} for x, z in path]} for path in PEDESTRIAN_PATHS],
         }
 
     def actors(self) -> dict:

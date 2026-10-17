@@ -4,10 +4,11 @@ Unity 6.3 LTS project. Protocol and parameters: [../spec.md](../spec.md).
 
 ## Open
 
-1. Unity Hub > Add > select this `unity/` folder; open with 6000.3.x.
-2. Wait for packages (URP, glTFast) to resolve and the GLBs to import.
-3. Tools > Mining > Build Quarry Scene (Komatsu HD465) or (CAT 785C).
-4. Commit the generated `.meta` files, `Assets/Settings`, `Assets/Prefabs`, `Assets/Scenes`.
+1. Fetch people models: `cd brain && uv run python ../tools/fetch_rocketbox.py` (or on watson: `docker run --rm --user $(id -u):$(id -g) -v "$PWD":/w -w /w mining-brain python tools/fetch_rocketbox.py`).
+2. Unity Hub > Add > select this `unity/` folder; open with 6000.3.x.
+3. Wait for packages (URP, glTFast) to resolve and the GLBs to import.
+4. Tools > Mining > Build Quarry Scene (Komatsu HD465) or (CAT 785C).
+5. Commit the generated `.meta` files, `Assets/Settings`, `Assets/Prefabs`, `Assets/Scenes`.
 
 ## Layout
 
@@ -15,6 +16,8 @@ Unity 6.3 LTS project. Protocol and parameters: [../spec.md](../spec.md).
 |---|---|
 | `Assets/Scripts/` | runtime scripts |
 | `Assets/Editor/QuarrySceneBuilder.cs` | URP setup, truck prefabs, scene |
+| `Assets/Editor/PeopleImporter.cs` | Humanoid rig, looping clips, URP materials for `Models/People` |
+| `Assets/Models/People/` | Rocketbox avatars and walk clips (fetched, gitignored) |
 | `Assets/Models/Trucks/` | truck GLBs, `CREDITS.md` |
 | `Packages/manifest.json` | URP, glTFast |
 
@@ -57,6 +60,6 @@ Editor on Mac against watson: `ssh -N -L 9000:127.0.0.1:9000 watson`, host `127.
 | Project opened in Unity | not yet |
 | Truck yaw offsets | from model inspection, check visually |
 | CAT 785C licence | not documented |
-| Pedestrian models | capsule placeholders |
+| Pedestrian models | Rocketbox fetched on watson; Humanoid mapping, facing and scale not checked in Unity |
 | Linux ARM64 player on GB10 | not verified |
 | `-batchmode -nographics` | disables rendering, not usable |

@@ -164,9 +164,10 @@ public class BrainClient : MonoBehaviour
         msg.obstacles = rocks.ToArray();
 
         var paths = new List<BrainProtocol.MapPath>();
+        var seen = new HashSet<Transform>();
         foreach (var w in walkers)
         {
-            if (w.path == null) continue;
+            if (w.path == null || !seen.Add(w.path)) continue;
             var points = new BrainProtocol.MapPoint[w.path.childCount];
             for (int i = 0; i < points.Length; i++)
             {

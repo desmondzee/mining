@@ -1,5 +1,7 @@
 using System.IO;
+using System.Linq;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
@@ -21,6 +23,14 @@ public static class QuarrySceneBuilder
     const float PathClearance = 4f;
     const float PedestrianHeight = 1.8f;
     const float PedestrianRadius = 0.3f;
+    const int PedestriansPerPath = 3;
+    const float MinWalkSpeed = 1.2f;
+    const float MaxWalkSpeed = 1.6f;
+    const string PeopleDir = "Assets/Models/People";
+    const string ControllerDir = "Assets/Generated/People";
+
+    static readonly string[] LodNames = { "hipoly", "midpoly", "lowpoly", "ultralowpoly" };
+    static readonly float[] LodHeights = { 0.25f, 0.08f, 0.03f, 0.005f };
 
     struct TruckModel
     {
@@ -163,6 +173,9 @@ public static class QuarrySceneBuilder
     static void AddPedestrians()
     {
         var parent = new GameObject("Pedestrians").transform;
+        var avatars = LoadAvatars();
+        var rng = new System.Random(1);
+        int index = 0;
         for (int i = 0; i < PedestrianPaths.Length; i++)
         {
             var path = new GameObject($"Path_{i}").transform;
@@ -174,24 +187,78 @@ public static class QuarrySceneBuilder
                 waypoint.position = point;
             }
 
-            var person = new GameObject($"Pedestrian_{i}", typeof(CapsuleCollider), typeof(Rigidbody), typeof(PedestrianWalker));
-            person.transform.SetParent(parent);
-            person.transform.position = PedestrianPaths[i][0];
-            var capsule = person.GetComponent<CapsuleCollider>();
-            capsule.height = PedestrianHeight;
-            capsule.radius = PedestrianRadius;
-            capsule.center = Vector3.up * PedestrianHeight / 2;
-            var walker = person.GetComponent<PedestrianWalker>();
-            walker.path = path;
-            walker.loop = PedestrianPaths[i].Length > 2;
+            for (int k = 0; k < PedestriansPerPath; k++, index++)
+            {
+                var person = new GameObject($"Pedestrian_{index:00}", typeof(CapsuleCollider), typeof(Rigidbody), typeof(PedestrianWalker));
+                person.transform.SetParent(parent);
+                person.transform.position = PedestrianPaths[i][0];
+                var capsule = person.GetComponent<CapsuleCollider>();
+                capsule.height = PedestrianHeight;
+                capsule.radius = PedestrianRadius;
+                capsule.center = Vector3.up * PedestrianHeight / 2;
+                var walker = person.GetComponent<PedestrianWalker>();
+                walker.path = path;
+                walker.loop = PedestrianPaths[i].Length > 2;
+                walker.startFraction = (float)k / PedestriansPerPath;
+                walker.speed = Mathf.Lerp(MinWalkSpeed, MaxWalkSpeed, (float)rng.NextDouble());
 
-            var placeholder = GameObject.CreatePrimitive(PrimitiveType.Capsule);
-            placeholder.name = "Placeholder";
-            Object.DestroyImmediate(placeholder.GetComponent<Collider>());
-            placeholder.transform.SetParent(person.transform, false);
-            placeholder.transform.localPosition = Vector3.up * PedestrianHeight / 2;
-            placeholder.transform.localScale = new Vector3(PedestrianRadius * 2, PedestrianHeight / 2, PedestrianRadius * 2);
+                if (avatars.Length > 0) AddAvatar(person, avatars[index % avatars.Length]);
+                else AddPlaceholder(person);
+            }
         }
+    }
+
+    static GameObject[] LoadAvatars() =>
+        AssetDatabase.FindAssets("t:Model", new[] { PeopleDir })
+            .Select(AssetDatabase.GUIDToAssetPath)
+            .Where(p => p.Contains("/Export/"))
+            .OrderBy(p => p)
+            .Select(AssetDatabase.LoadAssetAtPath<GameObject>)
+            .ToArray();
+
+    static void AddAvatar(GameObject person, GameObject avatar)
+    {
+        var model = (GameObject)PrefabUtility.InstantiatePrefab(avatar, person.transform);
+        var animator = model.GetComponent<Animator>();
+        animator.runtimeAnimatorController = WalkController(avatar.name.Contains("Female") ? "f" : "m");
+        animator.applyRootMotion = false;
+        animator.cullingMode = AnimatorCullingMode.AlwaysAnimate;
+
+        var renderers = model.GetComponentsInChildren<Renderer>(true);
+        var lods = new LOD[LodNames.Length];
+        for (int i = 0; i < lods.Length; i++)
+            lods[i] = new LOD(LodHeights[i], renderers.Where(r => LodLevel(r.name) == i).ToArray());
+        model.AddComponent<LODGroup>().SetLODs(lods);
+    }
+
+    static int LodLevel(string name)
+    {
+        name = name.ToLower();
+        for (int i = LodNames.Length - 1; i >= 0; i--)
+            if (name.Contains(LodNames[i])) return i;
+        return 0;
+    }
+
+    static RuntimeAnimatorController WalkController(string prefix)
+    {
+        var path = $"{ControllerDir}/Walk_{prefix}.controller";
+        var existing = AssetDatabase.LoadAssetAtPath<RuntimeAnimatorController>(path);
+        if (existing != null) return existing;
+        var clip = AssetDatabase.LoadAllAssetsAtPath($"{PeopleDir}/Animations/{prefix}_walk_neutral_01.max.fbx")
+            .OfType<AnimationClip>()
+            .First(c => !c.name.StartsWith("__preview__"));
+        Directory.CreateDirectory(ControllerDir);
+        return AnimatorController.CreateAnimatorControllerAtPathWithClip(path, clip);
+    }
+
+    static void AddPlaceholder(GameObject person)
+    {
+        var placeholder = GameObject.CreatePrimitive(PrimitiveType.Capsule);
+        placeholder.name = "Placeholder";
+        Object.DestroyImmediate(placeholder.GetComponent<Collider>());
+        placeholder.transform.SetParent(person.transform, false);
+        placeholder.transform.localPosition = Vector3.up * PedestrianHeight / 2;
+        placeholder.transform.localScale = new Vector3(PedestrianRadius * 2, PedestrianHeight / 2, PedestrianRadius * 2);
     }
 
     static bool NearPath(Vector3 p, float distance)

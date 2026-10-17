@@ -5,8 +5,10 @@ public class PedestrianWalker : MonoBehaviour
 {
     public Transform path;
     public float speed = 1.4f;
+    public float clipSpeed = 1.4f;
     public float turnRate = 360f;
     public bool loop = true;
+    [Range(0, 1)] public float startFraction;
     public LayerMask groundMask = ~0;
 
     readonly RaycastHit[] hits = new RaycastHit[8];
@@ -16,7 +18,9 @@ public class PedestrianWalker : MonoBehaviour
     void Awake()
     {
         GetComponent<Rigidbody>().isKinematic = true;
-        if (path != null && path.childCount > 0) transform.position = path.GetChild(0).position;
+        var animator = GetComponentInChildren<Animator>();
+        if (animator != null) animator.speed = speed / clipSpeed;
+        if (path != null && path.childCount > 1) PlaceOnPath();
     }
 
     void Update()
@@ -35,6 +39,30 @@ public class PedestrianWalker : MonoBehaviour
         var next = transform.position + transform.forward * Mathf.Min(speed * Time.deltaTime, flat.magnitude);
         next.y = GroundHeight(next, transform.position.y);
         transform.position = next;
+    }
+
+    void PlaceOnPath()
+    {
+        int count = path.childCount;
+        int segments = loop ? count : count - 1;
+        float total = 0;
+        for (int i = 0; i < segments; i++) total += Vector3.Distance(path.GetChild(i).position, path.GetChild((i + 1) % count).position);
+
+        float remaining = startFraction * total;
+        for (int i = 0; i < segments; i++)
+        {
+            var a = path.GetChild(i).position;
+            var b = path.GetChild((i + 1) % count).position;
+            float length = Vector3.Distance(a, b);
+            if (remaining <= length || i == segments - 1)
+            {
+                transform.position = Vector3.Lerp(a, b, length > 0 ? Mathf.Clamp01(remaining / length) : 0);
+                transform.rotation = Quaternion.LookRotation(new Vector3(b.x - a.x, 0, b.z - a.z));
+                target = (i + 1) % count;
+                return;
+            }
+            remaining -= length;
+        }
     }
 
     float GroundHeight(Vector3 at, float fallback)

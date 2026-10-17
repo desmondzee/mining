@@ -28,8 +28,6 @@ AVATARS = [
 ANIMATIONS = [
     "all_animations_max_motextr_xy/m_walk_neutral_01.max.fbx",
     "all_animations_max_motextr_xy/f_walk_neutral_01.max.fbx",
-    "all_animations_max_motextr_static/m_idle_neutral_01.max.fbx",
-    "all_animations_max_motextr_static/f_idle_neutral_01.max.fbx",
 ]
 TEXTURE_SIZE = 1024
 

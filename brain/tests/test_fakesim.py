@@ -57,4 +57,15 @@ def test_hello_and_actors_shape():
     q = FakeQuarry(3)
     hello, actors = q.hello(), q.actors()
     assert len(hello["obstacles"]) == len(q.rocks) and len(hello["paths"]) == 4
+    assert len(actors["pedestrians"]) == 12
     assert {"id", "x", "z", "yaw"} <= set(actors["pedestrians"][0])
+
+
+def test_start_fraction_spreads_pedestrians():
+    from brain.fakesim import Pedestrian
+
+    square = [(0, 0), (10, 0), (10, 10), (0, 10)]
+    p = Pedestrian("p", square, start=0.5)
+    assert (p.x, p.z) == pytest.approx((10, 10)) and p.target == 2
+    line = Pedestrian("q", [(0, 0), (10, 0)], start=1 / 3)
+    assert line.x == pytest.approx(10 / 3) and line.target == 1
