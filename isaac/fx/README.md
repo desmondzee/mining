@@ -6,7 +6,7 @@ Dust plumes (Omni Flow, rendered volumetrically by RTX) and gravel kick-up (Poin
 
 | What | Command |
 |---|---|
-| Tests (Mac) | `uv run --with numpy --with pytest pytest isaac/fx/tests -q` |
+| Tests (Mac) | `uv run --with numpy --with pytest pytest isaac/fx/tests -q` (add `--with usd-core` to include the `TruckFx` USD test) |
 | Bake the ground map (Mac or watson, about 2 s) | `uv run --with numpy --with pillow python -m isaac.fx.ground --world data/worlds/quarry --cache downloads/isaac/cache --preview ground.png` |
 | Demo + fps (watson) | `isaac/fx/run.sh /mining/isaac/fx/demo.py [--preset high] [--grounds road,dark] [--measure none,low,high]` → `downloads/isaac/fx/demo/` |
 
