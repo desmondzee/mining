@@ -31,6 +31,8 @@ OBS_DIM = N_RAYS + 2 * ROUTE_POINTS + 3
 CAND_DIM = 2 * N_ROLL + 3
 
 ARRIVE_RADIUS = 5.0
+TRUCK_HALF_W = 2.12
+EDGE_MARGIN = 0.5
 LIDAR_HEIGHT = 3.0
 MIN_OBSTACLE_HEIGHT = 0.8
 OBSTACLE_RADIUS = 4.0
@@ -91,13 +93,14 @@ def lidar_ranges(local: np.ndarray) -> np.ndarray:
     return ranges
 
 
-def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.ndarray]:
+def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     v = np.full(N_CAND, v0)
     yaws = np.full(N_CAND, yaw)
     xs = np.full(N_CAND, x)
     zs = np.full(N_CAND, z)
     sub = int(round(RDT / DT))
     fine = np.empty((N_CAND, N_ROLL * sub, 2))
+    fine_yaw = np.empty((N_CAND, N_ROLL * sub))
     tan = np.tan(CAND_STEER * MAX_STEER)
     for k in range(N_ROLL * sub):
         v = v + (CAND_SPEED - v) * min(1.0, ACCEL * DT)
@@ -105,7 +108,14 @@ def rollout(x: float, z: float, yaw: float, v0: float) -> tuple[np.ndarray, np.n
         xs = xs + v * np.sin(yaws) * DT
         zs = zs + v * np.cos(yaws) * DT
         fine[:, k, 0], fine[:, k, 1] = xs, zs
-    return fine, fine[:, sub - 1 :: sub]
+        fine_yaw[:, k] = yaws
+    return fine, fine[:, sub - 1 :: sub], fine_yaw
+
+
+def off_road(nav: NavMap, x, z, yaw, half_w: float) -> np.ndarray:
+    """True where the centre or either side of the truck at (x, z, yaw) is on a blocked cell."""
+    rx, rz = np.cos(yaw) * half_w, -np.sin(yaw) * half_w
+    return nav.blocked_at(x, z) | nav.blocked_at(x + rx, z + rz) | nav.blocked_at(x - rx, z - rz)
 
 
 def nearest_index(route: np.ndarray, start: int, x: float, z: float) -> int:
@@ -134,8 +144,10 @@ def drive(
         return Decision(0.0, 0.0, "arrived", HOLD_ACTION, np.zeros((0, N_ROLL, 2)), np.zeros(0, bool)), ni
 
     yaw = math.radians(yaw_deg)
-    fine, pts = rollout(x, z, yaw, speed)
-    hit = nav.blocked_at(fine[..., 0], fine[..., 1]).any(axis=1)
+    fine, pts, fine_yaw = rollout(x, z, yaw, speed)
+    # The whole body must stay on the road. On a narrow road a swerve that puts a side over
+    # the edge is unsafe, so when nothing else fits the truck holds.
+    hit = off_road(nav, fine[..., 0], fine[..., 1], fine_yaw, TRUCK_HALF_W + EDGE_MARGIN).any(axis=1)
     local, obstacles = split_lidar(nav, x, z, yaw, points, lidar_height)
     clear = np.full(N_CAND, np.inf)
     if len(obstacles):
@@ -179,7 +191,7 @@ def drive(
         )
         choice = int(np.argmin(np.where(safe, score, np.inf)))
 
-    if not safe[choice]:
+    if not safe[choice] or CAND_SPEED[choice] == 0:
         status = "holding"
     elif clear[choice] < 10:
         status = "avoiding"

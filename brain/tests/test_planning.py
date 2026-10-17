@@ -33,6 +33,25 @@ def scan(truck: Truck, obstacles: list[tuple[float, float]]) -> np.ndarray:
     return np.concatenate(pts).astype(np.float32) if pts else np.zeros((0, 3), np.float32)
 
 
+TRUCK_HALF_W = 2.12
+_br, _bc = np.nonzero(NAV.blocked) if NAV is not None else ([], [])
+BLOCKED_XY = np.stack([NAV.ox + (np.asarray(_bc) + 0.5) * NAV.cell, NAV.oz + (np.asarray(_br) + 0.5) * NAV.cell], 1) if NAV is not None else None
+
+
+def body_over_edge(truck: Truck) -> bool:
+    yaw = math.radians(truck.yaw)
+    rx, rz = math.cos(yaw) * TRUCK_HALF_W, -math.sin(yaw) * TRUCK_HALF_W
+    xs = np.array([truck.x, truck.x + rx, truck.x - rx])
+    zs = np.array([truck.z, truck.z + rz, truck.z - rz])
+    return bool(NAV.blocked_at(xs, zs).any())
+
+
+def narrowest_route_point(route: np.ndarray, skip: int = 20) -> int:
+    """Index of the route point closest to a blocked cell, away from the two ends."""
+    gap = [np.abs(BLOCKED_XY - p).max(axis=1).min() for p in route[skip:-skip]]
+    return skip + int(np.argmin(gap))
+
+
 def run(start, goal, obstacles=(), ticks=1500):
     route = planning.plan_route(NAV, start, goal)
     head = route[4] - route[0]
@@ -47,7 +66,7 @@ def run(start, goal, obstacles=(), ticks=1500):
         truck.throttle, truck.steer = sim.throttle, sim.steer = a.throttle, a.steer
         sim.step(0.1)
         truck.x, truck.z, truck.yaw, truck.speed = sim.x, sim.z, sim.yaw, sim.speed
-        assert not NAV.blocked_at(truck.x, truck.z), (truck.x, truck.z)
+        assert not body_over_edge(truck), (truck.x, truck.z, truck.yaw)
         clear = min([clear] + [math.hypot(ox - truck.x, oz - truck.z) for ox, oz in obstacles])
     return False, clear, statuses
 
@@ -86,3 +105,23 @@ def test_lidar_bins_run_left_to_right():
     hits = np.flatnonzero(ranges < 100)
     assert len(hits) == 3 and hits[0] < 30 <= hits[1] < hits[2]
     assert ranges[30] == pytest.approx(math.hypot(0.5, 20.0))
+
+
+def test_holds_behind_vehicle_blocking_narrow_ramp():
+    start, goal = NAV.sites["crusher"], NAV.sites["pit_floor"]
+    route = planning.plan_route(NAV, start, goal)
+    blocker = tuple(route[narrowest_route_point(route)])
+    arrived, clear, statuses = run(start, goal, [blocker], ticks=700)
+    assert not arrived and "holding" in statuses and clear > 3.0
+
+
+@pytest.mark.parametrize("side", [-5.0, 5.0])
+def test_keeps_body_on_narrow_ramp_next_to_vehicle(side):
+    # The vehicle leaves a gap on one side; the truck may pass only if its whole body fits.
+    start, goal = NAV.sites["crusher"], NAV.sites["pit_floor"]
+    route = planning.plan_route(NAV, start, goal)
+    i = narrowest_route_point(route)
+    d = (route[i + 1] - route[i]) / np.linalg.norm(route[i + 1] - route[i])
+    blocker = tuple(route[i] + np.array([d[1], -d[0]]) * side)
+    _, clear, _ = run(start, goal, [blocker], ticks=700)
+    assert clear > 3.0

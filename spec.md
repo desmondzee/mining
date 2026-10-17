@@ -125,6 +125,9 @@
 |---|---|---|
 | World | `data/worlds/default/` (`world.json`, `navgrid.json`), override with `WORLD_DIR` | |
 | Route | A* on the nav grid (impassable cells grown by one cell), Chaikin smoothing, 2 m spacing | |
+| Route edge cost | step cost + edge cost × (1 − clearance / safe clearance), clearance = cell centre to nearest blocked cell | |
+| Edge cost | 2.0 | `brain/brain/planning/navmap.py:EDGE_COST` |
+| Safe clearance (m) | 6.0 | `brain/brain/planning/navmap.py:SAFE_CLEARANCE` |
 | Used when | the truck has a route; otherwise the straight-to-goal policy above | |
 | Candidates | 11 steer × 4 target speeds (8, 5, 2.5, 0 m/s), kinematic bicycle rollout | |
 | Candidate horizon (s) | 3.0 | `brain/brain/planning/driver.py:HORIZON` |
@@ -138,7 +141,10 @@
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
 | Obstacles | lidar points above the nav-grid ground on free cells; points on walls are left to the grid | |
-| Unsafe candidate | hits a blocked cell, or comes within 1.5 m of an obstacle while closing in | |
+| Truck half width (m) | 2.12 | `brain/brain/planning/driver.py:TRUCK_HALF_W` |
+| Edge margin (m) | 0.5 | `brain/brain/planning/driver.py:EDGE_MARGIN` |
+| Unsafe candidate | the centre or either side (half width + edge margin) hits a blocked cell, or comes within 1.5 m of an obstacle while closing in | |
+| Holding | chosen target speed is 0, or no candidate is safe | |
 | Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
 | Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
 
