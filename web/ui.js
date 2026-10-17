@@ -4,8 +4,8 @@ const root = document.documentElement;
 const darkQuery = matchMedia("(prefers-color-scheme: dark)");
 
 const PALETTES = {
-  light: { grid: "rgba(26, 26, 26, 0.05)", road: "rgba(26, 26, 26, 0.16)", junction: "rgba(26, 26, 26, 0.35)", ink: "#1a1a1a", inkMuted: "#5b5b58", halo: "#f4f2ec", obstacle: "#b7b3a8", path: "rgba(168, 85, 69, 0.55)", pedestrian: "#a85545", outline: "#f4f2ec", selected: "#1a1a1a" },
-  dark: { grid: "rgba(255, 255, 255, 0.04)", road: "rgba(236, 235, 230, 0.16)", junction: "rgba(236, 235, 230, 0.4)", ink: "#ecebe6", inkMuted: "#a19f98", halo: "#121211", obstacle: "#4a4945", path: "rgba(214, 140, 110, 0.5)", pedestrian: "#d68c6e", outline: "#121211", selected: "#ecebe6" },
+  light: { previewAlpha: 0.92, grid: "rgba(26, 26, 26, 0.05)", road: "rgba(26, 26, 26, 0.16)", junction: "rgba(26, 26, 26, 0.35)", ink: "#1a1a1a", inkMuted: "#5b5b58", halo: "#f4f2ec", obstacle: "#b7b3a8", path: "rgba(168, 85, 69, 0.55)", pedestrian: "#a85545", outline: "#f4f2ec", selected: "#1a1a1a" },
+  dark: { previewAlpha: 0.72, grid: "rgba(255, 255, 255, 0.04)", road: "rgba(236, 235, 230, 0.16)", junction: "rgba(236, 235, 230, 0.4)", ink: "#ecebe6", inkMuted: "#a19f98", halo: "#121211", obstacle: "#4a4945", path: "rgba(214, 140, 110, 0.5)", pedestrian: "#d68c6e", outline: "#121211", selected: "#ecebe6" },
 };
 
 export const palette = { ...PALETTES.dark };
@@ -19,6 +19,16 @@ const el = {
 let lastState = 0;
 let simConnected = false;
 let onThemeChange = null;
+let extraStatus = () => null;
+
+export function setStatusSource(fn) {
+  extraStatus = fn;
+}
+
+function setSummary(text, tone = "") {
+  if (el.summary.textContent !== text) el.summary.textContent = text;
+  el.summary.className = `status ${tone}`;
+}
 
 export function storedTheme() {
   try { return localStorage.getItem(THEME_KEY) || "dark"; } catch { return "dark"; }
@@ -53,15 +63,18 @@ function showToast(title, body) {
 
 function renderConnection() {
   if (!lastState) {
-    showToast("Connecting", "Opening a connection to the control server.");
-    el.summary.textContent = "connecting";
+    showToast("Connecting", "");
+    setSummary("");
   } else if (Date.now() - lastState > STALE_MS) {
-    showToast("Reconnecting", "The connection to the control server dropped. Retrying.");
-    el.summary.textContent = "reconnecting";
+    showToast("Brain offline", "reconnecting");
+    setSummary("brain", "warn");
   } else if (!simConnected) {
-    showToast("Simulator offline", "Feeds and telemetry resume when it connects.");
+    showToast("Simulator offline", "");
+    setSummary("sim", "warn");
   } else {
     showToast(null);
+    const extra = extraStatus();
+    setSummary(extra ? extra.text : "", extra ? extra.tone : "");
   }
 }
 
@@ -72,10 +85,5 @@ export function renderChrome(state, { tileFor, tiles }) {
   lastState = Date.now();
   simConnected = state.sim_connected;
   for (const name of state.cameras || []) tileFor(name);
-  const live = [...tiles.values()].filter((t) => t.el.classList.contains("live")).length;
-  const moving = state.trucks.filter((t) => t.status !== "idle" && t.status !== "arrived").length;
-  el.summary.textContent = simConnected
-    ? `live · ${moving}/${state.trucks.length} moving · ${live}/${tiles.size} cams`
-    : "sim offline";
   renderConnection();
 }

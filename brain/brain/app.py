@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import hud, planning
+from . import hud, planning, radio_proxy
 from .bridge import SimBridge
 from .hub import LatestHub
 from .video import VideoHub
@@ -196,6 +196,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         except (WebSocketDisconnect, RuntimeError):
             pass
 
+    radio_proxy.mount(app)
     if web_dir and web_dir.is_dir():
         app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
 
