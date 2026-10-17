@@ -93,18 +93,20 @@ namespace MineSim.EditorTools
             if (p != null) EditorGUIUtility.PingObject(AssetDatabase.LoadAssetAtPath<Object>(p));
         }
 
-        /// <summary>Copies &lt;repo&gt;/assets/models/excavator/excavator.glb into Assets/MineSim/Generated/Models/ (needs glTFast to import).</summary>
+        /// <summary>Copies &lt;repo&gt;/assets/models/excavator/excavator_rigged.glb (segmented: house/boom/stick/bucket nodes, animated by
+        /// MineExcavatorRig), else excavator.glb, into Assets/MineSim/Generated/Models/ (needs glTFast to import).</summary>
         public static string CopyExcavatorModel(bool verbose)
         {
 #if MINESIM_GLTFAST
-            string src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator.glb");
+            string src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator_rigged.glb");
+            if (!File.Exists(src)) src = Path.Combine(RepoRoot, "assets", "models", "excavator", "excavator.glb");
             if (!File.Exists(src))
             {
                 if (verbose) Debug.LogWarning("[MineSim] excavator model not found at " + src);
                 return null;
             }
             EnsureFolder(GeneratedModels);
-            string dst = GeneratedModels + "/excavator.glb";
+            string dst = GeneratedModels + "/" + Path.GetFileName(src);
             var si = new FileInfo(src);
             var di = new FileInfo(Path.GetFullPath(dst));
             if (!di.Exists || di.Length != si.Length)
@@ -453,9 +455,16 @@ namespace MineSim.EditorTools
                 .Select(AssetDatabase.GUIDToAssetPath)
                 .Where(p => !string.IsNullOrEmpty(p) && Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("excavator")
                             && !Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("source"))
-                .OrderBy(p => p.StartsWith("Assets/Models/") ? 0 : p.StartsWith(GeneratedModels) ? 2 : 1)
+                .OrderBy(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("rigged") ? 0 : 1) // articulated model first
+                .ThenBy(p => p.StartsWith("Assets/Models/") ? 0 : p.StartsWith(GeneratedModels) ? 2 : 1)
                 .ThenBy(p => p, StringComparer.Ordinal)
                 .ToList();
+            if (!paths.Any(p => Path.GetFileNameWithoutExtension(p).ToLowerInvariant().Contains("rigged")))
+            {
+                // no rigged model in the project yet (e.g. only the old excavator.glb copy): try to copy the rigged one
+                string copied = CopyExcavatorModel(false);
+                if (copied != null && copied.ToLowerInvariant().Contains("rigged") && !paths.Contains(copied)) paths.Insert(0, copied);
+            }
             if (paths.Count == 0)
             {
                 string copied = CopyExcavatorModel(false);
