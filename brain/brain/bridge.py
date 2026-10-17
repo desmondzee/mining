@@ -2,11 +2,13 @@ import asyncio
 import io
 import logging
 import struct
+import time
 
 import numpy as np
 from PIL import Image
 
 from . import policy
+from .detector import DetectorWorker
 from .hub import LatestHub
 from .hud import frame_meta, pack_meta
 from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, read_message
@@ -32,11 +34,13 @@ def lidar_message(truck_id: str, scan: Scan) -> bytes:
 
 
 class SimBridge:
-    def __init__(self, world: World, video: LatestHub, lidar: LatestHub, h264: VideoHub | None = None) -> None:
+    def __init__(self, world: World, video: LatestHub, lidar: LatestHub, h264: VideoHub | None = None,
+                 detector: DetectorWorker | None = None) -> None:
         self.world = world
         self.video = video
         self.h264 = h264
         self.lidar = lidar
+        self.detector = detector
         self._writer: asyncio.StreamWriter | None = None
         self._scan_seq = 0
 
@@ -97,7 +101,12 @@ class SimBridge:
 
     async def _on_frame(self, header: dict, payload: bytes, writer: asyncio.StreamWriter) -> None:
         rgb, depth, jpeg = decode_frame(header, payload)
-        meta = frame_meta(header)
+        t = time.time()
+        det = None
+        if self.detector and header.get("truck"):
+            self.detector.submit(header["camera"], rgb, depth, t, (header.get("cam") or {}).get("hfov"))
+            det = self.detector.latest(header["camera"], t)
+        meta = frame_meta(header, t, det)
         if self.h264:
             self.h264.submit(header["camera"], rgb, meta)
         if jpeg is None and self.video.subscribers:

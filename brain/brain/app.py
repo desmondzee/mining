@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import hud, planning, radio_proxy
+from . import detector, hud, planning, radio_proxy
 from .bridge import SimBridge
 from .hub import LatestHub
 from .video import VideoHub
@@ -50,7 +50,8 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     video = LatestHub()
     lidar = LatestHub()
     h264 = VideoHub()
-    bridge = SimBridge(world, video, lidar, h264)
+    det = detector.from_env()
+    bridge = SimBridge(world, video, lidar, h264, det)
     lidar_period = 1 / float(os.environ.get("LIDAR_VIEWER_HZ", LIDAR_VIEWER_HZ))
     heightmap = hud.load_heightmap(os.environ.get("WORLD_DIR"))
 
@@ -64,6 +65,8 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         if server:
             server.close()
         h264.close()
+        if det:
+            det.close()
 
     app = FastAPI(lifespan=lifespan)
     app.state.world = world
@@ -75,6 +78,14 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     @app.get("/api/state")
     def get_state():
         return hud.augment(world.snapshot(), heightmap)
+
+    @app.get("/api/detector")
+    def get_detector():
+        if det is None:
+            return {"enabled": False}
+        model = det.detect
+        return {"enabled": True, "model": os.path.basename(model.path), "input": list(model.size),
+                "classes": len(model.names), **det.stats()}
 
     @app.get("/api/world")
     def get_world():

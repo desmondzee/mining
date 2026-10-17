@@ -37,3 +37,4 @@ unity/Assets/MineSim/Generated.meta
 .claude/
 !.env.example
 node_modules/
+models/

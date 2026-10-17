@@ -12,9 +12,11 @@ META_LEN = struct.Struct("<H")
 META_FIELDS = ("cam", "pose", "speed", "truck")
 
 
-def frame_meta(header: dict, t: float | None = None) -> bytes:
+def frame_meta(header: dict, t: float | None = None, det: dict | None = None) -> bytes:
     meta = {"t": round(time.time() if t is None else t, 3)}
     meta.update({k: header[k] for k in META_FIELDS if header.get(k) not in (None, "")})
+    if det is not None:
+        meta["det"] = det
     data = json.dumps(meta, separators=(",", ":")).encode()
     return data if len(data) <= 0xFFFF else b""
 
