@@ -172,6 +172,10 @@ def crossing_paths(roads: list[dict]) -> list[list[tuple[float, float]]]:
     return paths
 
 
+def camera_pose(t: Truck, ground: float = 0.0) -> dict:
+    return {"x": t.x, "y": ground + CAM_HEIGHT, "z": t.z, "yaw": t.yaw, "pitch": 0.0, "roll": 0.0, "hfov": FOV_DEG}
+
+
 def path_distance(x: float, z: float, paths: list[list[tuple[float, float]]] = PEDESTRIAN_PATHS) -> float:
     best = math.inf
     for path in paths:
@@ -265,11 +269,15 @@ class FakeQuarry:
             pts[:, 1] += ground_at(terrain, wx, wz) - ground_at(terrain, t.x, t.z)
         return pts.astype(np.float32)
 
+    def ground(self, t: Truck) -> float:
+        terrain = self.world.get("terrain") if self.world else None
+        return float(ground_at(terrain, t.x, t.z)) if terrain is not None else 0.0
+
     def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
-        offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
+        focal = (CAM_W / 2) / math.tan(math.radians(FOV_DEG / 2))
+        offsets = np.arctan((np.arange(CAM_W) + 0.5 - CAM_W / 2) / focal)
         cos_off = np.cos(offsets)
         dist, obs, wall = self._ray_hits(t, math.radians(t.yaw) + offsets)
-        focal = (CAM_W / 2) / math.tan(math.radians(FOV_DEG / 2))
         horizon = CAM_H / 2
         rows = np.arange(CAM_H)[:, None] + 0.5
 
@@ -390,8 +398,9 @@ async def run(host: str, port: int, n_trucks: int, world_dir: str | None = None)
                 writer.write(encode_frame("overview", quarry.render_overview()))
                 for t in quarry.trucks:
                     rgb, depth = quarry.render_truck(t)
-                    pose = {"x": t.x, "z": t.z, "yaw": t.yaw}
-                    writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose=pose, speed=t.speed))
+                    ground = quarry.ground(t)
+                    pose = {"x": t.x, "y": ground, "z": t.z, "yaw": t.yaw}
+                    writer.write(encode_frame(t.id, rgb, depth, truck=t.id, pose=pose, speed=t.speed, cam=camera_pose(t, ground)))
                 await writer.drain()
                 next_tick += 1 / FPS
                 await asyncio.sleep(max(0.0, next_tick - time.monotonic()))

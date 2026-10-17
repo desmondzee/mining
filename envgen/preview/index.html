@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Quarry Demo Preview</title>
+<title>R² · Rocky Robotics</title>
 <style>
   :root { --bg: #0d0f12; --ink: #e8e3d8; --muted: #9a958a; --accent: #f2b63c; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--ink); font: 13px/1.4 system-ui, sans-serif; overflow: hidden; }
@@ -221,6 +221,33 @@ const inner = new THREE.Group(); inner.add(truckSrc);
 inner.scale.setScalar(TRUCK_SCALE * spec.length_m / Math.max(size.x, size.z));
 if (alongX) inner.rotation.y = Math.PI / 2;    // model front is -X -> face +Z
 unit.add(inner);
+// [bed-tip] re-parent the "DumpBed" mesh under a pivot at the chassis-frame hinge pins (unit space: front = +Z, rear = -Z);
+// tipping = rotation.x negative (front of the bed up). Hinge also in assets/models/komatsu_hd465/rig.json.
+{
+  let bed = null; truckSrc.traverse(o => { if (!bed && o.isMesh && o.material?.name === 'DumpBed') bed = o; });
+  if (bed) {
+    unit.updateMatrixWorld(true);
+    const bb = new THREE.Box3().setFromObject(bed);
+    const pivot = new THREE.Group(); pivot.name = 'bedPivot';
+    // real hinge pins sit at the rear end of the chassis frame (just behind the rear axle), not at the bed's tail lip
+    let frame = null; truckSrc.traverse(o => { if (!frame && o.isMesh && o.material?.name === 'Frame') frame = o; });
+    const fb = frame ? new THREE.Box3().setFromObject(frame) : null;
+    const hingeZ = fb ? fb.min.z + 0.15 * (bb.max.z - bb.min.z) / 8.7 : bb.min.z + 0.27 * (bb.max.z - bb.min.z);
+    pivot.position.set((bb.min.x + bb.max.x) / 2, bb.min.y, hingeZ);
+    unit.add(pivot); unit.updateMatrixWorld(true); pivot.attach(bed);
+  }
+}
+const BED_TIP_DEG = 48, BED_RAISE_S = 3, BED_LOWER_S = 2.5;
+function animateTruckBeds(dt) {   // [bed-tip] raise over ~3 s while dumping, hold, lower afterwards
+  for (const t of trucks) {
+    if (t.bed === undefined) { t.bed = t.g.getObjectByName('bedPivot') || null; t.bedA = 0; }
+    if (!t.bed) continue;
+    const ph = String(t.phase), dumping = /dump|tip/.test(ph) && !/^to_/.test(ph);   // not 'to_dump' (driving there)
+    const rate = dt / (dumping ? BED_RAISE_S : BED_LOWER_S);
+    t.bedA = THREE.MathUtils.clamp(t.bedA + (dumping ? rate : -rate), 0, 1);
+    t.bed.rotation.x = -THREE.MathUtils.degToRad(BED_TIP_DEG) * THREE.MathUtils.smootherstep(t.bedA, 0, 1);
+  }
+}
 
 // Per-point speed limit along a path: min(sim cap, grade limit, cornering limit)
 function profile(pts, loaded) {
@@ -415,6 +442,7 @@ const clock = new THREE.Clock();
 renderer.setAnimationLoop(() => {
   const dt = Math.min(clock.getDelta(), 0.1), t = clock.elapsedTime;
   for (const tr of trucks) place(tr, dt);
+  animateTruckBeds(dt);   // [bed-tip]
   animateExcavators(t);
   const W = innerWidth, H = innerHeight, half = Math.floor(W / 2);
   const showT = layout !== 3, showE = layout !== 1 && excavators.length > 0;

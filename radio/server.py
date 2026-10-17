@@ -412,14 +412,86 @@ def brain_site_ids(state: dict) -> set[str]:
     return {str(x.get("id")) if isinstance(x, dict) else str(x) for x in s}
 
 
+class RoadCorridor:
+    """Road corridors (centreline +- width_m/2) and world bounds, with a coarse grid index for fast nearest-segment queries."""
+
+    CELL = 20.0
+
+    def __init__(self, world: "World"):
+        self.segs: list[tuple[float, float, float, float, float]] = []  # ax, az, bx, bz, half-width
+        for r in world.raw.get("roads", []):
+            hw = float(r.get("width_m", 10.0)) / 2
+            pts = [(p[0], p[2]) for p in r["points"]]
+            for (ax, az), (bx, bz) in zip(pts, pts[1:]):
+                if (ax, az) != (bx, bz):
+                    self.segs.append((ax, az, bx, bz, hw))
+        b = world.bounds or [-1e6, -1e6, 1e6, 1e6]
+        self.bounds = (float(b[0]), float(b[1]), float(b[2]), float(b[3]))
+        self.grid: dict[tuple[int, int], list[int]] = {}
+        reach = max((s[4] for s in self.segs), default=0.0) + self.CELL
+        for i, (ax, az, bx, bz, _) in enumerate(self.segs):
+            for gx in range(int(math.floor((min(ax, bx) - reach) / self.CELL)), int(math.floor((max(ax, bx) + reach) / self.CELL)) + 1):
+                for gz in range(int(math.floor((min(az, bz) - reach) / self.CELL)), int(math.floor((max(az, bz) + reach) / self.CELL)) + 1):
+                    self.grid.setdefault((gx, gz), []).append(i)
+
+    def nearest(self, x: float, z: float) -> tuple[float, float, float, float] | None:
+        """(distance to centreline, closest x, closest z, half-width) of the nearest road segment, or None."""
+        cand = self.grid.get((int(math.floor(x / self.CELL)), int(math.floor(z / self.CELL)))) or range(len(self.segs))
+        best = None
+        for i in cand:
+            ax, az, bx, bz, hw = self.segs[i]
+            sx, sz = bx - ax, bz - az
+            t = max(0.0, min(1.0, ((x - ax) * sx + (z - az) * sz) / (sx * sx + sz * sz)))
+            cx, cz = ax + t * sx, az + t * sz
+            d = math.hypot(x - cx, z - cz)
+            if best is None or d - hw < best[0] - best[3]:
+                best = (d, cx, cz, hw)
+        return best
+
+    def off_road(self, x: float, z: float) -> float:
+        """Metres outside the nearest corridor edge (<= 0 means inside)."""
+        n = self.nearest(x, z)
+        return n[0] - n[3] if n else 0.0
+
+    def in_bounds(self, x: float, z: float, margin: float = 0.0) -> bool:
+        x0, z0, x1, z1 = self.bounds
+        return x0 + margin <= x <= x1 - margin and z0 + margin <= z <= z1 - margin
+
+    def clamp(self, x: float, z: float, margin: float = 0.5) -> tuple[float, float]:
+        """Project a point into (corridor - margin) and inside world bounds."""
+        x0, z0, x1, z1 = self.bounds
+        x, z = min(max(x, x0 + margin), x1 - margin), min(max(z, z0 + margin), z1 - margin)
+        n = self.nearest(x, z)
+        if n:
+            d, cx, cz, hw = n
+            lim = max(0.0, hw - margin)
+            if d > lim:
+                k = lim / d
+                x, z = cx + (x - cx) * k, cz + (z - cz) * k
+        return x, z
+
+
 class MockBrain:
-    """In-process stand-in: bicycle model + the brain's straight-line policy (no obstacles)."""
+    """In-process stand-in: bicycle model that follows the road network with pure pursuit.
+
+    Goals are routed over the road graph; the truck tracks that polyline with a short lookahead, slows before bends
+    (lateral acceleration <= LAT_ACC, turning radius >= WHEELBASE / tan(MAX_STEER) ~ 8.7 m) and every step is
+    hard-clamped to the road corridor (width_m / 2 of the nearest centreline) and to world bounds, so a mock truck
+    never leaves the road.
+    """
 
     mode = "mock"
     MAX_SPEED, MAX_STEER, WHEELBASE = 8.0, 30.0, 5.0
+    LAT_ACC, ACCEL, DECEL = 1.5, 1.0, 2.0
+    LOOKAHEAD_MIN, LOOKAHEAD_MAX = 6.0, 10.0
+    ARRIVE_M = 4.0
+    KTURN_SPEED, KTURN_EDGE_M = 1.5, 4.0
 
     def __init__(self, world: World):
         self.trucks: dict[str, dict] = {}
+        self.paths: dict[str, dict] = {}
+        self.kturn: dict[str, int] = {}
+        self.set_world(world)
         for i, (tid, t) in enumerate(sorted(world.trucks.items()) or [(f"truck-{i}", None) for i in range(3)]):
             if t:
                 x, z, yaw = t["spawn"][0], t["spawn"][1], t.get("heading_deg", 0.0)
@@ -427,6 +499,15 @@ class MockBrain:
                 x, z, yaw = -10.0 + 10 * i, 0.0, 0.0
             self.trucks[tid] = dict(id=tid, x=x, z=z, yaw=yaw, speed=0.0, goal=None, status="idle", throttle=0.0, steer=0.0)
         self.task: asyncio.Task | None = None
+
+    def set_world(self, world: World) -> None:
+        self.world = world
+        self.corridor = RoadCorridor(world)
+        self.paths.clear()
+
+    @property
+    def min_radius(self) -> float:
+        return self.WHEELBASE / math.tan(math.radians(self.MAX_STEER))
 
     def start(self) -> None:
         if not self.task:
@@ -443,23 +524,141 @@ class MockBrain:
                 self._step(t, dt * MOCK_SPEED)
             await asyncio.sleep(dt)
 
+    # ---- path
+    def _plan(self, t: dict) -> None:
+        gx, gz = t["goal"]
+        start = (t["x"], t["z"])
+        pts = [start]
+        if self.world.nodes:
+            pts += self.world.road_path(start, (gx, gz))
+        if math.dist(pts[-1], (gx, gz)) > 0.5:
+            pts.append((gx, gz))
+        # dedupe, densify to <= 2 m so curvature and lookahead are smooth
+        dense: list[tuple[float, float]] = [pts[0]]
+        for p in pts[1:]:
+            a = dense[-1]
+            d = math.dist(a, p)
+            if d < 0.3:
+                continue
+            n = max(1, math.ceil(d / 2.0))
+            dense += [(a[0] + (p[0] - a[0]) * k / n, a[1] + (p[1] - a[1]) * k / n) for k in range(1, n + 1)]
+        cum = [0.0]
+        for a, b in zip(dense, dense[1:]):
+            cum.append(cum[-1] + math.dist(a, b))
+        # speed cap at each vertex from curvature over +-3 points (~6 m chord)
+        vmax = [self.MAX_SPEED] * len(dense)
+        for i in range(len(dense)):
+            a, c = dense[max(0, i - 3)], dense[min(len(dense) - 1, i + 3)]
+            b = dense[i]
+            ab, bc, ac = math.dist(a, b), math.dist(b, c), math.dist(a, c)
+            if ab < 1e-6 or bc < 1e-6 or ac < 1e-6:
+                continue
+            area2 = abs((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
+            kappa = min(2 * area2 / (ab * bc * ac), 1 / self.min_radius)
+            if kappa > 1e-6:
+                vmax[i] = min(self.MAX_SPEED, math.sqrt(self.LAT_ACC / kappa))
+        self.paths[t["id"]] = {"goal": (gx, gz), "pts": dense, "cum": cum, "vmax": vmax, "i": 0}
+
+    def _point_at(self, p: dict, s: float) -> tuple[float, float]:
+        pts, cum = p["pts"], p["cum"]
+        if s >= cum[-1]:
+            return pts[-1]
+        j = max(p["i"], 0)
+        while j + 1 < len(cum) and cum[j + 1] < s:
+            j += 1
+        seg = cum[j + 1] - cum[j] or 1e-9
+        k = (s - cum[j]) / seg
+        return (pts[j][0] + (pts[j + 1][0] - pts[j][0]) * k, pts[j][1] + (pts[j + 1][1] - pts[j][1]) * k)
+
+    def _progress(self, p: dict, x: float, z: float) -> float:
+        """Arc length of the closest point on the path, searching a window ahead of the last one (no jumping back)."""
+        pts, cum = p["pts"], p["cum"]
+        best, best_s, best_i = math.inf, cum[p["i"]], p["i"]
+        for j in range(p["i"], min(len(pts) - 1, p["i"] + 15)):
+            (ax, az), (bx, bz) = pts[j], pts[j + 1]
+            sx, sz = bx - ax, bz - az
+            L2 = sx * sx + sz * sz or 1e-9
+            u = max(0.0, min(1.0, ((x - ax) * sx + (z - az) * sz) / L2))
+            d = math.hypot(x - ax - u * sx, z - az - u * sz)
+            if d < best:
+                best, best_s, best_i = d, cum[j] + u * math.sqrt(L2), j
+        p["i"] = best_i
+        return best_s
+
+    # ---- dynamics
     def _step(self, t: dict, dt: float) -> None:
+        turn = 0  # 0 = normal driving; +1 / -1 = K-turn leg forward / in reverse
         if t["goal"] is None:
-            throttle, steer, t["status"] = 0.0, 0.0, "idle"
+            throttle, steer, t["status"], target_v = 0.0, 0.0, "idle", 0.0
+            self.paths.pop(t["id"], None)
+            self.kturn.pop(t["id"], None)
         else:
-            gx, gz = t["goal"]
-            if math.hypot(gx - t["x"], gz - t["z"]) < 4.0:
-                throttle, steer, t["status"] = 0.0, 0.0, "arrived"
+            p = self.paths.get(t["id"])
+            if p is None or p["goal"] != tuple(t["goal"]):
+                self._plan(t)
+                p = self.paths[t["id"]]
+            gx, gz = p["pts"][-1]
+            if math.hypot(gx - t["x"], gz - t["z"]) < self.ARRIVE_M:
+                throttle, steer, t["status"], target_v = 0.0, 0.0, "arrived", 0.0
+                self.kturn.pop(t["id"], None)
             else:
-                err = (math.degrees(math.atan2(gx - t["x"], gz - t["z"])) - t["yaw"] + 180) % 360 - 180
-                steer = max(-1.0, min(1.0, err / 45.0))
-                throttle, t["status"] = 1.0 - 0.6 * abs(steer), "driving"
+                s = self._progress(p, t["x"], t["z"])
+                ld = min(self.LOOKAHEAD_MAX, max(self.LOOKAHEAD_MIN, 6.0 + 0.5 * abs(t["speed"])))
+                lx, lz = self._point_at(p, s + ld)
+                alpha = math.radians((math.degrees(math.atan2(lx - t["x"], lz - t["z"])) - t["yaw"] + 180) % 360 - 180)
+                t["status"] = "driving"
+                k = self.kturn.get(t["id"])
+                if k is None and abs(alpha) > math.radians(100):
+                    k = self.kturn[t["id"]] = 1
+                elif k is not None and abs(alpha) < math.radians(35):
+                    k = None
+                    self.kturn.pop(t["id"], None)
+                if k:
+                    # K-turn: full lock towards the path going forward, opposite lock in reverse, swap at the corridor edge
+                    turn = k
+                    steer = (1.0 if alpha > 0 else -1.0) * k
+                    target_v = self.KTURN_SPEED * k
+                else:
+                    # pure pursuit: delta = atan(2 L sin(alpha) / Ld)
+                    dist_l = max(1.0, math.hypot(lx - t["x"], lz - t["z"]))
+                    delta = math.atan2(2 * self.WHEELBASE * math.sin(alpha), dist_l)
+                    # never steer harder than the lateral-acceleration limit allows at the current speed
+                    v = max(abs(t["speed"]), 0.1)
+                    dmax = min(math.radians(self.MAX_STEER), math.atan(self.LAT_ACC * self.WHEELBASE / (v * v)))
+                    steer = max(-dmax, min(dmax, delta)) / math.radians(self.MAX_STEER)
+                    # target speed: curvature caps ahead (braking-distance aware), stop at goal, current steer
+                    remain = p["cum"][-1] - s
+                    target_v = min(self.MAX_SPEED, math.sqrt(2 * self.DECEL * max(0.0, remain - self.ARRIVE_M * 0.5)) + 0.5)
+                    for j in range(p["i"], len(p["pts"])):
+                        ahead = p["cum"][j] - s
+                        if ahead > self.MAX_SPEED ** 2 / (2 * self.DECEL) + 5:
+                            break
+                        target_v = min(target_v, math.sqrt(p["vmax"][j] ** 2 + 2 * self.DECEL * max(0.0, ahead)))
+                    tan_d = abs(math.tan(math.radians(steer * self.MAX_STEER)))
+                    if tan_d > 1e-4:
+                        target_v = min(target_v, math.sqrt(self.LAT_ACC * self.WHEELBASE / tan_d))
+                    if abs(alpha) > math.radians(60):
+                        target_v = min(target_v, self.KTURN_SPEED)
+                throttle = target_v / self.MAX_SPEED
         t["throttle"], t["steer"] = throttle, steer
-        t["speed"] += (throttle * self.MAX_SPEED - t["speed"]) * min(1.0, dt * 1.5)
+        dv = target_v - t["speed"]
+        t["speed"] += max(-self.DECEL * 1.5 * dt, min(self.ACCEL * 1.5 * dt if turn else self.ACCEL * dt, dv))
+        if not turn and target_v >= 0 and t["speed"] < 0:
+            t["speed"] = min(0.0, t["speed"] + self.DECEL * 1.5 * dt)
         yaw_rate = t["speed"] / self.WHEELBASE * math.tan(math.radians(steer * self.MAX_STEER))
         t["yaw"] = (t["yaw"] + math.degrees(yaw_rate * dt)) % 360
-        t["x"] += math.sin(math.radians(t["yaw"])) * t["speed"] * dt
-        t["z"] += math.cos(math.radians(t["yaw"])) * t["speed"] * dt
+        nx = t["x"] + math.sin(math.radians(t["yaw"])) * t["speed"] * dt
+        nz = t["z"] + math.cos(math.radians(t["yaw"])) * t["speed"] * dt
+        cx, cz = self.corridor.clamp(nx, nz)
+        if turn:
+            # swap K-turn direction just before the edge (look one truck half-length ahead in the travel direction)
+            sgn = 1.0 if t["speed"] >= 0 else -1.0
+            px = cx + math.sin(math.radians(t["yaw"])) * sgn * self.KTURN_EDGE_M
+            pz = cz + math.cos(math.radians(t["yaw"])) * sgn * self.KTURN_EDGE_M
+            hit = (cx, cz) != (nx, nz) or self.corridor.off_road(px, pz) > -0.5 or not self.corridor.in_bounds(px, pz, 0.5)
+            if hit and sgn == turn:
+                self.kturn[t["id"]] = -turn
+        t["x"], t["z"] = cx, cz
 
     async def state(self) -> dict:
         return {"sim_connected": True, "mock": True, "trucks": [dict(t, goal=list(t["goal"]) if t["goal"] else None) for t in self.trucks.values()]}
@@ -467,7 +666,8 @@ class MockBrain:
     async def set_goal(self, tid: str, x: float, z: float) -> None:
         if tid not in self.trucks:
             raise HTTPException(404, tid)
-        self.trucks[tid]["goal"] = (x, z)
+        # a goal off the road (map click) is pulled onto the nearest corridor point so the truck can actually arrive
+        self.trucks[tid]["goal"] = self.corridor.clamp(x, z, margin=1.0) if self.corridor.segs else (x, z)
         self.trucks[tid]["status"] = "driving"
 
     async def clear_goal(self, tid: str) -> None:
@@ -965,6 +1165,8 @@ class Radio:
             self.parser = Parser(w, lambda: self.truck_ids())
             self.parser.exc_state_fn = lambda: self.exc_state
             self.exc_state = {eid: self.exc_state.get(eid, "holding") for eid in w.excavators}
+            if isinstance(self.brain, MockBrain):
+                self.brain.set_world(w)
             log.info("world.json changed -> reloaded (%d sites, %d road nodes)", len(w.sites), len(w.nodes))
 
     async def loop(self) -> None:

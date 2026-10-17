@@ -11,6 +11,7 @@ services:
     environment:
       WORLD_DIR: /app/data/worlds/quarry
       PLANNER_CHECKPOINT: ${PLANNER_CHECKPOINT-/app/models/ppo.npz}
+      RADIO_URL: ${RADIO_URL:-http://radio:8090}
     volumes:
       - ./data:/app/data:ro
       - ./models:/app/models:ro

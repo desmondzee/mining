@@ -21,12 +21,12 @@ def expert_driver(env: DriveEnv, ob) -> int:
 
 
 def npz_driver(path: str) -> Driver:
-    """The brain's numpy scorer (brain/brain/planning/scorer.py) on an exported checkpoint."""
+    """The brain's numpy scorer (brain/brain/planning/learned.py) on an exported checkpoint."""
     import os
     import sys
 
     sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain"))
-    from brain.planning.scorer import load_scorer
+    from brain.planning.learned import load_scorer
 
     scorer = load_scorer(path)
 

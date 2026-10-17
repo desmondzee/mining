@@ -286,8 +286,55 @@ def main():
         f.write(glb)
     print(f"wrote {DST} ({len(glb) / 1e6:.1f} MB)")
 
+    write_rig_json(origin, parent)
     if args.plot:
         plot(args.plot, allpos, origin)
+
+
+# Dig-cycle keyframes shared with envgen/preview/index.html (EXC_KEYS) and MineExcavatorRig.cs:
+# [phase 0..1, house yaw deg (+ = toward the cab / +X side = truck side, glTF right-handed about +Y),
+#  boom, stick, bucket deg about local +X (+ = boom down / stick in / bucket curl)]; all 0 = modelled rest pose.
+DIG_KEYS = [
+    [0.00, 0.0, 12, -42, -60],
+    [0.12, 0.0, 20, -50, -85],
+    [0.30, 0.0, 14, -12, -10],
+    [0.42, 0.0, -14, -5, 0],
+    [0.60, 97.4, -14, -15, 0],
+    [0.70, 97.4, -12, -35, -110],
+    [0.78, 97.4, -12, -35, -100],
+    [1.00, 0.0, 12, -42, -60],
+]
+
+
+def write_rig_json(origin, parent):
+    import json
+    axes = {"house": [0, 1, 0], "boom": [1, 0, 0], "stick": [1, 0, 0], "bucket": [1, 0, 0]}
+    rig = {
+        "model": "excavator_rigged.glb",
+        "frame": "glTF scene coordinates of excavator_rigged.glb (identical to excavator.glb): metres, +Y up, "
+                 "+Z forward (boom reach), +X = cab side, right-handed",
+        "joints": {k: {"node": k, "parent": parent[k] or "excavator_rigged",
+                       "pivot_m": [round(float(v), 4) for v in origin[k]],
+                       "axis": axes.get(k), "positive": {
+                           "house": "swing toward the cab (+X) side", "boom": "boom down",
+                           "stick": "stick in (toward machine)", "bucket": "bucket curl"}.get(k)}
+                   for k in PARTS},
+        "notes": "Each node's local origin is its pivot. Angles are rotations about the axis in the node's parent frame "
+                 "(right-handed). tracks is static.",
+        "poses_deg": {
+            "rest": {"house": 0, "boom": 0, "stick": 0, "bucket": 0},
+            "reach": {"house": 0, "boom": 20, "stick": -50, "bucket": -85},
+            "dig": {"house": 0, "boom": 14, "stick": -12, "bucket": -10},
+            "lifted": {"house": 0, "boom": -14, "stick": -5, "bucket": 0},
+            "dump": {"house": 97.4, "boom": -12, "stick": -35, "bucket": -110},
+        },
+        "dig_cycle": {"period_s": 8, "columns": ["phase", "house", "boom", "stick", "bucket"], "keys_deg": DIG_KEYS,
+                      "interp": "smootherstep between keys; holding eases to rest"},
+    }
+    path = os.path.join(HERE, "excavator", "rig.json")
+    with open(path, "w") as f:
+        json.dump(rig, f, indent=2)
+    print("wrote", path)
 
 
 def rotx(a):

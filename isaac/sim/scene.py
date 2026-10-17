@@ -13,8 +13,10 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdLux
 from . import world as W
 from .kinematics import yaw_matrix
 from .pedestrians import PEDESTRIAN_HEIGHT, PEDESTRIAN_RADIUS
-from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_HEIGHT
-from .usdbuild import TO_ISAAC, camera_matrix, convert, isaac_matrix, sun_matrix
+from .sensors import CAM_H, CAM_W, HFOV, OVERVIEW_DISTANCE, OVERVIEW_ELEVATION, OVERVIEW_HFOV
+from .excavators import JOINTS
+from .kinematics import quat_from_matrix
+from .usdbuild import TO_ISAAC, camera_matrix, convert, convert_rig, isaac_matrix, sun_matrix
 
 APERTURE = 20.955
 PERSON_COLOUR = (1.0, 0.47, 0.08)
@@ -25,6 +27,26 @@ PROPS_JSON = "props.json"
 
 def gf(m: np.ndarray) -> Gf.Matrix4d:
     return Gf.Matrix4d(np.asarray(m, float).T.tolist())
+
+
+def overview_matrix(world) -> np.ndarray:
+    pts = np.vstack([np.asarray(r.points, float)[:, :3] for r in world.roads])
+    lo, hi = pts.min(0), pts.max(0)
+    target = (lo + hi) / 2
+    faces = [s.pos for s in world.sites if s.type == "ore"]
+    away = target[[0, 2]] - np.mean([np.asarray(f, float)[[0, -1]] for f in faces], axis=0) if faces else np.array([0.0, -1.0])
+    away /= np.linalg.norm(away) or 1.0
+    dist = float(np.hypot(hi[0] - lo[0], hi[2] - lo[2])) * OVERVIEW_DISTANCE
+    el = math.radians(OVERVIEW_ELEVATION)
+    eye = target + dist * np.array([math.cos(el) * away[0], math.sin(el), math.cos(el) * away[1]])
+    e, t = TO_ISAAC[:3, :3] @ eye, TO_ISAAC[:3, :3] @ target
+    f = (t - e) / np.linalg.norm(t - e)
+    right = np.cross(f, [0.0, 0.0, 1.0])
+    right /= np.linalg.norm(right)
+    m = np.eye(4)
+    m[:3, :3] = np.column_stack([right, np.cross(right, f), -f])
+    m[:3, 3] = e
+    return m
 
 
 def pinhole(stage, path: str, hfov: float, w: int, h: int) -> UsdGeom.Camera:
@@ -79,18 +101,35 @@ class IsaacRenderer:
         world = sim.world
 
         self.reference("/World/Scan", convert(world.asset("visual"), cache, "visual", world.scan_matrix))
-        self.tune_scan(config.get("scan", {}))
         surround = world.asset("surround")
         if surround and surround.exists():
-            self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4)))
-        self.lights(world, config)
+            self.reference("/World/Surround", convert(surround, cache, "surround", np.eye(4), config.get("surround", {}).get("tint")))
+        try:
+            from isaac.look import apply_look
+        except ImportError:
+            apply_look = None
+        if apply_look is None:
+            self.tune_scan(config.get("scan", {}))
+            self.lights(world, config)
+        else:
+            print(f"look: isaac.look.apply_look preset {config.get('look', 'default')}", flush=True)
+            apply_look(stage, config.get("look", "default"))
 
         ex_matrix, _ = W.model_box(W.REPO / W.EXCAVATOR_GLB, horizontal=W.EXCAVATOR_LENGTH)
-        ex_usd = convert(W.REPO / W.EXCAVATOR_GLB, cache, "excavator", ex_matrix)
+        ex_usd = convert_rig(W.REPO / W.EXCAVATOR_GLB, cache, "excavator", ex_matrix, JOINTS)
+        self.excavators = []
         for b in sim.excavators:
-            xf = UsdGeom.Xform.Define(stage, f"/World/Equipment/{b.id.replace('-', '_')}")
-            xf.AddTransformOp().Set(isaac_matrix(yaw_matrix(b.yaw), np.array([b.x, b.y, b.z])))
-            self.reference(xf.GetPath().pathString + "/model", ex_usd)
+            path = f"/World/Equipment/{b.id.replace('-', '_')}"
+            xf = UsdGeom.Xform.Define(stage, path)
+            base = xf.AddTransformOp()
+            self.reference(path + "/model", ex_usd)
+            joints, rel = {}, ""
+            for j in JOINTS:
+                rel = f"{rel}/{j}"
+                prim = stage.GetPrimAtPath(f"{path}/model{rel}")
+                if prim:
+                    joints[j] = UsdGeom.Xformable(prim).AddOrientOp()
+            self.excavators.append((b, base, joints))
 
         self.add_props(world, sim)
 
@@ -109,16 +148,8 @@ class IsaacRenderer:
             cameras.append((t.id, cam.GetPath().pathString, CAM_W, CAM_H))
         self.fx = self.make_fx(sim, args.fx)
 
-        xmin, zmin, xmax, zmax = world.bounds
-        height = zmax - zmin
-        over = UsdGeom.Camera.Define(stage, "/World/Overview")
-        over.CreateProjectionAttr(UsdGeom.Tokens.orthographic)
-        over.CreateHorizontalApertureAttr(height * CAM_W / CAM_H * 10)
-        over.CreateVerticalApertureAttr(height * 10)
-        over.CreateClippingRangeAttr(Gf.Vec2f(1.0, OVERVIEW_HEIGHT * 3))
-        top = np.eye(4)
-        top[:3, 3] = [(xmin + xmax) / 2, (zmin + zmax) / 2, OVERVIEW_HEIGHT]
-        over.AddTransformOp().Set(gf(top))
+        over = pinhole(stage, "/World/Overview", OVERVIEW_HFOV, CAM_W, CAM_H)
+        over.AddTransformOp().Set(gf(overview_matrix(world)))
         cameras.insert(0, ("overview", "/World/Overview", CAM_W, CAM_H))
 
         self.views = {}
@@ -139,12 +170,23 @@ class IsaacRenderer:
             body.CreateDisplayColorAttr([Gf.Vec3f(*PERSON_COLOUR)])
             body.AddTranslateOp().Set(Gf.Vec3d(0, 0, PEDESTRIAN_HEIGHT / 2))
 
-        self.annotators = []
+        self.annotators, self.tiles = [], None
+        self.subframes = int(config.get("rt_subframes", 1))
+        self.step_mode = config.get("step", "step_nowait")
+        self.lag = int(self.step_mode == "step_nowait")
+        sensors = cameras[: 1 + len(sim.trucks)]
+        if config.get("tiled", False) and len(sensors) > 1:
+            rp = rep.create.render_product_tiled(cameras=[p for _, p, _, _ in sensors], tile_resolution=(CAM_W, CAM_H))
+            ann = rep.AnnotatorRegistry.get_annotator("rgb")
+            ann.attach(rp)
+            self.tiles = (ann, [n for n, _, _, _ in sensors], math.ceil(math.sqrt(len(sensors))))
+            cameras = cameras[len(sensors) :]
         for name, path, w, h in cameras:
             rp = rep.create.render_product(path, (w, h))
             ann = rep.AnnotatorRegistry.get_annotator("rgb")
             ann.attach(rp)
             self.annotators.append((name, ann, np.zeros((h, w, 3), np.uint8)))
+        self.black = np.zeros((CAM_H, CAM_W, 3), np.uint8)
         self.update(sim, 0.0)
         omni.timeline.get_timeline_interface().play()
         for _ in range(WARMUP):
@@ -212,6 +254,13 @@ class IsaacRenderer:
             self.fx.update(dt, sim.fx_state())
         for op, t in zip(self.trucks, sim.trucks):
             op.Set(isaac_matrix(sim.rotation(t), sim.position(t)))
+        s = TO_ISAAC[:3, :3]
+        for b, base, joints in self.excavators:
+            base.Set(isaac_matrix(yaw_matrix(sim.excavator_yaw(b)), np.array([b.x, b.y, b.z])))
+            rot = sim.rigs[b.id].joint_rotations()
+            for j, op in joints.items():
+                w, x, y, z = quat_from_matrix(s @ rot[j] @ s)
+                op.Set(Gf.Quatf(float(w), Gf.Vec3f(float(x), float(y), float(z))))
         for op, w in zip(self.people, sim.walkers):
             op.Set(isaac_matrix(yaw_matrix(w.yaw), np.array([w.x, w.y, w.z])))
         self.view_poses = sim.view_poses(dt)
@@ -219,8 +268,26 @@ class IsaacRenderer:
             self.views[name].Set(camera_matrix(r, p))
 
     def render(self) -> dict:
-        self.app.update()
+        if self.step_mode == "update":
+            self.app.update()
+        else:
+            rep.orchestrator.step(
+                rt_subframes=self.subframes,
+                pause_timeline=False,
+                delta_time=0.0 if self.step_mode == "step_dt0" else None,
+                wait_for_render=self.step_mode != "step_nowait",
+            )
+        return self.collect()
+
+    def collect(self) -> dict:
         out = {}
+        if self.tiles is not None:
+            ann, names, side = self.tiles
+            data = np.asarray(ann.get_data())
+            for i, name in enumerate(names):
+                r, c = divmod(i, side)
+                tile = data[r * CAM_H : (r + 1) * CAM_H, c * CAM_W : (c + 1) * CAM_W, :3] if data.ndim == 3 and data.shape[0] >= side * CAM_H else self.black
+                out[name] = tile.copy()
         for name, ann, black in self.annotators:
             data = np.asarray(ann.get_data())
             out[name] = data[..., :3].copy() if data.ndim == 3 and data.size else black

@@ -9,7 +9,7 @@ import pytest
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "brain"))
 
 from brain.planning import driver, navmap  # noqa: E402
-from brain.planning.scorer import CheckpointError, NumpyScorer, load_scorer  # noqa: E402
+from brain.planning.learned import CheckpointError, NumpyScorer, load_scorer  # noqa: E402
 from sim2d import env as sim  # noqa: E402
 from sim2d.world import WORLDS_DIR, load  # noqa: E402
 

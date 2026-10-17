@@ -77,7 +77,7 @@ def main() -> None:
 
     sys.path.insert(0, str(ROOT / "brain"))
     from brain.planning.export_scorer import export
-    from brain.planning.scorer import CheckpointError
+    from brain.planning.learned import CheckpointError
 
     try:
         config = export(pt, pt.with_suffix(".npz"))

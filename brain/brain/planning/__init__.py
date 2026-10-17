@@ -26,12 +26,12 @@ __all__ = [
     "NavMap",
     "drive",
     "follow",
-    "learned_scorer",
     "lidar_height",
     "nav_map",
     "plan_route",
     "reset",
     "route_blocked",
+    "scorer",
     "static_obstacles",
 ]
 
@@ -46,7 +46,7 @@ def nav_map() -> NavMap | None:
 
 
 @cache
-def learned_scorer() -> Scorer | None:
+def scorer() -> Scorer | None:
     ckpt = os.environ.get("PLANNER_CHECKPOINT") or os.environ.get("PLANNER_CKPT")
     if not ckpt:
         return None
@@ -56,7 +56,7 @@ def learned_scorer() -> Scorer | None:
     if not path.is_file():
         log.warning("planner checkpoint %s not found; driving with the rule-based scorer", ckpt)
         return None
-    from .scorer import load_scorer
+    from .learned import load_scorer
 
     try:
         if path.suffix == ".pt":

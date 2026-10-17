@@ -61,7 +61,7 @@ Trucks use the rule-based candidate chooser unless `models/ppo.npz` exists ([spe
 
 ```bash
 uv run --with torch --with numpy tools/fetch_planner.py                                      # from Hugging Face pi-hack-mining
-cd brain && uv run --with torch python -m brain.planning.export_scorer ../models/ppo.pt     # or a local ppo.pt
+cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo.pt     # or a local ppo.pt
 docker compose up -d brain                                                                   # mounts ./models read-only
 PLANNER_CHECKPOINT=../models/ppo.npz uv run brain                                            # local
 ```

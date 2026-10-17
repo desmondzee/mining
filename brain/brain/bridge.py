@@ -8,6 +8,7 @@ from PIL import Image
 
 from . import policy
 from .hub import LatestHub
+from .hud import frame_meta, pack_meta
 from .protocol import ProtocolError, compress_points, decode_frame, decode_lidar, encode, read_message
 from .video import VideoHub
 from .world import Scan, World
@@ -96,12 +97,13 @@ class SimBridge:
 
     async def _on_frame(self, header: dict, payload: bytes, writer: asyncio.StreamWriter) -> None:
         rgb, depth, jpeg = decode_frame(header, payload)
+        meta = frame_meta(header)
         if self.h264:
-            self.h264.submit(header["camera"], rgb)
+            self.h264.submit(header["camera"], rgb, meta)
         if jpeg is None and self.video.subscribers:
             jpeg = await asyncio.to_thread(encode_jpeg, rgb)
         if jpeg is not None:
-            await self.video.publish(header["camera"], jpeg)
+            await self.video.publish(header["camera"], pack_meta(meta) + jpeg)
 
         truck_id = header.get("truck")
         if not truck_id:

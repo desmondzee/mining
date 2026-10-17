@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []))
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "sensor") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
         renderer = DryRenderer(sim)
@@ -112,8 +112,19 @@ def run(args: argparse.Namespace) -> None:
             rgb = np.clip(rgb + rng.normal(0, noise, rgb.shape), 0, 255).astype(np.uint8)
         return encode_jpeg(rgb), rgb.shape[1], rgb.shape[0]
 
+    dedupe = not args.dry_run
+    last_sig: dict[str, bytes] = {}
+    fresh: dict[str, int] = {}
+
     def publish(images, depths, poses, cams, views, frame):
-        encoded = dict(zip(images, jpeg_pool.map(jpeg, images.values())))
+        new = {}
+        for name, img in images.items():
+            sig = img[::17, ::23].tobytes()
+            if not dedupe or last_sig.get(name) != sig:
+                last_sig[name] = sig
+                fresh[name] = fresh.get(name, 0) + 1
+                new[name] = img
+        encoded = dict(zip(new, jpeg_pool.map(jpeg, new.values())))
         if bridge.connected.is_set():
             for name, (data, w, h) in encoded.items():
                 if name in poses:
@@ -131,7 +142,8 @@ def run(args: argparse.Namespace) -> None:
     start = last = next_tick = time.monotonic()
     next_lidar = next_actors = 0.0
     frames = 0
-    pending = None
+    pending = previous = None
+    lag = getattr(renderer, "lag", 0)
     timing = dict.fromkeys(["step", "render", "rays", "publish"], 0.0)
     stats_at = start + STATS_EVERY
     while app is None or app.is_running():
@@ -154,10 +166,10 @@ def run(args: argparse.Namespace) -> None:
         views = {name: cam_field(p, r, hfov[name]) for name, (p, r) in renderer.view_poses.items()}
         if live:
             if sim.time >= next_actors:
-                next_actors = sim.time + 1 / ACTORS_HZ
+                next_actors = max(next_actors + 1 / ACTORS_HZ, sim.time - 1 / ACTORS_HZ)
                 bridge.send(encode_actors(sim.actors()))
             if sim.time >= next_lidar:
-                next_lidar = sim.time + 1 / LIDAR_HZ
+                next_lidar = max(next_lidar + 1 / LIDAR_HZ, sim.time - 1 / LIDAR_HZ)
                 for t, points in zip(sim.trucks, sim.lidars()):
                     bridge.send(encode_lidar(t.id, points, t.pose()))
         t3 = time.monotonic()
@@ -165,7 +177,10 @@ def run(args: argparse.Namespace) -> None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        pending = publisher.submit(publish, images, depths, poses, cams, views, frames)
+        meta = (depths, poses, cams, views)
+        if lag:
+            meta, previous = (previous or meta), meta
+        pending = publisher.submit(publish, images, *meta, frames)
         timing["step"] += t1 - t0
         timing["render"] += t2 - t1
         timing["rays"] += t3 - t2
@@ -175,6 +190,7 @@ def run(args: argparse.Namespace) -> None:
             span = now - start
             print(
                 f"t={span:.0f}s fps={frames / span:.1f} " + " ".join(f"{k}={v / n * 1000:.1f}ms" for k, v in timing.items())
+                + " fresh_fps=" + ",".join(f"{k}:{v / span:.1f}" for k, v in fresh.items())
                 + f" connected={live} sent={bridge.sent} dropped={bridge.dropped} "
                 + " ".join(f"{t.id}=({t.x:.1f},{t.y:.1f},{t.z:.1f},{t.yaw:.0f}deg,{t.speed:.1f}m/s)" for t in sim.trucks),
                 flush=True,

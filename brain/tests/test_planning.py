@@ -150,6 +150,18 @@ def test_ground_points_are_not_obstacles(nav):
     assert len(local) == 0 and len(obstacles) == 0
 
 
+def test_no_submodule_hides_a_planning_function():
+    # The first import of brain.planning.<name> rebinds planning.<name>. A submodule named
+    # like a function must load with the package, or a later lazy import replaces the function.
+    import pkgutil
+    import sys
+
+    names = {m.name for m in pkgutil.iter_modules(planning.__path__)}
+    functions = {n for n in dir(planning) if callable(getattr(planning, n)) and not isinstance(getattr(planning, n), type)}
+    lazy = {n for n in names & functions if f"brain.planning.{n}" not in sys.modules}
+    assert not lazy
+
+
 def test_lidar_bins_run_left_to_right():
     ranges = lidar_ranges(np.array([[-10.0, 10.0], [0.5, 20.0], [10.0, 10.0]]))
     hits = np.flatnonzero(ranges < 100)

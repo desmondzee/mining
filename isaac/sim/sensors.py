@@ -4,7 +4,7 @@ import numpy as np
 
 CAM_W = 640
 CAM_H = 360
-FPS = 30
+FPS = 15
 HFOV = 90.0
 DEPTH_W = 64
 DEPTH_H = 36
@@ -21,7 +21,9 @@ LIDAR_CHANNELS = 30
 LIDAR_HZ = 10
 ACTORS_HZ = 10
 OVERVIEW_PX = 480
-OVERVIEW_HEIGHT = 400.0
+OVERVIEW_ELEVATION = 50.0
+OVERVIEW_DISTANCE = 0.8
+OVERVIEW_HFOV = 60.0
 
 
 def vfov(hfov: float = HFOV, w: int = CAM_W, h: int = CAM_H) -> float:

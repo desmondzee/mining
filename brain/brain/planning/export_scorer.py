@@ -1,6 +1,6 @@
 """Convert a sim2d PathScorer checkpoint (.pt) to the numpy .npz the brain loads.
 
-Usage (needs torch): cd brain && uv run --with torch python -m brain.planning.export_scorer ../models/ppo.pt [../models/ppo.npz]
+Usage (needs torch): cd brain && uv run --extra model python -m brain.planning.export_scorer ../models/ppo.pt [../models/ppo.npz]
 """
 
 import argparse
@@ -12,7 +12,7 @@ from pathlib import Path
 import numpy as np
 
 from .driver import CAND_DIM, OBS_DIM
-from .scorer import CheckpointError, NumpyScorer
+from .learned import CheckpointError, NumpyScorer
 
 
 def state_dict(ckpt) -> tuple[dict, dict]:

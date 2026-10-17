@@ -1,28 +1,47 @@
 import { createLidarView } from "./lidar.js";
 import { lidarDecoder } from "./lidar_stream.js";
-import { palette, renderChrome } from "./ui.js";
-import { videoFeed } from "./video.js";
+import { createHud } from "./hud.js";
+import { createOps, kmh } from "./ops.js";
+import { createPalette } from "./palette.js";
+import { createKpis, createRadio } from "./radio.js";
+import { createDialog, createShell, isTyping, SPLITS, VIEWS } from "./shell.js";
+import { applyTheme, onTheme, palette, renderChrome, setStatusSource, storedTheme, THEMES } from "./ui.js";
+import { readMeta, videoFeed } from "./video.js";
 
-const COLOURS = ["#4fc3f7", "#ffb74d", "#ef5350", "#81c784"];
+const COLOURS = ["#9aa5e6", "#d9b98a", "#c98f86", "#9cbfa6"];
 const feeds = document.getElementById("feeds");
 const map = document.getElementById("map");
 const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
-const simStatus = document.getElementById("sim-status");
-const summary = document.getElementById("summary");
-const PEDESTRIAN_COLOUR = "#ff7814";
-const SITE_COLOURS = { ore: "#4cc3a0", crusher: "#e5534b", dump: "#b36ae2", parking: "#f0b428", fuel: "#f08c28" };
-const PX = map.width / 400;
+const barCamera = document.getElementById("bar-camera");
+const stopButton = document.getElementById("stop-all");
+const captionHint = document.getElementById("caption-hint");
+const SITE_COLOURS = { ore: "#7fa38f", crusher: "#b0736a", dump: "#8f86a8", parking: "#b59a5e", fuel: "#b5835e" };
 const lidarView = createLidarView(document.getElementById("lidar"));
+const hud = createHud({ focusOnClick: false });
 
-let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [] };
+let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [], cameras: [] };
 let network = { roads: [], sites: [], junctions: [] };
 let worldSeq = null;
 let preview = null;
 let selected = null;
+let PX = 1;
+const fit = { s: 1, ox: 0, oy: 0 };
 const tiles = new Map();
 const decoder = new TextDecoder();
 let stopLidar = null;
+
+const shell = createShell({ onView: (v) => { renderCaption(); resizeMap(); if (v === "judge") ops.renderQr(); }, onCamera: (name) => { hud.setDetail(name); renderCaption(); renderTruckList(); } });
+const kpis = createKpis();
+const radio = createRadio({ onEvent: (ev) => ops.addLine(ev), onState: (msg) => kpis.update(msg) });
+const ops = createOps({ radio, kpis });
+setStatusSource(ops.status);
+fetch("/radio/data/worlds/quarry/world.json").then((r) => (r.ok ? r.json() : null)).then((w) => {
+  const cap = w?.trucks?.[0]?.capacity_t ?? w?.design?.design_truck?.payload_t;
+  if (cap) kpis.capacity = cap;
+}).catch(() => {});
+const help = createDialog(document.getElementById("help"));
+const commandPalette = createPalette({ root: document.getElementById("palette"), commands });
 
 function wsUrl(path) {
   return `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}${path}`;
@@ -52,19 +71,26 @@ function truckColour(id) {
   return COLOURS[(i < 0 ? 0 : i) % COLOURS.length];
 }
 
+function cameraOrder() {
+  return [...tiles.keys()].sort((a, b) => (a === "overview" ? -1 : b === "overview" ? 1 : a.localeCompare(b)));
+}
+
 function tileFor(name) {
   let tile = tiles.get(name);
   if (tile) return tile;
   const el = document.createElement("div");
-  el.className = name === "overview" ? "feed featured" : "feed";
-  el.innerHTML = `<canvas></canvas><div class="feed-wait">Waiting for frames</div><div class="feed-bar top"><span class="chip name"><i></i><span></span></span><span class="spacer"></span><span class="chip status"></span></div><div class="feed-bar bottom"><span class="chip speed"></span><span class="chip fps"></span></div>`;
-  el.querySelector(".name span").textContent = name;
+  el.className = "feed";
+  el.dataset.camera = name;
+  el.innerHTML = `<canvas></canvas><div class="feed-wait">no signal</div>`;
   el.querySelector("canvas").setAttribute("aria-label", `${name} camera`);
-  const names = [...tiles.keys(), name].sort((a, b) => (a === "overview" ? -1 : b === "overview" ? 1 : a.localeCompare(b)));
-  const before = tiles.get(names[names.indexOf(name) + 1]);
-  feeds.insertBefore(el, before ? before.el : null);
-  tile = { el, canvas: el.querySelector("canvas"), fpsEl: el.querySelector(".fps"), statusEl: el.querySelector(".status"), speedEl: el.querySelector(".speed"), frames: 0, busy: false };
+  feeds.append(el);
+  tile = { el, canvas: el.querySelector("canvas"), frames: 0, fps: 0, busy: false };
   tiles.set(name, tile);
+  hud.attach(name, el, tile.canvas);
+  tile.onFrame = (meta) => hud.frame(name, meta);
+  document.getElementById("feeds-empty").hidden = true;
+  const active = shell.camera && tiles.has(shell.camera) ? shell.camera : tiles.has("overview") ? "overview" : name;
+  if (!feeds.querySelector(".feed.active") || active === name) shell.setCamera(active, tiles);
   return tile;
 }
 
@@ -76,13 +102,15 @@ async function onVideo(ev) {
   if (tile.busy) return;
   tile.busy = true;
   try {
-    const bmp = await createImageBitmap(new Blob([buf.subarray(1 + n)], { type: "image/jpeg" }));
+    const { meta, end } = readMeta(buf, 1 + n);
+    const bmp = await createImageBitmap(new Blob([buf.subarray(end)], { type: "image/jpeg" }));
     if (tile.canvas.width !== bmp.width) tile.canvas.width = bmp.width;
     if (tile.canvas.height !== bmp.height) tile.canvas.height = bmp.height;
     tile.canvas.getContext("2d").drawImage(bmp, 0, 0);
     bmp.close();
     tile.frames++;
     tile.el.classList.add("live");
+    tile.onFrame(meta);
   } finally {
     tile.busy = false;
   }
@@ -90,38 +118,66 @@ async function onVideo(ev) {
 
 setInterval(() => {
   for (const tile of tiles.values()) {
-    tile.fpsEl.textContent = `${tile.frames} fps`;
+    tile.fps = tile.frames;
     tile.el.classList.toggle("stale", tile.frames === 0);
     tile.frames = 0;
   }
+  renderCaption();
 }, 1000);
 
-function toCanvas(x, z) {
+function resizeMap() {
+  const dpr = Math.min(devicePixelRatio || 1, 2);
+  const w = Math.max(1, Math.round(map.clientWidth * dpr));
+  const h = Math.max(1, Math.round(map.clientHeight * dpr));
+  if (map.width !== w || map.height !== h) { map.width = w; map.height = h; }
   const [xmin, zmin, xmax, zmax] = state.bounds;
-  return [((x - xmin) / (xmax - xmin)) * map.width, (1 - (z - zmin) / (zmax - zmin)) * map.height];
+  const W = xmax - xmin, H = zmax - zmin;
+  const pts = [...network.sites.map((p) => [p.x, p.z]), ...network.roads.flatMap((r) => r.points.map((p) => [p.x, p.z]))];
+  const box = pts.length
+    ? pts.reduce((b, [x, z]) => [Math.min(b[0], x), Math.min(b[1], z), Math.max(b[2], x), Math.max(b[3], z)], [Infinity, Infinity, -Infinity, -Infinity])
+    : [xmin, zmin, xmax, zmax];
+  const pad = 1.1;
+  const sContent = Math.min(w / ((box[2] - box[0]) * pad || W), h / ((box[3] - box[1]) * pad || H));
+  fit.s = Math.min(Math.max(w / W, h / H), sContent);
+  const place = (size, span, centre, lo) => {
+    const o = size / 2 - (centre - lo) * fit.s;
+    return span * fit.s >= size ? Math.min(0, Math.max(size - span * fit.s, o)) : (size - span * fit.s) / 2;
+  };
+  fit.ox = place(w, W, (box[0] + box[2]) / 2, xmin);
+  fit.oy = place(h, H, zmax - (box[1] + box[3]) / 2, 0);
+  PX = Math.min(w, h) / 600;
+  drawMap();
+}
+
+new ResizeObserver(resizeMap).observe(map);
+
+function toCanvas(x, z) {
+  const [xmin, , , zmax] = state.bounds;
+  return [fit.ox + (x - xmin) * fit.s, fit.oy + (zmax - z) * fit.s];
 }
 
 function toWorld(px, py) {
-  const [xmin, zmin, xmax, zmax] = state.bounds;
-  return [xmin + (px / map.width) * (xmax - xmin), zmin + (1 - py / map.height) * (zmax - zmin)];
+  const [xmin, , , zmax] = state.bounds;
+  return [xmin + (px - fit.ox) / fit.s, zmax - (py - fit.oy) / fit.s];
 }
 
 function metresToPx(m) {
-  return (m / (state.bounds[2] - state.bounds[0])) * map.width;
+  return m * fit.s;
 }
 
 async function loadWorld() {
   const w = await (await fetch("/api/world")).json();
   network = { roads: w.roads, sites: w.sites, junctions: w.junctions };
   preview = null;
+  document.documentElement.classList.remove("imagery");
   const aligned = w.preview_bounds && w.preview_bounds.every((v, i) => Math.abs(v - w.bounds[i]) < 0.01);
   if (w.preview && aligned && w.roads.length) {
     const img = new Image();
-    img.onload = () => { preview = img; drawMap(); };
+    img.onload = () => { preview = img; document.documentElement.classList.add("imagery"); drawMap(); };
     img.src = `/api/world/preview?seq=${worldSeq}`;
   }
-  for (const li of truckItems.values()) fillSiteSelect(li.querySelector("select"));
-  drawMap();
+  resizeMap();
+  fillSiteSelect();
 }
 
 function polyline(points) {
@@ -132,56 +188,59 @@ function polyline(points) {
 function drawNetwork() {
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
-  ctx.strokeStyle = preview ? "rgba(235, 225, 205, 0.28)" : "rgba(190, 175, 150, 0.35)";
+  ctx.strokeStyle = palette.road;
   for (const r of network.roads) {
     ctx.lineWidth = Math.max(metresToPx(r.width_m), 2 * PX);
     polyline(r.points.map((p) => [p.x, p.z]));
     ctx.stroke();
   }
-  ctx.fillStyle = "#d8d2c4";
+  ctx.fillStyle = palette.junction;
   for (const j of network.junctions) {
     const [cx, cy] = toCanvas(j.x, j.z);
-    ctx.beginPath(); ctx.arc(cx, cy, 3 * PX, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 2 * PX, 0, Math.PI * 2); ctx.fill();
   }
-  ctx.font = `${11 * PX}px system-ui, sans-serif`;
+  if (preview) return;
+  ctx.font = `500 ${11 * PX}px Inter, system-ui, sans-serif`;
   ctx.textAlign = "center";
   network.sites.forEach((s, i) => {
     const [cx, cy] = toCanvas(s.x, s.z);
-    ctx.fillStyle = SITE_COLOURS[s.type] || "#ccc";
-    ctx.strokeStyle = "#000";
-    ctx.lineWidth = 1.5 * PX;
-    ctx.beginPath(); ctx.rect(cx - 5 * PX, cy - 5 * PX, 10 * PX, 10 * PX); ctx.fill(); ctx.stroke();
-    const dy = (i % 2 ? 18 : -10) * PX;
-    ctx.lineWidth = 3 * PX;
+    ctx.fillStyle = SITE_COLOURS[s.type] || palette.inkMuted;
+    ctx.fillRect(cx - 3.5 * PX, cy - 3.5 * PX, 7 * PX, 7 * PX);
+    const dy = (i % 2 ? 18 : -11) * PX;
+    ctx.lineWidth = 4 * PX;
+    ctx.strokeStyle = palette.halo;
     ctx.strokeText(s.name, cx, cy + dy);
+    ctx.fillStyle = palette.inkMuted;
     ctx.fillText(s.name, cx, cy + dy);
   });
 }
 
 function drawMap() {
   ctx.clearRect(0, 0, map.width, map.height);
+  const [x0, y0] = toCanvas(state.bounds[0], state.bounds[3]);
+  const [x1, y1] = toCanvas(state.bounds[2], state.bounds[1]);
   if (preview) {
-    ctx.globalAlpha = 0.6;
-    ctx.drawImage(preview, 0, 0, map.width, map.height);
+    ctx.globalAlpha = palette.previewAlpha;
+    ctx.drawImage(preview, x0, y0, x1 - x0, y1 - y0);
     ctx.globalAlpha = 1;
   } else {
     ctx.strokeStyle = palette.grid;
-    ctx.lineWidth = PX;
-    for (let i = 1; i < 10; i++) {
-      const p = (i / 10) * map.width;
-      ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, map.height); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(map.width, p); ctx.stroke();
+    ctx.lineWidth = 1;
+    for (let i = 0; i <= 10; i++) {
+      const px = x0 + ((x1 - x0) * i) / 10, py = y0 + ((y1 - y0) * i) / 10;
+      ctx.beginPath(); ctx.moveTo(px, y0); ctx.lineTo(px, y1); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x0, py); ctx.lineTo(x1, py); ctx.stroke();
     }
   }
   drawNetwork();
   ctx.fillStyle = palette.obstacle;
   for (const o of state.obstacles) {
     const [cx, cy] = toCanvas(o.x, o.z);
-    ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.5 * PX), 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.2 * PX), 0, Math.PI * 2); ctx.fill();
   }
   ctx.strokeStyle = palette.path;
   ctx.lineWidth = PX;
-  ctx.setLineDash([3 * PX, 3 * PX]);
+  ctx.setLineDash([3 * PX, 4 * PX]);
   for (const path of state.paths) {
     if (path.length < 2) continue;
     ctx.beginPath();
@@ -193,7 +252,33 @@ function drawMap() {
   ctx.fillStyle = palette.pedestrian;
   for (const p of state.pedestrians) {
     const [cx, cy] = toCanvas(p.x, p.z);
-    ctx.beginPath(); ctx.arc(cx, cy, 3.5 * PX, 0, Math.PI * 2); ctx.fill();
+    ctx.beginPath(); ctx.arc(cx, cy, 2.5 * PX, 0, Math.PI * 2); ctx.fill();
+  }
+  const hz = ops.hazard;
+  if (hz) {
+    const [hx, hy] = toCanvas(hz.ped.x, hz.ped.z);
+    ctx.strokeStyle = palette.pedestrian;
+    ctx.lineWidth = PX;
+    ctx.globalAlpha = 0.9;
+    ctx.beginPath(); ctx.arc(hx, hy, metresToPx(ops.thresholds.CRIT_M), 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 0.45;
+    ctx.beginPath(); ctx.arc(hx, hy, metresToPx(ops.thresholds.WARN_M), 0, Math.PI * 2); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  if (radio.online) {
+    for (const e of radio.state.excavators || []) {
+      const [ex, ey] = toCanvas(e.x, e.z);
+      ctx.save();
+      ctx.translate(ex, ey);
+      ctx.rotate(Math.PI / 4);
+      ctx.strokeStyle = palette.ink;
+      ctx.fillStyle = palette.ink;
+      ctx.lineWidth = 1.2 * PX;
+      const r = 4 * PX;
+      if (e.state === "digging") ctx.fillRect(-r, -r, 2 * r, 2 * r);
+      else ctx.strokeRect(-r, -r, 2 * r, 2 * r);
+      ctx.restore();
+    }
   }
   for (const t of state.trucks) {
     const colour = truckColour(t.id);
@@ -201,7 +286,7 @@ function drawMap() {
     if (t.goal) {
       const [gx, gy] = toCanvas(t.goal[0], t.goal[1]);
       ctx.strokeStyle = colour;
-      ctx.lineWidth = 2 * PX;
+      ctx.lineWidth = 1.5 * PX;
       if (t.route && t.route.length) {
         polyline([[t.x, t.z], ...t.route]);
         ctx.stroke();
@@ -210,7 +295,7 @@ function drawMap() {
         ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(gx, gy); ctx.stroke();
         ctx.setLineDash([]);
       }
-      ctx.beginPath(); ctx.arc(gx, gy, 7 * PX, 0, Math.PI * 2); ctx.stroke();
+      ctx.beginPath(); ctx.arc(gx, gy, 6 * PX, 0, Math.PI * 2); ctx.stroke();
     }
     const cands = t.candidates || [];
     const scores = t.candidate_scores || [];
@@ -232,11 +317,11 @@ function drawMap() {
     ctx.save();
     ctx.translate(cx, cy);
     ctx.rotate((t.yaw * Math.PI) / 180);
+    ctx.scale(PX, PX);
     ctx.fillStyle = colour;
     ctx.strokeStyle = t.id === selected ? palette.selected : palette.outline;
-    ctx.lineWidth = 2;
-    ctx.scale(PX, PX);
-    ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(-7, 8); ctx.closePath();
+    ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.moveTo(0, -9); ctx.lineTo(6, 7); ctx.lineTo(-6, 7); ctx.closePath();
     ctx.fill(); ctx.stroke();
     ctx.restore();
   }
@@ -251,84 +336,98 @@ function select(id) {
   lidarView.clear();
   stopLidar = connect(`/ws/lidar?truck=${encodeURIComponent(id)}`, onLidar, true);
   renderTruckList();
+  renderCaption();
   drawMap();
 }
 
-const truckItems = new Map();
-
-function setBar(bar, value, centered) {
-  const v = Math.max(-1, Math.min(1, value));
-  const fill = bar.querySelector(".bar-fill");
-  fill.style.left = centered ? `${50 + Math.min(v, 0) * 50}%` : "0%";
-  fill.style.width = `${Math.abs(v) * (centered ? 50 : 100)}%`;
-  bar.querySelector(".bar-value").textContent = `${v >= 0 && centered ? "+" : ""}${v.toFixed(2)}`;
-}
-
 function sendGoal(id, body) {
-  fetch(`/api/trucks/${encodeURIComponent(id)}/goal`, {
+  return fetch(`/api/trucks/${encodeURIComponent(id)}/goal`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
 }
 
-function fillSiteSelect(sel) {
-  sel.replaceChildren(new Option("Send to…", ""), ...network.sites.map((s) => new Option(s.name, s.id)));
-  sel.closest(".send-group").hidden = !network.sites.length;
+function stopTruck(id) {
+  return fetch(`/api/trucks/${encodeURIComponent(id)}/goal`, { method: "DELETE" });
 }
+
+async function stopAll() {
+  const [rel] = await Promise.allSettled([radio.release(), ...state.trucks.map((t) => stopTruck(t.id))]);
+  ops.notice(rel.status === "fulfilled" ? "all stopped · trucks and excavators holding" : "trucks stopped · radio unreachable");
+}
+
+let armedAt = 0;
+let armTimer = 0;
+function armedStop() {
+  clearTimeout(armTimer);
+  if (Date.now() - armedAt < 2000) {
+    armedAt = 0;
+    stopButton.classList.remove("armed");
+    stopButton.textContent = "stop";
+    stopAll();
+  } else {
+    armedAt = Date.now();
+    stopButton.classList.add("armed");
+    stopButton.textContent = "stop all?";
+    armTimer = setTimeout(() => { stopButton.classList.remove("armed"); stopButton.textContent = "stop"; }, 2000);
+  }
+}
+
+stopButton.addEventListener("click", armedStop);
+
+async function sendRadio(text) {
+  try {
+    await radio.command(text);
+  } catch {
+    ops.notice("radio unreachable");
+  }
+}
+
+function fillSiteSelect() {
+  commandPalette.refresh();
+}
+
+const truckItems = new Map();
 
 function renderTruckList() {
   for (const t of state.trucks) {
     let li = truckItems.get(t.id);
     if (!li) {
       li = document.createElement("li");
-      li.innerHTML = `
-        <button type="button" class="truck-head"><span class="swatch"></span><span class="truck-id"></span><span class="chip status"></span><span class="truck-speed num"><span class="speed"></span><small>m/s</small></span></button>
-        <div class="bars">
-          <div class="bar throttle"><span>Thr</span><span class="bar-track"><span class="bar-fill"></span></span><span class="bar-value num"></span></div>
-          <div class="bar steer centered"><span>Str</span><span class="bar-track"><span class="bar-fill"></span></span><span class="bar-value num"></span></div>
-        </div>
-        <div class="truck-foot">
-          <span class="truck-goal"><span>Goal</span><span class="goal num"></span><span class="goal-site"></span></span>
-          <span class="truck-actions">
-            <span class="send-group" hidden><select class="btn send-site" aria-label="Destination site"><option value="">Send to…</option></select></span>
-            <button type="button" class="btn danger stop">Stop</button>
-          </span>
-        </div>`;
-      li.querySelector(".truck-id").textContent = t.id;
-      li.querySelector(".stop").setAttribute("aria-label", `Stop ${t.id}`);
-      li.onclick = () => select(t.id);
-      const sel = li.querySelector(".send-site");
-      fillSiteSelect(sel);
-      sel.onclick = (e) => e.stopPropagation();
-      sel.onchange = () => {
-        if (sel.value) sendGoal(t.id, { site: sel.value });
-        sel.value = "";
-      };
-      li.querySelector(".stop").onclick = (e) => {
-        e.stopPropagation();
-        fetch(`/api/trucks/${encodeURIComponent(t.id)}/goal`, { method: "DELETE" });
-      };
+      li.innerHTML = `<span class="id"></span><span class="st"></span><span class="sp"></span><span class="go"></span>`;
+      li.dataset.truck = t.id;
+      li.querySelector(".id").textContent = t.id;
       truckList.append(li);
       truckItems.set(t.id, li);
     }
-    li.className = t.id === selected ? "truck selected" : "truck";
-    li.querySelector(".truck-head").setAttribute("aria-pressed", String(t.id === selected));
-    li.querySelector(".swatch").style.background = truckColour(t.id);
-    const status = li.querySelector(".status");
-    status.textContent = t.status;
-    status.className = `chip status status-${t.status}`;
-    li.querySelector(".speed").textContent = t.speed.toFixed(1);
-    setBar(li.querySelector(".throttle"), t.throttle ?? 0, false);
-    setBar(li.querySelector(".steer"), t.steer ?? 0, true);
-    li.querySelector(".goal").textContent = t.goal ? `${t.goal[0].toFixed(0)}, ${t.goal[1].toFixed(0)}` : "—";
-    li.querySelector(".goal-site").textContent = t.goal_site ? siteName(t.goal_site) : "";
+    li.classList.toggle("selected", t.id === selected);
+    li.classList.toggle("viewed", t.id === shell.camera);
+    li.querySelector(".st").textContent = t.status;
+    li.querySelector(".sp").textContent = kmh(t.speed);
+    const task = ops.truckLine(t).split(" · ")[0];
+    const goal = task !== t.status ? task : t.goal_site ? `to ${siteName(t.goal_site)}` : t.goal ? `to ${t.goal[0].toFixed(0)}, ${t.goal[1].toFixed(0)}` : "";
+    const ctl = t.id === selected && (t.throttle || t.steer) ? `  thr ${(t.throttle ?? 0).toFixed(2)}  str ${(t.steer ?? 0) >= 0 ? "+" : ""}${(t.steer ?? 0).toFixed(2)}` : "";
+    li.querySelector(".go").textContent = goal + ctl;
   }
 }
 
 function siteName(id) {
   const s = network.sites.find((n) => n.id === id);
   return s ? s.name : id;
+}
+
+const caption = document.querySelector(".chrome-bottom");
+
+function renderCaption() {
+  const view = shell.view;
+  const cam = shell.camera;
+  const fps = tiles.get(cam)?.fps;
+  ops.renderKpis();
+  const onVideo = view === "video" || (view === "split" && shell.split.includes("video"));
+  caption.toggleAttribute("data-only", onVideo && state.trucks.some((t) => t.id === cam));
+  barCamera.textContent = onVideo ? cam || "" : view === "lidar" ? selected || "" : "";
+  captionHint.textContent = onVideo && cam && fps !== undefined ? `${fps} fps` : "";
 }
 
 function onState(ev) {
@@ -338,13 +437,12 @@ function onState(ev) {
     loadWorld();
   }
   if (!selected && state.trucks.length) select(state.trucks[0].id);
-  simStatus.textContent = state.sim_connected ? "sim online" : "sim offline";
-  simStatus.className = `pill ${state.sim_connected ? "on" : "off"}`;
-  const model = state.truck_model ? ` · ${state.truck_model}` : "";
-  summary.textContent = `${state.trucks.length} trucks · ${state.pedestrians.length} pedestrians · ${state.obstacles.length} obstacles${model}`;
+  ops.safety(state);
+  ops.renderRoster(state, siteName);
   renderTruckList();
   drawMap();
   renderChrome(state, { tileFor, tiles, truckColour, selected });
+  hud.setState(state);
 }
 
 map.addEventListener("click", (e) => {
@@ -353,6 +451,99 @@ map.addEventListener("click", (e) => {
   const [x, z] = toWorld(((e.clientX - r.left) / r.width) * map.width, ((e.clientY - r.top) / r.height) * map.height);
   sendGoal(selected, { x, z });
 });
+
+function showCamera(name) {
+  if (!tiles.has(name)) return;
+  shell.setCamera(name, tiles);
+  if (!(shell.view === "video" || (shell.view === "split" && shell.split.includes("video")))) shell.setView("video");
+}
+
+function focusTruck(id) {
+  select(id);
+  if (tiles.has(id)) showCamera(id);
+}
+
+const VIEW_KEYS = { video: "V", map: "M", lidar: "L", fleet: "F", radio: "R", judge: "J", split: "S" };
+const VIEW_BY_KEY = Object.fromEntries(Object.entries(VIEW_KEYS).map(([v, k]) => [k.toLowerCase(), v]));
+const SPLIT_LABEL = (s) => s.split(" ").join(" · ");
+const URLISH = /^(?:radio url|url)\s+(\S+)$/i;
+const PINISH = /^(?:pin|access code)\s+(\S+)$/i;
+
+function commands(query = "") {
+  const out = [];
+  for (const v of VIEWS) out.push({ id: `view:${v}`, group: "view", title: v[0].toUpperCase() + v.slice(1), keywords: "tab view show go", detail: shell.view === v ? "current" : "", keys: [VIEW_KEYS[v]], run: () => shell.setView(v) });
+  cameraOrder().forEach((name, i) => out.push({ id: `camera:${name}`, group: "camera", title: `View ${name}`, keywords: "camera cam feed video", detail: shell.camera === name ? "current" : "", keys: i < 9 ? [String(i + 1)] : null, run: () => showCamera(name) }));
+  if (state.trucks.length) out.push({ id: "stop:all", group: "fleet", title: "Stop all", keywords: "everything trucks excavators halt release emergency estop", detail: "trucks · excavators · radio jobs", keys: ["⇧", "esc"], confirm: "Press ↵ again to stop everything", run: stopAll });
+  for (const t of state.trucks) {
+    out.push({ id: `focus:${t.id}`, group: "fleet", title: `Focus ${t.id}`, keywords: "select follow truck", detail: t.status, run: () => focusTruck(t.id) });
+    out.push({ id: `stop:${t.id}`, group: "fleet", title: `Stop ${t.id}`, keywords: "halt cancel goal truck", detail: t.goal_site ? siteName(t.goal_site) : "", run: () => stopTruck(t.id) });
+  }
+  for (const t of state.trucks) {
+    for (const s of network.sites) {
+      out.push({ id: `send:${t.id}:${s.id}`, group: "send", title: `Send ${t.id} to ${s.name}`, keywords: `${s.type} ${s.id} goto dispatch route drive`, detail: s.type, searchOnly: true, run: () => { select(t.id); sendGoal(t.id, { site: s.id }); } });
+    }
+  }
+  for (const s of SPLITS) out.push({ id: `split:${s}`, group: "layout", title: `Split ${SPLIT_LABEL(s)}`, keywords: "custom layout tiles", detail: shell.view === "split" && shell.split === s ? "current" : "", run: () => shell.setSplit(s) });
+  out.push({ id: "radio:audio", group: "radio", title: ops.audio ? "Mute radio replies" : "Play radio replies", keywords: "audio sound voice tts", run: () => ops.setAudio(!ops.audio) });
+  out.push({ id: "ops:reset", group: "radio", title: "Reset KPIs", keywords: "loads tonnes cycle idle counters", run: () => { kpis.reset(); renderCaption(); ops.notice("kpis reset"); } });
+  if (ops.judge.url) out.push({ id: "radio:aerial", group: "radio", title: "Open aerial view", keywords: "3d view scene", run: () => window.open(`${ops.judge.url.replace(/\/$/, "")}/view`, "_blank", "noopener") });
+  const url = query.match(URLISH);
+  out.push(url
+    ? { id: "judge:url", group: "radio", title: `Set radio URL to ${url[1]}`, keywords: query, run: () => ops.setJudge({ url: url[1] }) }
+    : { id: "judge:url", group: "radio", title: "Set radio URL…", keywords: "qr judge phone public link", searchOnly: true, run: () => setTimeout(() => commandPalette.open("radio url "), 160) });
+  const pin = query.match(PINISH);
+  out.push(pin
+    ? { id: "judge:pin", group: "radio", title: `Set access code to ${pin[1]}`, keywords: query, run: () => ops.setJudge({ pin: pin[1] }) }
+    : { id: "judge:pin", group: "radio", title: "Set access code…", keywords: "pin judge", searchOnly: true, run: () => setTimeout(() => commandPalette.open("pin "), 160) });
+  const theme = storedTheme();
+  for (const th of THEMES) out.push({ id: `theme:${th}`, group: "appearance", title: `Theme ${th}`, keywords: "appearance colour mode", detail: theme === th ? "current" : "", run: () => applyTheme(th) });
+  out.push({ id: "help:keys", group: "help", title: "Keyboard shortcuts", keywords: "help keys", keys: ["?"], run: () => help.open() });
+  if (query && !url && !pin) out.push({ id: "radio:send", group: "radio", title: `Send to radio: “${query}”`, always: true, run: () => sendRadio(query) });
+  return out;
+}
+
+const SHORTCUTS = [
+  ["Command palette", ["/"]],
+  ["Command palette", ["⌘", "K"]],
+  ["Video · map · lidar", ["V", "M", "L"]],
+  ["Fleet · radio · judge · split", ["F", "R", "J", "S"]],
+  ["Stop everything (twice)", ["⇧", "esc"]],
+  ["Camera", ["1", "–", "9"]],
+  ["Shortcuts", ["?"]],
+  ["Close", ["esc"]],
+];
+
+document.querySelector("#help .help-list").append(...SHORTCUTS.flatMap(([label, keys]) => {
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+  const dd = document.createElement("dd");
+  for (const k of keys) {
+    const kbd = document.createElement("kbd");
+    kbd.textContent = k;
+    dd.append(kbd);
+  }
+  return [dt, dd];
+}));
+
+document.getElementById("palette-open").addEventListener("click", () => commandPalette.open());
+
+addEventListener("keydown", (e) => {
+  if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+    e.preventDefault();
+    if (help.isOpen()) help.close();
+    commandPalette.toggle();
+    return;
+  }
+  if (e.key === "Escape" && e.shiftKey) { e.preventDefault(); armedStop(); return; }
+  if (commandPalette.isOpen() || help.isOpen() || isTyping(e.target) || e.metaKey || e.ctrlKey || e.altKey) return;
+  const key = e.key.toLowerCase();
+  if (e.key === "/") { e.preventDefault(); commandPalette.open(); }
+  else if (e.key === "?") { e.preventDefault(); help.open(); }
+  else if (VIEW_BY_KEY[key] && !e.shiftKey) shell.setView(VIEW_BY_KEY[key]);
+  else if (/^[1-9]$/.test(e.key)) { const name = cameraOrder()[Number(e.key) - 1]; if (name) showCamera(name); }
+});
+
+onTheme(() => { drawMap(); commandPalette.refresh(); });
 
 videoFeed(tileFor, onVideo).then((v) => connect(v.path, v.onMessage, true));
 connect("/ws/state", onState);

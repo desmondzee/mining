@@ -40,3 +40,4 @@ data/*.npz
 runs/
 models/*
 !models/.gitkeep
+node_modules/

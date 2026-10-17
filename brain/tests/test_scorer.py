@@ -8,7 +8,7 @@ import pytest
 from brain import planning
 from brain.planning.driver import CAND_DIM, N_CAND, OBS_DIM, drive
 from brain.planning.navmap import load
-from brain.planning.scorer import LAYERS, CheckpointError, NumpyScorer, load_scorer
+from brain.planning.learned import LAYERS, CheckpointError, NumpyScorer, load_scorer
 from brain.policy import act
 from brain.world import Truck
 
@@ -68,14 +68,14 @@ def test_rejects_wrong_feature_size():
 
 
 def test_env_selects_scorer_and_falls_back(npz, monkeypatch, tmp_path):
-    planning.learned_scorer.cache_clear()
+    planning.scorer.cache_clear()
     monkeypatch.delenv("PLANNER_CKPT", raising=False)
     monkeypatch.setenv("PLANNER_CHECKPOINT", str(tmp_path / "missing.npz"))
-    assert planning.learned_scorer() is None
-    planning.learned_scorer.cache_clear()
+    assert planning.scorer() is None
+    planning.scorer.cache_clear()
     monkeypatch.setenv("PLANNER_CHECKPOINT", str(npz[0].with_suffix(".pt")))
-    assert isinstance(planning.learned_scorer(), NumpyScorer)
-    planning.learned_scorer.cache_clear()
+    assert isinstance(planning.scorer(), NumpyScorer)
+    planning.scorer.cache_clear()
 
 
 @pytest.fixture
@@ -97,7 +97,7 @@ def test_learned_choice_is_best_safe_candidate(quarry):
 
 def test_state_exposes_planner_and_candidates(quarry, npz, monkeypatch):
     monkeypatch.setattr(planning, "nav_map", lambda: quarry)
-    monkeypatch.setattr(planning, "learned_scorer", lambda: load_scorer(npz[0]))
+    monkeypatch.setattr(planning, "scorer", lambda: load_scorer(npz[0]))
     planning.reset()
     goal = quarry.sites["ore_1"]
     route = planning.plan_route(quarry, quarry.sites["parking"], goal)
@@ -114,7 +114,7 @@ def test_state_exposes_planner_and_candidates(quarry, npz, monkeypatch):
 
 
 def test_idle_truck_reports_rules_without_checkpoint(monkeypatch):
-    monkeypatch.setattr(planning, "learned_scorer", lambda: None)
+    monkeypatch.setattr(planning, "scorer", lambda: None)
     truck = Truck("t")
     act(truck, None, None)
     assert truck.planner == "rules"
