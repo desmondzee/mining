@@ -37,6 +37,31 @@ Do not compare these rows with the uncarved rows. The site pairs and the route l
 | 435 m / old default | c3d2302 | ppo_v4 | 0.900 | 0.100 | 0.060 | 29.320 | 0.580 | logs/eval_ppo4.log |
 | 435 m / old default | c3d2302 | bc_v3 | 0.880 | 0.120 | 0.100 | 29.145 | 0.600 | logs/eval_bc3.log |
 
+## 725 m / Vato bd10f9c
+
+Same 50 seeds (1000-1049) per row. No policy trained on this world data, so these rows are held out.
+Run on the Mac (CPU), sim2d at 185e99c with the full-width off-road check (bf6efdc).
+
+### Default world
+
+| label | code | policy | success | collision | stops_per_ep | time_to_goal_s | near_miss_rate | source |
+|---|---|---|---|---|---|---|---|---|
+| 725 m / Vato bd10f9c | 185e99c | expert | 0.880 | 0.080 | 0.060 | 37.359 | 0.460 | logs/eval_725/expert_default.txt |
+| 725 m / Vato bd10f9c | 185e99c | bc_v2 | 0.880 | 0.100 | 0.120 | 39.030 | 0.460 | logs/eval_725/bc_v2_default.txt |
+| 725 m / Vato bd10f9c | 185e99c | bc_v3 | 0.880 | 0.080 | 0.080 | 37.320 | 0.460 | logs/eval_725/bc_v3_default.txt |
+| 725 m / Vato bd10f9c | 185e99c | ppo_v3 | 0.920 | 0.080 | 0.020 | 37.083 | 0.420 | logs/eval_725/ppo_v3_default.txt |
+| 725 m / Vato bd10f9c | 185e99c | ppo_v4 | 0.860 | 0.100 | 0.100 | 37.730 | 0.440 | logs/eval_725/ppo_v4_default.txt |
+
+### Quarry, carved (725 m)
+
+| label | code | policy | success | collision | stops_per_ep | time_to_goal_s | near_miss_rate | source |
+|---|---|---|---|---|---|---|---|---|
+| 725 m / Vato bd10f9c | 185e99c | expert | 0.880 | 0.100 | 0.060 | 64.373 | 0.700 | logs/eval_725/expert_quarry.txt |
+| 725 m / Vato bd10f9c | 185e99c | bc_v2 | 0.880 | 0.100 | 0.180 | 63.816 | 0.720 | logs/eval_725/bc_v2_quarry.txt |
+| 725 m / Vato bd10f9c | 185e99c | bc_v3 | 0.860 | 0.120 | 0.100 | 64.074 | 0.700 | logs/eval_725/bc_v3_quarry.txt |
+| 725 m / Vato bd10f9c | 185e99c | ppo_v3 | 0.920 | 0.080 | 0.060 | 62.396 | 0.660 | logs/eval_725/ppo_v3_quarry.txt |
+| 725 m / Vato bd10f9c | 185e99c | ppo_v4 | 0.900 | 0.080 | 0.100 | 63.789 | 0.680 | logs/eval_725/ppo_v4_quarry.txt |
+
 ## Notes
 
 - ppo_v4: `train_ppo --init runs/bc_v2.pt --envs 32 --total-steps 1500000 --lr 1e-4 --clip 0.1 --ent 0.003 --bc-coef 0.05`,
@@ -48,3 +73,7 @@ Do not compare these rows with the uncarved rows. The site pairs and the route l
   and higher quarry success).
 - Later runs on the Vato worlds (bd10f9c, 725 m quarry) get the label "725 m / Vato bd10f9c".
   Do not compare those rows with the "435 m / old default" rows.
+- bc_v2 data used seeds 0-1999 and the evaluations use seeds 1000-1049, so the "435 m / old default"
+  bc_v2 rows include training scenarios. The "725 m / Vato bd10f9c" rows do not, because every site moved.
+- On 725 m, ppo_v3 has the best success on both worlds (0.92). With 50 episodes, a 0.04 difference is
+  inside random variation.
