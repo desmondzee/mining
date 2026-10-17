@@ -98,12 +98,13 @@ def run(args: argparse.Namespace) -> None:
     start = last = next_tick = time.monotonic()
     next_lidar = next_actors = 0.0
     frames = 0
-    timing = {"render": 0.0, "jpeg": 0.0, "rays": 0.0}
+    timing = {"step": 0.0, "render": 0.0, "jpeg": 0.0, "rays": 0.0}
     stats_at = start + STATS_EVERY
     while app is None or app.is_running():
         now = time.monotonic()
         dt = min(now - last, MAX_DT)
         last = now
+        ts = time.monotonic()
         steps = max(1, round(dt / SUBSTEP))
         for _ in range(steps):
             sim.step(dt / steps, now)
@@ -111,6 +112,7 @@ def run(args: argparse.Namespace) -> None:
         renderer.update(sim)
 
         t0 = time.monotonic()
+        timing["step"] += t0 - ts
         images = renderer.render()
         t1 = time.monotonic()
         encoded = dict(zip(images, pool.map(jpeg, images.values())))
@@ -143,7 +145,7 @@ def run(args: argparse.Namespace) -> None:
             n = max(frames, 1)
             span = now - start
             print(
-                f"t={span:.0f}s fps={frames / span:.1f} render={timing['render'] / n * 1000:.1f}ms jpeg={timing['jpeg'] / n * 1000:.1f}ms "
+                f"t={span:.0f}s fps={frames / span:.1f} step={timing['step'] / n * 1000:.1f}ms render={timing['render'] / n * 1000:.1f}ms jpeg={timing['jpeg'] / n * 1000:.1f}ms "
                 f"send+rays={timing['rays'] / n * 1000:.1f}ms connected={live} sent={bridge.sent} dropped={bridge.dropped} "
                 + " ".join(f"{t.id}=({t.x:.1f},{t.y:.1f},{t.z:.1f},{t.yaw:.0f}deg,{t.speed:.1f}m/s)" for t in sim.trucks),
                 flush=True,

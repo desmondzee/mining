@@ -101,15 +101,15 @@ class GroundFollow:
         self.smooth_y: float | None = None
         self.tilt_init = False
 
-    def sample(self, probe: Probe, xs: np.ndarray, zs: np.ndarray, ref: float) -> np.ndarray:
-        h = probe(xs, zs, np.full(len(xs), ref + PROBE_UP), np.full(len(xs), PROBE_UP + PROBE_DOWN))
+    def sample(self, probe: Probe, xs: np.ndarray, zs: np.ndarray, ref: float | np.ndarray) -> np.ndarray:
+        ref = np.broadcast_to(np.asarray(ref, float), xs.shape)
+        h = probe(xs, zs, ref + PROBE_UP, np.full(len(xs), PROBE_UP + PROBE_DOWN))
         miss = ~np.isfinite(h)
         if miss.any():
-            h[miss] = probe(xs[miss], zs[miss], np.full(miss.sum(), ref + HIGH_PROBE), np.full(miss.sum(), HIGH_PROBE + PROBE_DOWN))
+            h[miss] = probe(xs[miss], zs[miss], ref[miss] + HIGH_PROBE, np.full(miss.sum(), HIGH_PROBE + PROBE_DOWN))
         return h
 
-    def update(self, truck: Truck, probe: Probe, dt: float) -> None:
-        r = yaw_matrix(truck.yaw)
+    def points(self, truck: Truck) -> np.ndarray:
         local = np.array(
             [
                 [0, 0, 0],
@@ -120,9 +120,16 @@ class GroundFollow:
             ],
             float,
         )
-        pts = local @ r.T + [truck.x, 0, truck.z]
-        ref = self.smooth_y if self.smooth_y is not None else truck.y
-        h = self.sample(probe, pts[:, 0], pts[:, 2], ref)
+        return local @ yaw_matrix(truck.yaw).T + [truck.x, 0, truck.z]
+
+    def ref(self, truck: Truck) -> float:
+        return self.smooth_y if self.smooth_y is not None else truck.y
+
+    def update(self, truck: Truck, probe: Probe, dt: float) -> None:
+        pts = self.points(truck)
+        self.apply(truck, self.sample(probe, pts[:, 0], pts[:, 2], self.ref(truck)), dt)
+
+    def apply(self, truck: Truck, h: np.ndarray, dt: float) -> None:
         ok = np.isfinite(h)
         if not ok.any():
             return

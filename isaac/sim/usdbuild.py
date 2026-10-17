@@ -7,7 +7,7 @@ from pxr import Gf, Sdf, Usd, UsdGeom, UsdShade, Vt
 from .glb import Glb, read_glb, transform
 
 TO_ISAAC = np.array([[1.0, 0, 0, 0], [0, 0, 1.0, 0], [0, 1.0, 0, 0], [0, 0, 0, 1.0]])
-VERSION = "1"
+VERSION = "2"
 
 
 def to_isaac(p: np.ndarray) -> np.ndarray:
@@ -38,7 +38,7 @@ def write_mesh_usd(glb: Glb, out: Path, name: str) -> Path:
     textures = {}
     for i, (data, mime) in enumerate(glb.images):
         if data:
-            path = out.parent / f"{out.stem}_tex{i}.{'jpg' if 'jpeg' in mime else 'png'}"
+            path = out.parent / f"{out.stem.removesuffix('.tmp')}_tex{i}.{'jpg' if 'jpeg' in mime else 'png'}"
             path.write_bytes(data)
             textures[i] = path.name
     materials = []

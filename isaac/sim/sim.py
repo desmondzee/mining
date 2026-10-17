@@ -50,17 +50,23 @@ class Sim:
             if t.id == truck_id:
                 t.command(throttle, steer, now)
 
-    def ground(self, x: float, z: float, ref: float) -> float:
-        h = self.probe(np.array([x]), np.array([z]), np.array([ref + PEDESTRIAN_PROBE]), np.array([PEDESTRIAN_PROBE * 2]))[0]
-        return float(h) if np.isfinite(h) else ref
-
     def step(self, dt: float, now: float) -> None:
         self.time += dt
         for t in self.trucks:
             t.step(dt, now)
-            self.follow[t.id].update(t, self.probe, dt)
+        follows = [self.follow[t.id] for t in self.trucks]
+        pts = np.concatenate([f.points(t) for f, t in zip(follows, self.trucks)])
+        refs = np.repeat([f.ref(t) for f, t in zip(follows, self.trucks)], 5)
+        heights = follows[0].sample(self.probe, pts[:, 0], pts[:, 2], refs) if follows else []
+        for i, (f, t) in enumerate(zip(follows, self.trucks)):
+            f.apply(t, heights[5 * i : 5 * i + 5], dt)
         for w in self.walkers:
-            w.step(dt, self.ground)
+            w.step(dt)
+        if self.walkers:
+            ys = np.array([w.y for w in self.walkers])
+            h = self.probe(np.array([w.x for w in self.walkers]), np.array([w.z for w in self.walkers]), ys + PEDESTRIAN_PROBE, np.full(len(ys), PEDESTRIAN_PROBE * 2))
+            for w, y in zip(self.walkers, np.where(np.isfinite(h), h, ys)):
+                w.y = float(y)
 
     def rotation(self, t: Truck) -> np.ndarray:
         return self.follow[t.id].rotation(t.yaw)
