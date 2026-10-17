@@ -20,6 +20,8 @@ services:
       - "host.docker.internal:host-gateway"   # Linux; Docker Desktop provides it already
     volumes:
       - ../data:/app/data:ro
+      - ../envgen/preview:/app/envgen/preview:ro   # aerial view at /view
+      - ../assets/models:/app/assets/models:ro
       - ./secrets:/app/radio/secrets:ro
       - radio_cache:/app/radio/cache
     ports:
