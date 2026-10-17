@@ -2,8 +2,6 @@ from dataclasses import asdict, dataclass, field
 
 import numpy as np
 
-from .routing import RoadGraph
-
 
 @dataclass
 class Truck:
@@ -14,17 +12,21 @@ class Truck:
     speed: float = 0.0
     goal: tuple[float, float] | None = None
     goal_site: str | None = None
-    route: list[list[float]] = field(default_factory=list)
-    route_s: float = 0.0
     status: str = "idle"
     throttle: float = 0.0
     steer: float = 0.0
+    path: list[list[float]] = field(default_factory=list)
+    path_idx: int = 0
+    ghost_paths: list[list[list[float]]] = field(default_factory=list)
 
     def to_dict(self) -> dict:
-        return asdict(self)
+        d = asdict(self)
+        d["route"] = d.pop("path")
+        return d
 
-    def set_goal(self, goal: tuple[float, float] | None, site: str | None = None, route: list | None = None) -> None:
-        self.goal, self.goal_site, self.route, self.route_s = goal, site, route or [], 0.0
+    def set_goal(self, goal: tuple[float, float] | None, site: str | None = None) -> None:
+        self.goal, self.goal_site = goal, site
+        self.path, self.path_idx, self.ghost_paths = [], 0, []
         self.status = "driving" if goal else "idle"
 
 
@@ -49,14 +51,14 @@ class World:
     roads: list[dict] = field(default_factory=list)
     sites: list[dict] = field(default_factory=list)
     junctions: list[dict] = field(default_factory=list)
-    graph: RoadGraph | None = None
     world_seq: int = 0
 
     def set_network(self, roads: list[dict], sites: list[dict], junctions: list[dict]) -> None:
         self.roads, self.sites, self.junctions = roads, sites, junctions
-        graph = RoadGraph(roads, sites, junctions)
-        self.graph = graph if graph.roads else None
         self.world_seq += 1
+
+    def nodes(self) -> dict[str, tuple[float, float]]:
+        return {n["id"]: (float(n["x"]), float(n["z"])) for n in [*self.sites, *self.junctions]}
 
     def network(self) -> dict:
         return {"bounds": self.bounds, "roads": self.roads, "sites": self.sites, "junctions": self.junctions}

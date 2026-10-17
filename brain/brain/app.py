@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import math
 import os
 import struct
 from contextlib import asynccontextmanager
@@ -11,6 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
+from . import planning
 from .bridge import SimBridge
 from .hub import LatestHub
 from .world import World
@@ -27,20 +29,22 @@ class Goal(BaseModel):
     site: str | None = None
 
 
-def load_world_meta(world_dir: Path | None) -> dict:
+def load_world_meta(world_dir: Path) -> dict:
     try:
         return json.loads((world_dir / "world.json").read_text())
-    except (OSError, TypeError, ValueError):
+    except (OSError, ValueError):
         return {}
 
 
-def create_app(
-    sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR, world_dir: Path | None = None
-) -> FastAPI:
+def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_DIR) -> FastAPI:
+    world_dir = Path(os.environ.get("WORLD_DIR", planning.DEFAULT_WORLD_DIR))
     meta = load_world_meta(world_dir)
     preview = world_dir / meta["assets"]["preview"] if meta.get("assets", {}).get("preview") else None
     preview = preview if preview and preview.is_file() else None
     world = World()
+    nav = planning.nav_map()
+    if nav is not None:
+        world.bounds = nav.bounds
     video = LatestHub()
     lidar = LatestHub()
     bridge = SimBridge(world, video, lidar)
@@ -80,31 +84,50 @@ def create_app(
             raise HTTPException(404, f"unknown truck {truck_id}")
         return world.trucks[truck_id]
 
+    def nodes() -> dict[str, tuple[float, float]]:
+        return world.nodes() or (dict(nav.sites) if nav is not None else {})
+
+    def set_goal(truck_id: str, goal: tuple[float, float] | None, site: str | None = None) -> dict:
+        truck = find_truck(truck_id)
+        truck.set_goal(goal, site)
+        if goal and nav is not None:
+            route = planning.plan_route(nav, (truck.x, truck.z), goal)
+            if route is None:
+                log.warning("no route for %s to %s; driving straight", truck_id, goal)
+            else:
+                truck.path = route.round(2).tolist()
+        return truck.to_dict()
+
+    def set_site(truck_id: str, site: str) -> dict:
+        known = nodes()
+        if site not in known:
+            raise HTTPException(404, f"unknown site {site}")
+        return set_goal(truck_id, known[site], site)
+
     @app.post("/api/trucks/{truck_id}/goal")
     def post_goal(truck_id: str, goal: Goal):
-        truck = find_truck(truck_id)
-        graph = world.graph
-        site = goal.site
-        if site is None:
-            if goal.x is None or goal.z is None:
-                raise HTTPException(422, "goal needs site or x and z")
-            if graph is None:
-                truck.set_goal((goal.x, goal.z))
-                return truck.to_dict()
-            site = graph.nearest_node(goal.x, goal.z)
-        if graph is None or site not in graph.nodes:
-            raise HTTPException(404, f"unknown site {site}")
-        route = graph.route(truck.x, truck.z, site, truck.yaw)
-        if route is None:
-            raise HTTPException(409, f"no route to {site}")
-        truck.set_goal(graph.nodes[site], site, route)
-        return truck.to_dict()
+        if goal.site is not None:
+            return set_site(truck_id, goal.site)
+        if goal.x is None or goal.z is None:
+            raise HTTPException(422, "goal needs site or x and z")
+        if world.roads:
+            known = world.nodes()
+            return set_site(truck_id, min(known, key=lambda n: math.dist(known[n], (goal.x, goal.z))))
+        return set_goal(truck_id, (goal.x, goal.z))
+
+    @app.get("/api/sites")
+    def get_sites():
+        if nav is None:
+            return []
+        return [{"id": k, "type": nav.site_types[k], "pos": list(p)} for k, p in nav.sites.items()]
+
+    @app.post("/api/trucks/{truck_id}/site/{site_id}")
+    def post_site(truck_id: str, site_id: str):
+        return set_site(truck_id, site_id)
 
     @app.delete("/api/trucks/{truck_id}/goal")
     def delete_goal(truck_id: str):
-        truck = find_truck(truck_id)
-        truck.set_goal(None)
-        return truck.to_dict()
+        return set_goal(truck_id, None)
 
     @app.get("/api/trucks/{truck_id}/lidar")
     def get_lidar(truck_id: str):
@@ -159,8 +182,7 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(name)s %(levelname)s %(message)s")
     web_dir = Path(os.environ.get("WEB_DIR", DEFAULT_WEB_DIR))
-    world_dir = Path(os.environ["WORLD_DIR"]) if os.environ.get("WORLD_DIR") else None
-    app = create_app(sim_port=int(os.environ.get("SIM_PORT", 9000)), web_dir=web_dir, world_dir=world_dir)
+    app = create_app(sim_port=int(os.environ.get("SIM_PORT", 9000)), web_dir=web_dir)
     uvicorn.run(app, host=os.environ.get("HOST", "0.0.0.0"), port=int(os.environ.get("PORT", 8080)))
 
 

@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -98,22 +100,20 @@ def test_world_mode_hello():
 
 def test_crossing_paths_follow_contract():
     from brain.fakesim import CROSSING_EXTRA, crossing_paths
-    from brain.routing import cumulative, project
 
     roads = quarry_world()["roads"]
-    paths = crossing_paths(roads)
-    ids = [r["id"] for r in roads]
-    first4 = [next(r for r in roads if r["id"] == i) for i in sorted(ids, key=lambda i: i.encode())[:4]]
-    for road, (a, b) in zip(first4, paths):
-        pts = [(p["x"], p["z"]) for p in road["points"]]
-        cum = cumulative(pts)
-        mid = ((a[0] + b[0]) / 2, (a[1] + b[1]) / 2)
-        d, s, _, i = project(pts, cum, *mid)
-        assert d == pytest.approx(0, abs=1e-6) and s == pytest.approx(cum[-1] / 2)
-        assert np.hypot(b[0] - a[0], b[1] - a[1]) == pytest.approx(road["width_m"] + CROSSING_EXTRA)
-        (ax, az), (bx, bz) = pts[i], pts[i + 1]
-        assert (b[0] - a[0]) * (bx - ax) + (b[1] - a[1]) * (bz - az) == pytest.approx(0, abs=1e-6)
-        assert (b[0] - a[0]) * (bz - az) - (b[1] - a[1]) * (bx - ax) > 0
+    first4 = sorted(roads, key=lambda r: r["id"].encode())[:4]
+    expected = []
+    for road in first4:
+        pts = np.array([(p["x"], p["z"]) for p in road["points"]])
+        cum = np.concatenate([[0], np.cumsum(np.hypot(*np.diff(pts, axis=0).T))])
+        i = int(np.searchsorted(cum, cum[-1] / 2)) - 1
+        mid = pts[i] + (pts[i + 1] - pts[i]) * (cum[-1] / 2 - cum[i]) / (cum[i + 1] - cum[i])
+        t = (pts[i + 1] - pts[i]) / np.linalg.norm(pts[i + 1] - pts[i])
+        n = np.array([t[1], -t[0]])
+        half = (road["width_m"] + CROSSING_EXTRA) / 2
+        expected.append([mid - n * half, mid + n * half])
+    assert np.array(crossing_paths(roads)) == pytest.approx(np.array(expected), abs=0.01)
 
 
 def test_crossing_runs_left_to_right():
@@ -122,3 +122,24 @@ def test_crossing_runs_left_to_right():
     road = {"id": "r", "width_m": 8, "points": [{"x": 0, "z": 0}, {"x": 0, "z": 10}]}
     (a, b), = crossing_paths([road])
     assert a == pytest.approx((-10, 5)) and b == pytest.approx((10, 5))
+
+
+def test_world_lidar_ground_follows_navgrid():
+    import math
+
+    from brain.planning.driver import split_lidar
+    from brain.planning.navmap import load
+
+    world = quarry_world()
+    nav = load(Path(__file__).resolve().parents[2] / "data" / "worlds" / "quarry")
+    pts = next(r for r in world["roads"] if r["id"].startswith("ramp"))["points"]
+    i = len(pts) // 2
+    pose = (pts[i]["x"], pts[i]["z"], math.degrees(math.atan2(pts[i + 1]["x"] - pts[i]["x"], pts[i + 1]["z"] - pts[i]["z"])))
+    found = []
+    for w in ({**world, "terrain": None}, world):
+        q = FakeQuarry(1, world=w)
+        q.pedestrians = []
+        t = q.trucks[0]
+        t.x, t.z, t.yaw = pose
+        found.append(len(split_lidar(nav, t.x, t.z, math.radians(t.yaw), q.scan_lidar(t), LIDAR_HEIGHT)[1]))
+    assert found[0] > 0 and found[1] == 0

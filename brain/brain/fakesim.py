@@ -9,7 +9,6 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 from .protocol import encode, encode_frame, encode_lidar, read_message
-from .routing import cumulative, point_at
 
 FPS = 15
 CAM_W, CAM_H = 640, 360
@@ -130,20 +129,44 @@ def load_world(world_dir: str | Path) -> dict:
         "junctions": [{"id": j["id"], "x": j["pos"][0], "z": j["pos"][2]} for j in world["junctions"]],
         "trucks": [(t["id"], *t["spawn"], float(t["heading_deg"])) for t in sorted(world["trucks"], key=lambda t: t.get("slot", 0))],
         "equipment": [(e["pos3"][0], e["pos3"][2]) for e in world.get("equipment", [])],
+        "terrain": load_terrain(Path(world_dir) / "navgrid.json"),
     }
+
+
+def load_terrain(path: Path) -> dict | None:
+    if not path.is_file():
+        return None
+    nav = json.loads(path.read_text())
+    heights = np.array(nav["heights"], float).reshape(nav["height"], nav["width"])
+    return {"heights": heights, "cell": float(nav["cell_m"]), "origin": [float(v) for v in nav["origin"]]}
+
+
+def ground_at(terrain: dict, x, z) -> np.ndarray:
+    h = terrain["heights"]
+    c = np.clip(np.floor((np.asarray(x) - terrain["origin"][0]) / terrain["cell"]).astype(int), 0, h.shape[1] - 1)
+    r = np.clip(np.floor((np.asarray(z) - terrain["origin"][1]) / terrain["cell"]).astype(int), 0, h.shape[0] - 1)
+    return h[r, c]
+
+
+def polyline_midpoint(pts: list[tuple[float, float]]) -> tuple[int, float, float]:
+    lengths = [math.dist(a, b) for a, b in zip(pts, pts[1:])]
+    remaining = sum(lengths) / 2
+    for i, length in enumerate(lengths):
+        if remaining <= length or i == len(lengths) - 1:
+            f = remaining / length if length else 0.0
+            (ax, az), (bx, bz) = pts[i], pts[i + 1]
+            return i, ax + (bx - ax) * f, az + (bz - az) * f
+        remaining -= length
 
 
 def crossing_paths(roads: list[dict]) -> list[list[tuple[float, float]]]:
     paths = []
     for road in sorted(roads, key=lambda r: r["id"])[:CROSSING_ROADS]:
         pts = [(p["x"], p["z"]) for p in road["points"]]
-        cum = cumulative(pts)
-        mid = cum[-1] / 2
-        i = next(k for k in range(len(pts) - 1) if cum[k + 1] >= mid)
+        i, mx, mz = polyline_midpoint(pts)
         (ax, az), (bx, bz) = pts[i], pts[i + 1]
         seg = math.hypot(bx - ax, bz - az)
         rx, rz = (bz - az) / seg, -(bx - ax) / seg
-        mx, mz = point_at(pts, cum, mid)
         half = (road["width_m"] + CROSSING_EXTRA) / 2
         paths.append([(mx - rx * half, mz - rz * half), (mx + rx * half, mz + rz * half)])
     return paths
@@ -233,7 +256,14 @@ class FakeQuarry:
         with np.errstate(divide="ignore"):
             rng = np.minimum(rng, np.where(sin_e < 0, -LIDAR_HEIGHT / sin_e, np.inf))
         pts = np.stack([rng * cos_e * np.sin(az), rng * sin_e, rng * cos_e * np.cos(az)], axis=-1)
-        return pts[rng <= LIDAR_RANGE].astype(np.float32)
+        pts = pts[rng <= LIDAR_RANGE]
+        terrain = self.world.get("terrain") if self.world else None
+        if terrain is not None:
+            yaw = math.radians(t.yaw)
+            wx = t.x + pts[:, 2] * math.sin(yaw) + pts[:, 0] * math.cos(yaw)
+            wz = t.z + pts[:, 2] * math.cos(yaw) - pts[:, 0] * math.sin(yaw)
+            pts[:, 1] += ground_at(terrain, wx, wz) - ground_at(terrain, t.x, t.z)
+        return pts.astype(np.float32)
 
     def render_truck(self, t: Truck) -> tuple[np.ndarray, np.ndarray]:
         offsets = np.radians(np.linspace(-FOV_DEG / 2, FOV_DEG / 2, CAM_W))
