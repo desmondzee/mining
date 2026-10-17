@@ -10,6 +10,7 @@ public class PedestrianWalker : MonoBehaviour
     public bool loop = true;
     [Range(0, 1)] public float startFraction;
     public LayerMask groundMask = ~0;
+    public float probeHeight = 30f;
 
     readonly RaycastHit[] hits = new RaycastHit[8];
     int target;
@@ -67,7 +68,7 @@ public class PedestrianWalker : MonoBehaviour
 
     float GroundHeight(Vector3 at, float fallback)
     {
-        int n = Physics.RaycastNonAlloc(at + Vector3.up * 3f, Vector3.down, hits, 6f, groundMask, QueryTriggerInteraction.Ignore);
+        int n = Physics.RaycastNonAlloc(at + Vector3.up * probeHeight, Vector3.down, hits, probeHeight * 2, groundMask, QueryTriggerInteraction.Ignore);
         float best = float.NegativeInfinity;
         for (int i = 0; i < n; i++)
             if (hits[i].rigidbody == null && hits[i].point.y > best) best = hits[i].point.y;

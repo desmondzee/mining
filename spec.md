@@ -161,6 +161,55 @@
 | 2 | (-50, 20), (-10, 60) | ping-pong |
 | 3 | (40, -20), (40, 40) | ping-pong |
 
+## Quarry scene
+
+| Item | Value | Source |
+|---|---|---|
+| Build | Tools > Mining > Build Quarry Scene (Quarry World), `QuarrySceneBuilder.BuildQuarry` | |
+| World | `data/worlds/quarry/` (scan visual, 300k-triangle `MeshCollider`, surround collider) | |
+| Bounds | [-217.5, -217.5, 217.5, 217.5] | `data/worlds/quarry/world.json:bounds` |
+| Truck model | Komatsu HD465 | |
+| Obstacles | 3 excavators from `equipment`, one circle per excavator (collider bounds) | |
+| Debug layer | `MineDebug` (8): site markers, junctions, road lines, labels | `unity/ProjectSettings/TagManager.asset` |
+| Debug layer seen by | editor only; excluded from truck and overview cameras, depth and lidar masks | |
+| Truck spawn | `world.json` slots, heading along the road leaving the spawn site | |
+| Heading look-ahead along road (m) | 20 | `unity/Assets/Editor/QuarrySceneBuilder.cs:SpawnLookAhead` |
+| Minimum gap between parked trucks (m) | 2 | `unity/Assets/Editor/QuarrySceneBuilder.cs:SpawnGap` |
+| Slot-line shift search (m) | 10 | `unity/Assets/Editor/QuarrySceneBuilder.cs:SpawnSearch` |
+| Slot-line shift step (m) | 0.5 | `unity/Assets/Editor/QuarrySceneBuilder.cs:SpawnSearchStep` |
+| Slot-line shift choice | least maximum ground slope under the trucks | |
+| Ground following | `MineGroundFollow`, height from the scan collider, model and sensors tilt with the ground | |
+| Pedestrian ground probe height (m) | 30 | `unity/Assets/Scripts/PedestrianWalker.cs:probeHeight` |
+| Crossing paths | 4 | `unity/Assets/Editor/QuarrySceneBuilder.cs:CrossingCount` |
+| Crossing length beyond road width (m) | 12 | `unity/Assets/Editor/QuarrySceneBuilder.cs:CrossingMargin` |
+| Crossing roads | first 4 roads by ordinal id | |
+| Crossing geometry | 2 points at the x/z arc-length midpoint, ± (width_m + 12) / 2 along the right-hand normal (t.z, -t.x) of the segment containing it; point 0 = left | |
+| Crossing mode | ping-pong | |
+
+| Path | Road | Waypoints (x, z) |
+|---|---|---|
+| 0 | haul_1 | (-27.41, -4.98), (-39.46, 19.18) |
+| 1 | haul_2 | (-131.61, 16.83), (-126.85, 43.41) |
+| 2 | haul_3 | (31.33, 57.19), (31.33, 84.19) |
+| 3 | haul_6 | (-5.30, -13.04), (11.04, -34.53) |
+
+| Hello field | Count |
+|---|---|
+| roads | 8 |
+| sites | 7 |
+| junctions | 2 |
+| obstacles | 3 |
+| paths | 4 |
+| header bytes | 15188 |
+
+| Measurement (macOS player, M-series Mac, local brain) | Value |
+|---|---|
+| Unity frame time (ms) | 8.7 |
+| Camera rate per camera, overview and truck-0..2 (fps) | 13.2–14.7 |
+| Truck JPEG size (KB) | 35–41 |
+| Overview JPEG size (KB) | 29 |
+| Player size (MB) | 982 |
+
 ## Fake sim
 
 | Item | Value | Source |
