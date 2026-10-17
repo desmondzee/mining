@@ -17,6 +17,8 @@ namespace MineSim
         public Terrain terrain;
         [Tooltip("Scan worlds: the invisible ground MeshCollider (used for GroundHeight when there is no Terrain)")]
         public Collider groundCollider;
+        [Tooltip("Scan worlds: optional coarse collider of the surround apron/hills (assets.surround), same ground layer")]
+        public Collider surroundCollider;
         public MineRoadGraph graph;
 
         public MineSiteMarker FindSite(string id)

@@ -164,11 +164,27 @@ namespace MineSim
         public void CaptureMountFromCurrentPose()
         {
             if (cam == null || target == null) return;
-            Quaternion inv = Quaternion.Inverse(target.rotation);
+            Quaternion inv = Quaternion.Inverse(TargetFrame());
             mountOffset = inv * (cam.transform.position - target.position);
             mountEuler = (inv * cam.transform.rotation).eulerAngles;
             captured = true;
             init = false;
+        }
+
+        private MineGroundFollow groundFollow;
+        private Transform groundFollowFor;
+
+        /// <summary>Truck frame for the mount: the root rotation, tilted by MineGroundFollow when it tilts the sensors.</summary>
+        private Quaternion TargetFrame()
+        {
+            if (groundFollowFor != target)
+            {
+                groundFollow = target.GetComponent<MineGroundFollow>();
+                groundFollowFor = target;
+            }
+            if (groundFollow != null && groundFollow.isActiveAndEnabled && groundFollow.tiltSensors)
+                return groundFollow.TiltedFrameRotation;
+            return target.rotation;
         }
 
         private void LateUpdate()
@@ -179,8 +195,8 @@ namespace MineSim
             var s = MineLookSettings.Resolve(settingsOverride);
 
             Vector3 tp = target.position;
-            Quaternion tr = target.rotation;
-            float yaw = tr.eulerAngles.y;
+            float yaw = target.rotation.eulerAngles.y;
+            Quaternion tr = TargetFrame();
             Quaternion mountRot = tr * Quaternion.Euler(mountEuler);
             if (!init)
             {

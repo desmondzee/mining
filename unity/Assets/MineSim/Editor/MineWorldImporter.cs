@@ -30,6 +30,12 @@ namespace MineSim.EditorTools
         public static bool BuildTerrainForScanWorlds = false;
         /// <summary>Layer for the scan ground collider if it exists in Tags and Layers; otherwise Default.</summary>
         public static string GroundLayerName = "MineGround";
+        /// <summary>Scan worlds with assets.surround: build a coarse MeshCollider for the apron/hills (lidar beyond the pit edge hits ground, not void).</summary>
+        public static bool SurroundCollider = true;
+        /// <summary>The surround collider is vertex-clustered until it has at most this many triangles.</summary>
+        public static int SurroundColliderMaxTris = 150000;
+        /// <summary>Initial clustering cell (m) for the surround collider (doubled until under SurroundColliderMaxTris).</summary>
+        public static float SurroundColliderCell = 4f;
 
         // ------------------------------------------------------------------ menu
         [MenuItem("Tools/Mine Sim/Import World...")]
@@ -74,6 +80,7 @@ namespace MineSim.EditorTools
             public TerrainData td;
             public Material lineMat;
             public Collider ground;     // scan worlds: ground MeshCollider (built before sites so GroundY can raycast it)
+            public Collider surround;   // scan worlds: optional coarse apron/hills collider (assets.surround)
             public bool isScan;
         }
 
@@ -139,6 +146,7 @@ namespace MineSim.EditorTools
                     EditorUtility.DisplayProgressBar("Mine Sim", "Scan collider + visual mesh (can take a minute)", 0.3f);
                     BuildScan(c, root.transform);
                     wr.groundCollider = c.ground;
+                    wr.surroundCollider = c.surround;
                 }
 
                 c.lineMat = LineMaterial(c);
@@ -699,6 +707,134 @@ namespace MineSim.EditorTools
 
             string visFile = c.w.Asset("visual");
             if (visFile != null) BuildScanVisual(c, holder, visFile);
+
+            string surFile = c.w.Asset("surround");
+            if (surFile != null) BuildSurround(c, holder, surFile);
+        }
+
+        // surround.glb: ground apron + distant hills, already in world frame (like collider.glb, no scan_transform).
+        // Visual: glTFast import (its material carries the vertex colours) under a holder with scale (-1, 1, 1) that undoes
+        // glTFast's X flip, so it lands in world frame. Without glTFast: a plain mesh from MineGlbMeshReader with a flat
+        // ochre Lit material. Collider (SurroundCollider, default on): a vertex-clustered coarse MeshCollider on the ground layer.
+        private static void BuildSurround(Ctx c, Transform holder, string file)
+        {
+            string src = Path.Combine(c.dir, file);
+            if (!File.Exists(src))
+            {
+                Debug.LogWarning("[MineSim] assets.surround listed but missing: " + src);
+                return;
+            }
+            EditorUtility.DisplayProgressBar("Mine Sim", "Surround " + file, 0.5f);
+            string dst = CopyIntoProject(c, file);   // Generated/<id>/surround.glb (ships with the project)
+            var sur = NewChild(holder, "Surround");
+            int layer = LayerMask.NameToLayer(GroundLayerName);
+
+            List<Vector3> verts = null;
+            List<int> tris = null;
+            string err = null;
+            bool read = MineGlbMeshReader.TryRead(src, out verts, out tris, out err);
+            if (!read) Debug.LogWarning("[MineSim] could not read " + file + " geometry (" + err + "): no surround collider / fallback mesh");
+
+            bool visualDone = false;
+#if MINESIM_GLTFAST
+            var prefab = dst != null ? AssetDatabase.LoadAssetAtPath<GameObject>(dst) : null;
+            if (prefab != null)
+            {
+                var vis = NewChild(sur, "Visual");
+                vis.localScale = new Vector3(-1f, 1f, 1f);   // H = I * F: undo glTFast's X flip (world-frame file)
+                var inst = PrefabUtility.InstantiatePrefab(prefab, vis) as GameObject;
+                if (inst == null) inst = Object.Instantiate(prefab, vis, false);
+                inst.name = "surround_mesh";
+                inst.transform.localPosition = Vector3.zero;
+                inst.transform.localRotation = Quaternion.identity;
+                inst.transform.localScale = Vector3.one;
+                foreach (var col in inst.GetComponentsInChildren<Collider>(true)) col.enabled = false;
+                var note = vis.gameObject.AddComponent<MineAssetNote>();
+                note.assetFile = file;
+                note.assetPath = dst;
+                note.note = "Surround visual (glTFast material, vertex colours). World-frame file: holder scale (-1,1,1) only undoes glTFast's X flip.";
+                visualDone = true;
+            }
+            else Debug.LogWarning("[MineSim] glTFast did not produce a GameObject for " + dst + "; using a plain mesh");
+#endif
+            if (!visualDone && read)
+            {
+                var mesh = new Mesh { name = "Surround" };
+                mesh.indexFormat = verts.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
+                mesh.SetVertices(verts);
+                mesh.SetTriangles(tris, 0, true);
+                mesh.RecalculateNormals();
+                ReplaceAsset(mesh, c.gen + "/Surround_visual.asset");
+                var vis = NewChild(sur, "Visual (plain)");
+                vis.gameObject.AddComponent<MeshFilter>().sharedMesh = mesh;
+                var mr = vis.gameObject.AddComponent<MeshRenderer>();
+                mr.sharedMaterial = ColorMaterial(c, "Surround", new Color(0.62f, 0.52f, 0.40f));
+            }
+
+            if (SurroundCollider && read && tris.Count >= 3)
+            {
+                List<Vector3> cv = verts;
+                List<int> ct = tris;
+                float cell = Mathf.Max(0.5f, SurroundColliderCell);
+                for (int pass = 0; pass < 8 && ct.Count / 3 > SurroundColliderMaxTris; pass++, cell *= 2f)
+                    Cluster(verts, tris, cell, out cv, out ct);
+                var cm = new Mesh { name = "SurroundCollider" };
+                cm.indexFormat = cv.Count > 65535 ? IndexFormat.UInt32 : IndexFormat.UInt16;
+                cm.SetVertices(cv);
+                cm.SetTriangles(ct, 0, true);
+                cm.RecalculateNormals();
+                string meshPath = c.gen + "/Surround_collider.asset";
+                ReplaceAsset(cm, meshPath);
+                var go = NewChild(sur, "Collider");   // identity: world frame
+                go.gameObject.layer = layer >= 0 ? layer : 0;
+                var mc = go.gameObject.AddComponent<MeshCollider>();
+                mc.sharedMesh = cm;
+                Physics.SyncTransforms();
+                var note = go.gameObject.AddComponent<MineAssetNote>();
+                note.assetFile = file;
+                note.assetPath = meshPath;
+                note.note = "Coarse surround MeshCollider (" + (ct.Count / 3) + " of " + (tris.Count / 3) + " tris) so lidar/depth beyond the pit edge hit ground. " +
+                            "Toggle: MineWorldImporter.SurroundCollider. Layer " + (layer >= 0 ? GroundLayerName : "Default") + ".";
+                c.surround = mc;
+                Debug.Log("[MineSim] surround collider: " + (ct.Count / 3) + " tris (source " + (tris.Count / 3) + "), bounds " + cm.bounds);
+            }
+        }
+
+        /// <summary>Vertex clustering on a 3D grid (cell metres): averages the vertices per cell and drops degenerate triangles.</summary>
+        private static void Cluster(List<Vector3> verts, List<int> tris, float cell, out List<Vector3> outV, out List<int> outT)
+        {
+            var map = new Dictionary<long, int>();
+            var sum = new List<Vector3>();
+            var cnt = new List<int>();
+            var remap = new int[verts.Count];
+            float inv = 1f / cell;
+            for (int i = 0; i < verts.Count; i++)
+            {
+                var v = verts[i];
+                long ix = (long)Mathf.FloorToInt(v.x * inv) + (1 << 20);
+                long iy = (long)Mathf.FloorToInt(v.y * inv) + (1 << 20);
+                long iz = (long)Mathf.FloorToInt(v.z * inv) + (1 << 20);
+                long key = (ix & 0x1FFFFF) | ((iy & 0x1FFFFF) << 21) | ((iz & 0x1FFFFF) << 42);
+                if (!map.TryGetValue(key, out int idx))
+                {
+                    idx = sum.Count;
+                    map[key] = idx;
+                    sum.Add(Vector3.zero);
+                    cnt.Add(0);
+                }
+                sum[idx] += v;
+                cnt[idx]++;
+                remap[i] = idx;
+            }
+            outV = new List<Vector3>(sum.Count);
+            for (int i = 0; i < sum.Count; i++) outV.Add(sum[i] / cnt[i]);
+            outT = new List<int>(tris.Count / 2);
+            for (int i = 0; i + 2 < tris.Count; i += 3)
+            {
+                int a = remap[tris[i]], b = remap[tris[i + 1]], d = remap[tris[i + 2]];
+                if (a == b || b == d || a == d) continue;
+                outT.Add(a); outT.Add(b); outT.Add(d);
+            }
         }
 
         /// <summary>Copies a world file into Generated/&lt;id&gt;/ (skips when unchanged). Returns the asset path or null.</summary>
