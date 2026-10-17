@@ -1,25 +1,44 @@
 # Unity
 
-Protocol, resolutions and parameters: [../spec.md](../spec.md).
+Unity 6.3 LTS project. Protocol and parameters: [../spec.md](../spec.md).
+
+## Open
+
+1. Unity Hub > Add > select this `unity/` folder; open with 6000.3.x.
+2. Wait for packages (URP, glTFast) to resolve and the GLBs to import.
+3. Tools > Mining > Build Quarry Scene (Komatsu HD465) or (CAT 785C).
+4. Commit the generated `.meta` files, `Assets/Settings`, `Assets/Prefabs`, `Assets/Scenes`.
+
+## Layout
+
+| Path | Contents |
+|---|---|
+| `Assets/Scripts/` | runtime scripts |
+| `Assets/Editor/QuarrySceneBuilder.cs` | URP setup, truck prefabs, scene |
+| `Assets/Models/Trucks/` | truck GLBs, `CREDITS.md` |
+| `Packages/manifest.json` | URP, glTFast |
 
 ## Scripts
 
 | Script | Attach to |
 |---|---|
 | `BrainClient.cs` | one empty GameObject |
-| `TruckAgent.cs` | each truck (Rigidbody required) |
-| `SensorCamera.cs` | each truck front camera, and one overview camera |
-| `LidarSensor.cs` | child transform of each truck at the sensor mount |
+| `TruckAgent.cs` | truck root (kinematic Rigidbody) |
+| `SensorCamera.cs` | truck front camera, overview camera |
+| `LidarSensor.cs` | truck child transform at the sensor mount |
+| `PedestrianWalker.cs` | pedestrian root (CapsuleCollider, kinematic Rigidbody); `path` = parent of waypoint transforms |
 | `BrainProtocol.cs` | none |
 
-## Scene setup
+## Scene
 
-1. Copy `Scripts/` into `Assets/`.
-2. Add `BrainClient`; set `bounds` to the quarry extent.
-3. Per truck: `TruckAgent` with `truckId` = `truck-N`; child forward Camera with `SensorCamera`, `cameraName` = `truck-N`, `truck` = the TruckAgent.
-4. Per truck: child Transform with `LidarSensor`, `truck` = the TruckAgent, `mask` excluding the truck's own layer.
-5. Overview Camera with `SensorCamera`, `cameraName` = `overview`, `truck` empty.
-6. Marble splat via aras-p/UnityGaussianSplatting; add colliders for ground and obstacles.
+| Object | Contents |
+|---|---|
+| `Ground` | 200 × 200 m plane |
+| `Rocks` | box obstacles, seeded |
+| `Pedestrians` | `Path_N` waypoints, `Pedestrian_N` walkers |
+| `truck-0..2` | truck prefab instances |
+| `Overview` | orthographic top-down `SensorCamera` |
+| `BrainClient` | brain connection |
 
 ## Brain address
 
@@ -35,5 +54,9 @@ Editor on Mac against watson: `ssh -N -L 9000:127.0.0.1:9000 watson`, host `127.
 
 | Item | State |
 |---|---|
-| Linux ARM64 player renders headless in a container on GB10 | not verified |
+| Project opened in Unity | not yet |
+| Truck yaw offsets | from model inspection, check visually |
+| CAT 785C licence | not documented |
+| Pedestrian models | capsule placeholders |
+| Linux ARM64 player on GB10 | not verified |
 | `-batchmode -nographics` | disables rendering, not usable |

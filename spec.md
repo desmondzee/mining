@@ -12,16 +12,17 @@
 | Unity editor | macOS (no ARM64 Linux editor) |
 | Brain | Python 3.12, FastAPI, uv |
 | Containers | Docker Compose, project `mining` |
-| Environment source | World Labs Marble, Gaussian splat `.ply` / `.spz` |
-| Splat renderer | aras-p/UnityGaussianSplatting |
-| Collision | separate colliders (splats have none) |
+| Unity project | `unity/` |
+| Packages | URP 17.3.0, glTFast 6.15.0 |
+| Scene | `Assets/Scenes/Quarry.unity`, built by Tools > Mining > Build Quarry Scene |
+| Environment | flat ground plane and box rocks with colliders |
 
 ## Network
 
 | Item | Value | Source |
 |---|---|---|
 | Website + API port | 8080 | |
-| Sim TCP port | 9000 | `unity/Scripts/BrainClient.cs:port` |
+| Sim TCP port | 9000 | `unity/Assets/Scripts/BrainClient.cs:port` |
 | Host binding | 127.0.0.1 | |
 | Remote access | `ssh -N -L 8080:127.0.0.1:8080 watson` | |
 | Editor → remote brain | `ssh -N -L 9000:127.0.0.1:9000 watson` | |
@@ -42,14 +43,14 @@
 
 | Item | Value | Source |
 |---|---|---|
-| Truck camera width | 640 | `unity/Scripts/SensorCamera.cs:width` |
-| Truck camera height | 360 | `unity/Scripts/SensorCamera.cs:height` |
-| Frame rate | 15 | `unity/Scripts/SensorCamera.cs:fps` |
-| Horizontal FOV | 90 | `unity/Scripts/SensorCamera.cs:horizontalFov` |
+| Truck camera width | 640 | `unity/Assets/Scripts/SensorCamera.cs:width` |
+| Truck camera height | 360 | `unity/Assets/Scripts/SensorCamera.cs:height` |
+| Frame rate | 15 | `unity/Assets/Scripts/SensorCamera.cs:fps` |
+| Horizontal FOV | 90 | `unity/Assets/Scripts/SensorCamera.cs:horizontalFov` |
 | Readback format | RGBA32, bottom-up (`flip: true`) | |
-| Depth width | 64 | `unity/Scripts/SensorCamera.cs:depthWidth` |
-| Depth height | 36 | `unity/Scripts/SensorCamera.cs:depthHeight` |
-| Depth range (m) | 100 | `unity/Scripts/SensorCamera.cs:depthRange` |
+| Depth width | 64 | `unity/Assets/Scripts/SensorCamera.cs:depthWidth` |
+| Depth height | 36 | `unity/Assets/Scripts/SensorCamera.cs:depthHeight` |
+| Depth range (m) | 100 | `unity/Assets/Scripts/SensorCamera.cs:depthRange` |
 | Depth format | float32 metres, perpendicular distance, row 0 = top, miss = range | |
 | Depth method | `RaycastCommand` grid against colliders | |
 
@@ -58,19 +59,19 @@
 | Item | Value | Source |
 |---|---|---|
 | Method | `RaycastCommand` batch against colliders | |
-| Range (m) | 100 | `unity/Scripts/LidarSensor.cs:range` |
-| Horizontal FOV (deg) | 120 | `unity/Scripts/LidarSensor.cs:horizontalFov` |
-| Vertical min (deg) | -20 | `unity/Scripts/LidarSensor.cs:verticalMin` |
-| Vertical max (deg) | 10 | `unity/Scripts/LidarSensor.cs:verticalMax` |
-| Columns | 240 | `unity/Scripts/LidarSensor.cs:columns` |
-| Channels | 30 | `unity/Scripts/LidarSensor.cs:channels` |
-| Rate (Hz) | 10 | `unity/Scripts/LidarSensor.cs:rate` |
+| Range (m) | 100 | `unity/Assets/Scripts/LidarSensor.cs:range` |
+| Horizontal FOV (deg) | 120 | `unity/Assets/Scripts/LidarSensor.cs:horizontalFov` |
+| Vertical min (deg) | -20 | `unity/Assets/Scripts/LidarSensor.cs:verticalMin` |
+| Vertical max (deg) | 10 | `unity/Assets/Scripts/LidarSensor.cs:verticalMax` |
+| Columns | 240 | `unity/Assets/Scripts/LidarSensor.cs:columns` |
+| Channels | 30 | `unity/Assets/Scripts/LidarSensor.cs:channels` |
+| Rate (Hz) | 10 | `unity/Assets/Scripts/LidarSensor.cs:rate` |
 | Resolution | 0.5° H × 1° V | |
 | Beam angles | cell centres: az = -h_fov/2 + (j + 0.5)·h_fov/columns, el = v_min + (i + 0.5)·(v_max - v_min)/channels | |
 | Max points per scan | 7200 | |
 | Point format | float32 x, y, z, little-endian, 12 bytes per point | |
 | Frame | sensor-local, Unity axes: x right, y up, z forward, metres | |
-| Mount | `LidarSensor` transform, unit scale; mask excludes own truck | |
+| Mount | `LidarSensor` transform, unit scale | |
 | Misses | dropped | |
 | Noise | none | |
 | Fake sim mount height (m) | 3 | `brain/brain/fakesim.py:LIDAR_HEIGHT` |
@@ -81,6 +82,43 @@
 | Fake sim columns | 240 | `brain/brain/fakesim.py:LIDAR_COLS` |
 | Fake sim channels | 30 | `brain/brain/fakesim.py:LIDAR_CHANNELS` |
 | Fake sim rate (Hz) | 10 | `brain/brain/fakesim.py:LIDAR_HZ` |
+
+## Truck models
+
+| Item | Value | Source |
+|---|---|---|
+| Folder | `unity/Assets/Models/Trucks/` | |
+| Komatsu HD465-7EO | `komatsu_hd465.glb`, 27k triangles, CC-BY-4.0 | |
+| Komatsu length (m) | 9.35 | |
+| Komatsu yaw offset (deg) | 0 | |
+| CAT 785C | `cat_785c.glb`, 396k triangles, licence not documented | |
+| CAT length (m) | 11.02 | |
+| CAT yaw offset (deg) | -90 | |
+| Scaling | uniform, renderer bounds length along z = real length | |
+| Origin | bottom centre of renderer bounds | |
+| Collider | `BoxCollider` = renderer bounds | |
+| Body | kinematic `Rigidbody` | |
+| Trucks in scene | 3 | `unity/Assets/Editor/QuarrySceneBuilder.cs:TruckCount` |
+| Start positions | (-15, 0, -70), (0, 0, -70), (15, 0, -70), yaw 0 | |
+| Sensor offset ahead of collider (m) | 0.2 | `unity/Assets/Editor/QuarrySceneBuilder.cs:SensorOffset` |
+| Camera height (fraction of truck height) | 0.8 | `unity/Assets/Editor/QuarrySceneBuilder.cs:CameraHeightFraction` |
+| Lidar height (fraction of truck height) | 0.6 | `unity/Assets/Editor/QuarrySceneBuilder.cs:LidarHeightFraction` |
+
+## Pedestrians
+
+| Item | Value | Source |
+|---|---|---|
+| Control | fixed waypoint paths, no policy | |
+| Script | `PedestrianWalker` | |
+| Walking speed (m/s) | 1.4 | `unity/Assets/Scripts/PedestrianWalker.cs:speed` |
+| Turn rate (deg/s) | 360 | `unity/Assets/Scripts/PedestrianWalker.cs:turnRate` |
+| Path modes | loop (3+ waypoints), ping-pong (2 waypoints) | |
+| Height (m) | 1.8 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PedestrianHeight` |
+| Collider radius (m) | 0.3 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PedestrianRadius` |
+| Body | kinematic `Rigidbody`, `CapsuleCollider` | |
+| Visual | capsule placeholder until a rigged model is chosen | |
+| Paths | 4 | |
+| Rock clearance from paths (m) | 4 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PathClearance` |
 
 ## Fake sim
 
@@ -97,11 +135,11 @@
 | Item | Value | Source |
 |---|---|---|
 | Model | kinematic bicycle | |
-| Max speed (m/s) | 8 | `unity/Scripts/TruckAgent.cs:maxSpeed` |
-| Max steer (deg) | 30 | `unity/Scripts/TruckAgent.cs:maxSteerDeg` |
-| Wheelbase (m) | 5 | `unity/Scripts/TruckAgent.cs:wheelbase` |
-| Speed response (1/s) | 1.5 | `unity/Scripts/TruckAgent.cs:accel` |
-| Command timeout (s) | 0.5 | `unity/Scripts/TruckAgent.cs:commandTimeout` |
+| Max speed (m/s) | 8 | `unity/Assets/Scripts/TruckAgent.cs:maxSpeed` |
+| Max steer (deg) | 30 | `unity/Assets/Scripts/TruckAgent.cs:maxSteerDeg` |
+| Wheelbase (m) | 5 | `unity/Assets/Scripts/TruckAgent.cs:wheelbase` |
+| Speed response (1/s) | 1.5 | `unity/Assets/Scripts/TruckAgent.cs:accel` |
+| Command timeout (s) | 0.5 | `unity/Assets/Scripts/TruckAgent.cs:commandTimeout` |
 | Fake sim max speed (m/s) | 8 | `brain/brain/fakesim.py:MAX_SPEED` |
 | Fake sim max steer (deg) | 30 | `brain/brain/fakesim.py:MAX_STEER_DEG` |
 | Fake sim wheelbase (m) | 5 | `brain/brain/fakesim.py:WHEELBASE` |
