@@ -68,6 +68,7 @@ ARRIVE_RADIUS = 5.0
 HIT_MARGIN = 0.5  # m of gap a candidate path must keep from a mover it closes in on
 REPLAN_AFTER = 4.0  # s of waiting before re-planning the route around movers
 MAX_TICKS = 1500
+HOLD_FREE_CLEAR = 15.0  # m: a stop with no mover nearer than this is idle waiting and costs reward
 
 
 @dataclass
@@ -420,13 +421,18 @@ class DriveEnv:
         end = self.route[-1]
         arrived = math.hypot(end[0] - tr.x, end[1] - tr.z) < ARRIVE_RADIUS
 
+        timeout = self.ticks >= MAX_TICKS and not (collided or arrived)
         reward = 0.1 * progress - 0.02
-        if clear < 2.0:
-            reward -= 0.5
+        # The near-miss cost grows as the gap closes, so a 1.9 m pass costs little and a 0.2 m pass costs much.
+        reward -= 0.5 * max(0.0, 1.0 - clear / 2.0)
+        if tr.v < 0.3 and clear > HOLD_FREE_CLEAR:
+            reward -= 0.05
         if collided:
             reward -= 10.0
         if arrived:
             reward += 10.0
-        done = collided or arrived or self.ticks >= MAX_TICKS
+        if timeout:
+            reward -= 5.0
+        done = collided or arrived or timeout
         info = {"collided": collided, "off_road": off_road, "arrived": arrived, "clear": clear, "stops": self.stops, "t": self.t}
         return self.observe(), reward, done, info

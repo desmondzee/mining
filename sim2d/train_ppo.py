@@ -41,7 +41,7 @@ def worker(conn, seed: int) -> None:
         ep_ret += r
         stats = None
         if done:
-            stats = (ep_ret, info["arrived"], info["collided"], env.min_clear < 2.0)
+            stats = (ep_ret, info["arrived"], info["collided"], env.min_clear < 2.0, env.stops)
             ob, ep_ret = env.reset(), 0.0
         ob = _fix_mask(ob)
         conn.send((ob, r, done, stats))
@@ -80,6 +80,7 @@ def main() -> None:
     p.add_argument("--clip", type=float, default=0.2)
     p.add_argument("--ent", type=float, default=0.01)
     p.add_argument("--vf", type=float, default=0.5)
+    p.add_argument("--bc-coef", type=float, default=0.0, help="weight of KL(init policy || actor); keeps PPO near Training A")
     p.add_argument("--save-every", type=int, default=20)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
@@ -88,6 +89,11 @@ def main() -> None:
 
     actor = load_model(args.init).train() if args.init else PathScorer(width=args.width)
     actor.to(args.device)
+    anchor = None
+    if args.init and args.bc_coef > 0:
+        anchor = load_model(args.init).eval().to(args.device)
+        for q in anchor.parameters():
+            q.requires_grad_(False)
     value = Value(actor.config["width"]).to(args.device)
     opt = torch.optim.Adam(list(actor.parameters()) + list(value.parameters()), lr=args.lr)
 
@@ -171,6 +177,10 @@ def main() -> None:
                 pg = -torch.min(ratio * ADV[b], torch.clamp(ratio, 1 - args.clip, 1 + args.clip) * ADV[b]).mean()
                 vloss = ((value(O[b]) - RET[b]) ** 2).mean()
                 loss = pg + args.vf * vloss - args.ent * dist.entropy().mean()
+                if anchor is not None:
+                    with torch.no_grad():
+                        ref = torch.distributions.Categorical(logits=anchor(O[b], C[b], M[b]))
+                    loss = loss + args.bc_coef * torch.distributions.kl_divergence(ref, dist).mean()
                 opt.zero_grad()
                 loss.backward()
                 nn.utils.clip_grad_norm_(list(actor.parameters()) + list(value.parameters()), 0.5)
@@ -180,8 +190,8 @@ def main() -> None:
         if finished:
             f = np.array(finished, dtype=float)
             print(
-                "update %4d  steps %8d  episodes %3d  return %7.2f  success %.2f  collision %.2f  near-miss %.2f  %5.0f steps/s"
-                % (update, update * E * T, len(f), f[:, 0].mean(), f[:, 1].mean(), f[:, 2].mean(), f[:, 3].mean(), sps)
+                "update %4d  steps %8d  episodes %3d  return %7.2f  success %.2f  collision %.2f  timeout %.2f  near-miss %.2f  stops %.2f  %5.0f steps/s"
+                % (update, update * E * T, len(f), f[:, 0].mean(), f[:, 1].mean(), f[:, 2].mean(), 1 - f[:, 1].mean() - f[:, 2].mean(), f[:, 3].mean(), f[:, 4].mean(), sps)
             )
         else:
             print("update %4d  steps %8d  no finished episodes  %5.0f steps/s" % (update, update * E * T, sps))
