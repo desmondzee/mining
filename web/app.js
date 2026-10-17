@@ -6,9 +6,11 @@ const map = document.getElementById("map");
 const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
 const simStatus = document.getElementById("sim-status");
+const summary = document.getElementById("summary");
+const PEDESTRIAN_COLOUR = "#ff7814";
 const lidarView = createLidarView(document.getElementById("lidar"));
 
-let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [] };
+let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [] };
 let selected = null;
 const tiles = new Map();
 const decoder = new TextDecoder();
@@ -93,13 +95,38 @@ function toWorld(px, py) {
   return [xmin + (px / map.width) * (xmax - xmin), zmin + (1 - py / map.height) * (zmax - zmin)];
 }
 
+function metresToPx(m) {
+  return (m / (state.bounds[2] - state.bounds[0])) * map.width;
+}
+
 function drawMap() {
   ctx.clearRect(0, 0, map.width, map.height);
   ctx.strokeStyle = "#3a342c";
+  ctx.lineWidth = 1;
   for (let i = 1; i < 10; i++) {
     const p = (i / 10) * map.width;
     ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, map.height); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(map.width, p); ctx.stroke();
+  }
+  ctx.fillStyle = "#6e6e73";
+  for (const o of state.obstacles) {
+    const [cx, cy] = toCanvas(o.x, o.z);
+    ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.5), 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.strokeStyle = "rgba(255, 120, 20, 0.45)";
+  ctx.setLineDash([3, 3]);
+  for (const path of state.paths) {
+    if (path.length < 2) continue;
+    ctx.beginPath();
+    path.forEach((p, i) => { const [x, y] = toCanvas(p.x, p.z); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+    if (path.length > 2) ctx.closePath();
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.fillStyle = PEDESTRIAN_COLOUR;
+  for (const p of state.pedestrians) {
+    const [cx, cy] = toCanvas(p.x, p.z);
+    ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
   }
   for (const t of state.trucks) {
     const colour = truckColour(t.id);
@@ -167,6 +194,8 @@ function onState(ev) {
   if (!selected && state.trucks.length) select(state.trucks[0].id);
   simStatus.textContent = state.sim_connected ? "sim online" : "sim offline";
   simStatus.className = `pill ${state.sim_connected ? "on" : "off"}`;
+  const model = state.truck_model ? ` · ${state.truck_model}` : "";
+  summary.textContent = `${state.trucks.length} trucks · ${state.pedestrians.length} pedestrians · ${state.obstacles.length} rocks${model}`;
   renderTruckList();
   drawMap();
 }

@@ -19,6 +19,18 @@ public static class BrainProtocol
         public float speed;
     }
 
+    [Serializable] public class MapPoint { public float x; public float z; }
+    [Serializable] public class MapPath { public MapPoint[] points; }
+    [Serializable] public class Obstacle { public float x; public float z; public float r; }
+    [Serializable] public class PedestrianState { public string id; public float x; public float z; public float yaw; }
+
+    [Serializable]
+    public class ActorsMsg
+    {
+        public string type = "actors";
+        public PedestrianState[] pedestrians;
+    }
+
     [Serializable]
     public class LidarHeader
     {

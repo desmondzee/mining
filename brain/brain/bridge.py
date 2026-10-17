@@ -55,6 +55,8 @@ class SimBridge:
                     await self._on_frame(header, payload, writer)
                 elif kind == "lidar":
                     await self._on_lidar(header, payload)
+                elif kind == "actors":
+                    self.world.pedestrians = list(header.get("pedestrians", []))
                 else:
                     log.warning("ignoring unknown message type %r", kind)
         except (asyncio.IncompleteReadError, ConnectionError):
@@ -65,6 +67,7 @@ class SimBridge:
             if self._writer is writer:
                 self._writer = None
                 self.world.sim_connected = False
+                self.world.pedestrians = []
             writer.close()
             log.info("sim disconnected (%s)", peer)
 
@@ -72,6 +75,9 @@ class SimBridge:
         if "bounds" in header:
             self.world.bounds = [float(v) for v in header["bounds"]]
         self.world.cameras = list(header.get("cameras", []))
+        self.world.obstacles = list(header.get("obstacles", []))
+        self.world.paths = [list(p.get("points", [])) for p in header.get("paths", [])]
+        self.world.truck_model = str(header.get("truck_model", ""))
         for truck_id in header.get("trucks", []):
             self.world.truck(truck_id)
         log.info("sim hello: trucks=%s cameras=%s", header.get("trucks"), self.world.cameras)

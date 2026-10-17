@@ -119,6 +119,16 @@
 | Visual | capsule placeholder until a rigged model is chosen | |
 | Paths | 4 | |
 | Rock clearance from paths (m) | 4 | `unity/Assets/Editor/QuarrySceneBuilder.cs:PathClearance` |
+| Position report rate (Hz) | 10 | `unity/Assets/Scripts/BrainClient.cs:actorsRate` |
+| Pedestrian IDs | Unity: GameObject name (`Pedestrian_N`); fake sim: `pedestrian-N` | |
+| Model source | Microsoft Rocketbox candidate, not imported | |
+
+| Path | Waypoints (x, z) | Mode |
+|---|---|---|
+| 0 | (-30, -40), (30, -40) | ping-pong |
+| 1 | (-10, -10), (10, -10), (10, 10), (-10, 10) | loop |
+| 2 | (-50, 20), (-10, 60) | ping-pong |
+| 3 | (40, -20), (40, 40) | ping-pong |
 
 ## Fake sim
 
@@ -129,6 +139,14 @@
 | Depth range (m) | 100 | `brain/brain/fakesim.py:MAX_RANGE` |
 | Truck camera | 640 × 360 RGB + 640 × 360 depth | |
 | Overview size (px) | 480 | `brain/brain/fakesim.py:OVERVIEW_PX` |
+| Camera height (m) | 3.6 | `brain/brain/fakesim.py:CAM_HEIGHT` |
+| Rendering | per-column raycast, far-to-near layers, ground plane depth | |
+| Obstacles | rocks (cylinders, height 1.5 r), trucks, pedestrians, 15 m walls | |
+| Pedestrian speed (m/s) | 1.4 | `brain/brain/fakesim.py:PEDESTRIAN_SPEED` |
+| Pedestrian radius (m) | 0.3 | `brain/brain/fakesim.py:PEDESTRIAN_RADIUS` |
+| Pedestrian height (m) | 1.8 | `brain/brain/fakesim.py:PEDESTRIAN_HEIGHT` |
+| Pedestrian colour | RGB (255, 120, 20) | |
+| Actors rate (Hz) | 10 | `brain/brain/fakesim.py:ACTORS_HZ` |
 
 ## Truck dynamics
 
@@ -167,8 +185,9 @@
 
 | Message | Direction | Header | Payload |
 |---|---|---|---|
-| `hello` | sim → brain | `trucks`, `cameras`, `bounds` | none |
+| `hello` | sim → brain | `trucks`, `cameras`, `bounds`, `truck_model`, `obstacles[{x,z,r}]`, `paths[{points[{x,z}]}]` | none |
 | `frame` | sim → brain | `camera`, `truck` (`""` if none), `rgb{w,h,flip,channels}`, `depth{w,h}` (0×0 if none), `pose{x,z,yaw}`, `speed` | RGB(A) bytes, then depth float32 |
+| `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `pose{x,z,yaw}` | `points` × 3 float32 |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
 
@@ -184,6 +203,7 @@
 | Lidar stream | `GET /ws/lidar?truck={id}` binary: `u8 name_len \| name \| 3×f32 pose (x, z, yaw) \| N×3 f32 points` | |
 | Lidar latest | `GET /api/trucks/{id}/lidar` → N×3 f32 body, `X-Lidar` header JSON `{truck, seq, points, pose}` | |
 | Lidar view | three.js 0.169.0, selected truck, coloured by range | |
+| Map | rocks, pedestrian paths, pedestrians, trucks, goals | |
 | Read state | `GET /api/state` | |
 | Set goal | `POST /api/trucks/{id}/goal` `{"x","z"}` | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` | |

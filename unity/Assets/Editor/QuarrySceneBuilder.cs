@@ -61,9 +61,11 @@ public static class QuarrySceneBuilder
         ground.name = "Ground";
         ground.transform.localScale = new Vector3(HalfSize / 5, 1, HalfSize / 5);
 
-        AddRocks();
+        var rocks = AddRocks();
         AddPedestrians();
-        new GameObject("BrainClient").AddComponent<BrainClient>();
+        var brain = new GameObject("BrainClient").AddComponent<BrainClient>();
+        brain.truckModel = model.file;
+        brain.obstacles = rocks;
 
         for (int i = 0; i < TruckCount; i++)
         {
@@ -140,7 +142,7 @@ public static class QuarrySceneBuilder
         return prefab;
     }
 
-    static void AddRocks()
+    static Transform AddRocks()
     {
         var parent = new GameObject("Rocks").transform;
         var rng = new System.Random(0);
@@ -155,6 +157,7 @@ public static class QuarrySceneBuilder
             rock.transform.SetPositionAndRotation(p + Vector3.up * size / 2, Quaternion.Euler(0, (float)rng.NextDouble() * 360, 0));
             rock.transform.localScale = Vector3.one * size;
         }
+        return parent;
     }
 
     static void AddPedestrians()
