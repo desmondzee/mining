@@ -107,7 +107,7 @@ namespace MineSim
         /// Fills this component from world.json text. Optional fields are read leniently:
         /// site <c>load_point</c> / <c>dump_point</c> as [x,z], [x,y,z] or {"pos"|"pos3"|"x","z"}; parking <c>slots</c> as a list of
         /// those or objects with <c>id</c>, <c>heading_deg</c>; top-level <c>equipment</c> entries with
-        /// <c>id</c>, <c>type</c>|<c>kind</c>, <c>site</c>|<c>site_id</c>, <c>pos</c>|<c>pos3</c>|<c>position</c>, <c>heading_deg</c>|<c>yaw_deg</c>, <c>length_m</c>, <c>model</c>.
+        /// <c>id</c>, <c>type</c>|<c>kind</c>, <c>site</c>|<c>site_id</c>|<c>face</c>, <c>pos</c>|<c>pos3</c>|<c>position</c>, <c>heading_deg</c>|<c>yaw_deg</c>, <c>length_m</c>, <c>model</c>.
         /// y is NaN when only (x, z) was given; <paramref name="groundY"/> (may be null) fills it.
         /// </summary>
         public void Bake(string worldJson, Func<float, float, float> groundY)
@@ -157,7 +157,7 @@ namespace MineSim
                     {
                         id = MiniJson.Str(o, "id", "equipment_" + i),
                         type = MiniJson.Str(o, "type", MiniJson.Str(o, "kind", "excavator")),
-                        siteId = MiniJson.Str(o, "site", MiniJson.Str(o, "site_id", "")),
+                        siteId = MiniJson.Str(o, "site", MiniJson.Str(o, "site_id", MiniJson.Str(o, "face", ""))),
                         model = MiniJson.Str(o, "model", ""),
                         lengthM = (float)MiniJson.Num(o, "length_m", 0),
                     };
