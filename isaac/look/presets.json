@@ -3,14 +3,14 @@
   "sun": {"azimuth": "pano", "elevation": "pano", "intensity": 2800.0, "angle": 0.53, "color": [1.0, 0.96, 0.9], "shadows": true},
   "sky": {
    "texture": "sky_pano.jpg", "intensity": 1100.0, "color": [1.0, 1.0, 1.0], "visible": true,
-   "pano_azimuth": 220.0, "latlong_offset": 48.0, "latlong_sign": 1.0,
+   "pano_azimuth": 220.0, "latlong_offset": 93.0, "latlong_sign": 1.0,
    "remove_sun_deg": 0.0, "saturation": 1.0, "gamma": 1.0, "tint": [1.0, 1.0, 1.0], "drift_deg_per_s": 0.0
   },
   "fog": {"enabled": true, "color": [0.74, 0.76, 0.8], "intensity": 1.0, "start": 200.0, "end": 6000.0, "density": 0.04, "height": 0.0, "height_density": 0.0, "height_falloff": 0.01},
   "exposure": {"auto": false, "iso": 100.0, "ev": -1.3, "shutter": 50.0, "fnumber": 5.0, "min_ev": 9.0, "max_ev": 15.0, "white_scale": 10.0, "tau": 1.0},
   "tonemap": {"op": "aces", "whitepoint": [1.0, 1.0, 1.0], "saturation": 1.05, "contrast": 1.0, "gain": [1.0, 1.0, 1.0], "gamma": 1.0, "offset": 0.0},
   "materials": {
-   "scan": {"tint": [0.7, 0.62, 0.5], "roughness": 0.92, "specular": 0.02},
+   "scan": {"tint": [0.66, 0.58, 0.46], "roughness": 0.92, "specular": 0.02},
    "surround": {"mode": "mdl", "roughness": 0.9, "gain": 0.3},
    "truck": {"default": {"roughness": 0.6, "metallic": 0.0}, "by_name": {"m0": {"roughness": 0.38, "clearcoat": 0.3, "clearcoat_roughness": 0.25}, "m1": {"roughness": 0.5}, "m3": {"roughness": 0.55, "metallic": 0.2}, "m6": {"roughness": 0.08}, "m7": {"roughness": 0.65, "metallic": 0.2}}},
    "excavator": {"default": {"roughness": 0.5, "metallic": 0.0}, "by_name": {}}
@@ -26,13 +26,13 @@
    "exposure": {"ev": -0.9}
   },
   "golden_hour": {
-   "sun": {"azimuth": 255.0, "elevation": 9.0, "intensity": 3200.0, "color": [1.0, 0.66, 0.4]},
-   "sky": {"remove_sun_deg": 10.0, "intensity": 700.0, "saturation": 0.9, "tint": [1.0, 0.82, 0.66]},
+   "sun": {"azimuth": 255.0, "elevation": 9.0, "intensity": 6000.0, "color": [1.0, 0.66, 0.4]},
+   "sky": {"remove_sun_deg": 10.0, "intensity": 1700.0, "saturation": 0.9, "tint": [1.0, 0.82, 0.66]},
    "fog": {"color": [0.96, 0.78, 0.6], "density": 0.06, "start": 150.0},
-   "exposure": {"ev": 0.4}
+   "exposure": {"ev": 0.0}
   },
   "overcast": {
-   "sun": {"intensity": 450.0, "angle": 20.0, "color": [0.95, 0.97, 1.0]},
+   "sun": {"intensity": 450.0, "angle": 8.0, "color": [0.95, 0.97, 1.0]},
    "sky": {"remove_sun_deg": 15.0, "intensity": 2000.0, "saturation": 0.15, "gamma": 0.75},
    "fog": {"color": [0.8, 0.81, 0.82], "density": 0.1, "start": 80.0, "end": 4000.0},
    "exposure": {"ev": -0.6},

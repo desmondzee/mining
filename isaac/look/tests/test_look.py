@@ -47,8 +47,13 @@ def test_pano_sun_finds_bright_blob_across_seam():
 def test_dome_rotation_puts_pano_sun_at_requested_azimuth():
     for u in (0.1, 0.45, 0.9):
         for az in (0.0, 135.0, 300.0):
-            rot = dome_rotation_for(u, az, 90.0, -1.0)
-            assert latlong_azimuth(u, rot, 90.0, -1.0) == pytest.approx(az % 360.0)
+            rot = dome_rotation_for(u, az, 93.0, 1.0)
+            assert latlong_azimuth(u, rot, 93.0, 1.0) == pytest.approx(az % 360.0)
+
+
+def test_calibrated_pano_mapping_matches_renders():
+    assert latlong_azimuth(0.197, 201.1, 93.0, 1.0) == pytest.approx(322.8, abs=0.5)
+    assert latlong_azimuth(0.197, 100.9, 93.0, 1.0) == pytest.approx(63.0, abs=0.5)
 
 
 def test_sun_vector_compass_convention():

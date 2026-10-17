@@ -51,11 +51,11 @@ def pano_sun(image: np.ndarray) -> tuple[float, float, float]:
 
 
 def latlong_azimuth(u: float, rotation: float, offset: float, sign: float) -> float:
-    return (offset + sign * u * 360.0 + rotation) % 360.0
+    return (offset + sign * u * 360.0 - rotation) % 360.0
 
 
 def dome_rotation_for(u: float, azimuth: float, offset: float, sign: float) -> float:
-    return (azimuth - offset - sign * u * 360.0) % 360.0
+    return (offset + sign * u * 360.0 - azimuth) % 360.0
 
 
 def sky_variant(src: Path, cache: Path, remove_sun: float, saturation: float, gamma: float, tint: list[float]) -> Path:
@@ -109,7 +109,6 @@ def render_settings(cfg: dict) -> dict:
         "/rtx/post/colorcorr/gain": list(map(float, tm["gain"])),
         "/rtx/post/colorcorr/gamma": [float(tm["gamma"])] * 3,
         "/rtx/post/colorcorr/offset": [float(tm["offset"])] * 3,
-        "/rtx/shadows/enabled": bool(cfg["sun"]["shadows"]),
         "/rtx/fog/enabled": bool(fog["enabled"]),
         "/rtx/fog/fogColor": list(map(float, fog["color"])),
         "/rtx/fog/fogColorIntensity": float(fog["intensity"]),
@@ -210,6 +209,7 @@ class Look:
         light.CreateAngleAttr().Set(float(sun["angle"]))
         light.CreateColorAttr().Set(Gf.Vec3f(*sun["color"]))
         light.CreateExposureAttr().Set(0.0)
+        UsdLux.ShadowAPI.Apply(light.GetPrim()).CreateShadowEnableAttr().Set(bool(sun["shadows"]))
         self.sun_dir = sun_vector(self.elevation, self.azimuth)
         z = self.sun_dir
         x = np.cross([0.0, 0.0, 1.0], z)
