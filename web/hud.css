@@ -112,7 +112,7 @@
 .hud-label[data-state="stop"] { color: #ffc8c8; }
 
 .hud-full .hud-telemetry {
-  top: 28px;
+  top: calc(var(--bar-h, 0px) + 28px);
   left: 34px;
   bottom: auto;
   flex-direction: column;
@@ -206,7 +206,7 @@
 html.hud-focus-open { overflow: hidden; }
 
 @media (max-width: 720px) {
-  .hud-full .hud-telemetry { top: 16px; left: 18px; }
+  .hud-full .hud-telemetry { top: calc(var(--bar-h, 0px) + 16px); left: 18px; }
   .hud-full .hud-speed-val { font-size: 48px; }
   .hud-focus-sheet { width: calc(100vw - 16px); }
 }

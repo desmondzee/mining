@@ -114,7 +114,7 @@ test("unmatched text falls back to a radio command", async () => {
 });
 
 test("mock radio is flagged and the transcript backfills", async () => {
-  await page.waitForFunction(() => document.getElementById("summary").textContent === "mock fleet");
+  await page.waitForFunction(() => document.getElementById("summary").textContent === "mock");
   assert.match(await page.locator("#transcript li").first().textContent(), /haul to the crusher/);
 });
 

@@ -13,7 +13,8 @@ const feeds = document.getElementById("feeds");
 const map = document.getElementById("map");
 const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
-const captionTitle = document.getElementById("caption-title");
+const barCamera = document.getElementById("bar-camera");
+const stopButton = document.getElementById("stop-all");
 const captionHint = document.getElementById("caption-hint");
 const SITE_COLOURS = { ore: "#7fa38f", crusher: "#b0736a", dump: "#8f86a8", parking: "#b59a5e", fuel: "#b5835e" };
 const lidarView = createLidarView(document.getElementById("lidar"));
@@ -80,7 +81,7 @@ function tileFor(name) {
   const el = document.createElement("div");
   el.className = "feed";
   el.dataset.camera = name;
-  el.innerHTML = `<canvas></canvas><div class="feed-wait">waiting for frames</div>`;
+  el.innerHTML = `<canvas></canvas><div class="feed-wait">no signal</div>`;
   el.querySelector("canvas").setAttribute("aria-label", `${name} camera`);
   feeds.append(el);
   tile = { el, canvas: el.querySelector("canvas"), frames: 0, fps: 0, busy: false };
@@ -219,7 +220,7 @@ function drawMap() {
   const [x0, y0] = toCanvas(state.bounds[0], state.bounds[3]);
   const [x1, y1] = toCanvas(state.bounds[2], state.bounds[1]);
   if (preview) {
-    ctx.globalAlpha = 0.72;
+    ctx.globalAlpha = palette.previewAlpha;
     ctx.drawImage(preview, x0, y0, x1 - x0, y1 - y0);
     ctx.globalAlpha = 1;
   } else {
@@ -340,15 +341,23 @@ async function stopAll() {
 }
 
 let armedAt = 0;
+let armTimer = 0;
 function armedStop() {
+  clearTimeout(armTimer);
   if (Date.now() - armedAt < 2000) {
     armedAt = 0;
+    stopButton.classList.remove("armed");
+    stopButton.textContent = "stop";
     stopAll();
   } else {
     armedAt = Date.now();
-    ops.notice("press shift esc again to stop everything", true);
+    stopButton.classList.add("armed");
+    stopButton.textContent = "stop all?";
+    armTimer = setTimeout(() => { stopButton.classList.remove("armed"); stopButton.textContent = "stop"; }, 2000);
   }
 }
+
+stopButton.addEventListener("click", armedStop);
 
 async function sendRadio(text) {
   try {
@@ -391,24 +400,17 @@ function siteName(id) {
   return s ? s.name : id;
 }
 
-const caption = document.querySelector(".caption");
+const caption = document.querySelector(".chrome-bottom");
 
 function renderCaption() {
   const view = shell.view;
   const cam = shell.camera;
   const fps = tiles.get(cam)?.fps;
-  const kpiLine = ops.renderKpis();
-  caption.toggleAttribute("data-only", (view === "video" || view === "split") && state.trucks.some((t) => t.id === cam));
-  if (view === "lidar") {
-    captionTitle.textContent = selected ? `lidar · ${selected}` : "lidar";
-    captionHint.textContent = "drag to orbit";
-  } else if (view === "map") {
-    captionTitle.textContent = "map";
-    captionHint.textContent = kpiLine || (selected ? `click to send ${selected}` : "");
-  } else {
-    captionTitle.textContent = cam || "";
-    captionHint.textContent = cam && fps !== undefined ? `${fps} fps` : "";
-  }
+  ops.renderKpis();
+  const onVideo = view === "video" || (view === "split" && shell.split.includes("video"));
+  caption.toggleAttribute("data-only", onVideo && state.trucks.some((t) => t.id === cam));
+  barCamera.textContent = onVideo ? cam || "" : view === "lidar" ? selected || "" : "";
+  captionHint.textContent = onVideo && cam && fps !== undefined ? `${fps} fps` : "";
 }
 
 function onState(ev) {

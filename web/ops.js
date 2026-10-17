@@ -156,7 +156,7 @@ export function createOps({ radio, kpis }) {
       const text = String(v[dd.dataset.kpi]);
       if (dd.textContent !== text) dd.textContent = text;
     }
-    document.getElementById("kpi-since").textContent = v.since ? `since ${v.since}` : radio.online ? "waiting for the first radio job" : "radio offline";
+    document.getElementById("kpi-since").textContent = v.since ? `since ${v.since}` : "";
     const summary = `${v.loads} loads · ${v.tonnes} t · cycle ${v.cycle} · idle ${v.idle}`;
     document.getElementById("judge-kpis").textContent = summary;
     return v.loads || v.since ? summary : "";
@@ -191,10 +191,10 @@ export function createOps({ radio, kpis }) {
   }
 
   function status() {
-    if (!radio.open && !radio.lastState) return { text: "radio offline", tone: "warn" };
-    if (!radio.online) return { text: "radio reconnecting", tone: "warn" };
-    if (radio.mock) return { text: "mock fleet", tone: "mock" };
-    if (radio.health && radio.health.brain_ok === false) return { text: "radio cannot reach brain", tone: "warn" };
+    if (!radio.open && !radio.lastState) return { text: "radio", tone: "warn" };
+    if (!radio.online) return { text: "radio", tone: "warn" };
+    if (radio.mock) return { text: "mock", tone: "mock" };
+    if (radio.health && radio.health.brain_ok === false) return { text: "radio · brain", tone: "warn" };
     return null;
   }
 

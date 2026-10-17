@@ -4,8 +4,8 @@ const root = document.documentElement;
 const darkQuery = matchMedia("(prefers-color-scheme: dark)");
 
 const PALETTES = {
-  light: { grid: "rgba(26, 26, 26, 0.05)", road: "rgba(26, 26, 26, 0.16)", junction: "rgba(26, 26, 26, 0.35)", ink: "#1a1a1a", inkMuted: "#5b5b58", halo: "#f4f2ec", obstacle: "#b7b3a8", path: "rgba(168, 85, 69, 0.55)", pedestrian: "#a85545", outline: "#f4f2ec", selected: "#1a1a1a" },
-  dark: { grid: "rgba(255, 255, 255, 0.04)", road: "rgba(236, 235, 230, 0.16)", junction: "rgba(236, 235, 230, 0.4)", ink: "#ecebe6", inkMuted: "#a19f98", halo: "#121211", obstacle: "#4a4945", path: "rgba(214, 140, 110, 0.5)", pedestrian: "#d68c6e", outline: "#121211", selected: "#ecebe6" },
+  light: { previewAlpha: 0.92, grid: "rgba(26, 26, 26, 0.05)", road: "rgba(26, 26, 26, 0.16)", junction: "rgba(26, 26, 26, 0.35)", ink: "#1a1a1a", inkMuted: "#5b5b58", halo: "#f4f2ec", obstacle: "#b7b3a8", path: "rgba(168, 85, 69, 0.55)", pedestrian: "#a85545", outline: "#f4f2ec", selected: "#1a1a1a" },
+  dark: { previewAlpha: 0.72, grid: "rgba(255, 255, 255, 0.04)", road: "rgba(236, 235, 230, 0.16)", junction: "rgba(236, 235, 230, 0.4)", ink: "#ecebe6", inkMuted: "#a19f98", halo: "#121211", obstacle: "#4a4945", path: "rgba(214, 140, 110, 0.5)", pedestrian: "#d68c6e", outline: "#121211", selected: "#ecebe6" },
 };
 
 export const palette = { ...PALETTES.dark };
@@ -27,7 +27,7 @@ export function setStatusSource(fn) {
 
 function setSummary(text, tone = "") {
   if (el.summary.textContent !== text) el.summary.textContent = text;
-  el.summary.className = `meta ${tone}`;
+  el.summary.className = `status ${tone}`;
 }
 
 export function storedTheme() {
@@ -63,14 +63,14 @@ function showToast(title, body) {
 
 function renderConnection() {
   if (!lastState) {
-    showToast("Connecting", "Opening a connection to the control server.");
-    setSummary("connecting");
+    showToast("Connecting", "");
+    setSummary("");
   } else if (Date.now() - lastState > STALE_MS) {
-    showToast("Reconnecting", "The connection to the control server dropped. Retrying.");
-    setSummary("brain reconnecting", "warn");
+    showToast("Brain offline", "reconnecting");
+    setSummary("brain", "warn");
   } else if (!simConnected) {
-    showToast("Simulator offline", "Feeds and telemetry resume when it connects.");
-    setSummary("sim offline", "warn");
+    showToast("Simulator offline", "");
+    setSummary("sim", "warn");
   } else {
     showToast(null);
     const extra = extraStatus();

@@ -116,6 +116,7 @@ export function createShell({ onView, onCamera }) {
   for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) addEventListener(ev, wake, { passive: true });
   wake();
 
+  for (const t of tabs) t.addEventListener("click", () => setView(t.dataset.tab));
   addEventListener("resize", placeRule);
   narrow.addEventListener("change", layoutSplit);
   document.fonts?.ready.then(placeRule);
