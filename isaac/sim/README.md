@@ -57,7 +57,7 @@ The brain keeps only the latest sim connection: stop `mining-fakesim-1` before p
 |---|---|---|
 | `name`, `width`, `height`, `hfov` | all | camera name in hello/frames, resolution, horizontal FOV |
 | `mode` | | `chase`, `orbit`, `fixed` |
-| `truck`, `distance`, `elevation`, `target_height`, `smooth` | chase | follows a truck from behind and above, smoothed |
+| `truck`, `distance`, `elevation`, `target_height`, `smooth` | chase | follows a truck or a pedestrian (`Pedestrian_NN`) from behind and above, smoothed |
 | `center`, `radius`, `period`, `position[1]` | orbit | circles `center` (x, z) at `position[1]` m above its ground |
 | `position`, `look_at` | fixed | world coordinates |
 

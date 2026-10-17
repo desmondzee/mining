@@ -11,12 +11,9 @@ from .usdbuild import isaac_matrix
 PREFIX = "/World/People"
 PEOPLE_ROOT = "/Isaac/People"
 CHARACTERS = [
-    "Characters/original_male_adult_construction_01/male_adult_construction_01.usd",
-    "Characters/original_male_adult_construction_02/male_adult_construction_02.usd",
-    "Characters/male_adult_construction_05_new/male_adult_construction_05_new.usd",
-    "Characters/original_male_adult_construction_03/male_adult_construction_03.usd",
     "Characters/male_adult_construction_01_new/male_adult_construction_01_new.usd",
-    "Characters/original_male_adult_construction_05/male_adult_construction_05.usd",
+    "Characters/male_adult_construction_05_new/male_adult_construction_05_new.usd",
+    "Characters/male_adult_construction_03/male_adult_construction_03.usd",
 ]
 SOURCE_SKELETON = "Characters/biped_demo/biped_demo_meters.usd"
 WALK_CLIP = "Animations/stand_walk_loop_in_place.skelanim.usd"

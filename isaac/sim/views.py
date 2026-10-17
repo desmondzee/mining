@@ -51,7 +51,7 @@ def view_pose(view: View, sim, dt: float) -> tuple[np.ndarray, np.ndarray]:
         ground = sim.height(cx, cz)
         p = np.array([cx + view.radius * math.sin(a), ground + view.position[1], cz + view.radius * math.cos(a)])
         return p, look(p, [cx, ground, cz])
-    truck = next((t for t in sim.trucks if t.id == view.truck), sim.trucks[0])
+    truck = next((t for t in [*sim.trucks, *getattr(sim, "walkers", [])] if t.id == view.truck), sim.trucks[0])
     base = np.array([truck.x, truck.y, truck.z])
     e = math.radians(view.elevation)
     behind = yaw_matrix(truck.yaw) @ np.array([0.0, math.sin(e), -math.cos(e)]) * view.distance
