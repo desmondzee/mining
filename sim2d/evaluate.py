@@ -1,6 +1,10 @@
 """Run a driver on fixed scenarios and report the comparison metrics.
 
-Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz]
+Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz] [--seed 900000]
+
+Evaluation seeds start at EVAL_SEED, far from the training seeds: datagen uses
+--seed + 0..episodes-1 (bc_v1/bc_v2: 0-1999, bc_v3: 50000-55999) and PPO
+workers use --seed * 1000 + 0..envs-1.
 """
 
 from __future__ import annotations
@@ -14,6 +18,8 @@ import numpy as np
 from .env import DEFAULT_WORLDS, HOLD_ACTION, DriveEnv, make_env
 
 Driver = Callable[[DriveEnv, Dict[str, np.ndarray]], int]
+
+EVAL_SEED = 900000
 
 
 def expert_driver(env: DriveEnv, ob) -> int:
@@ -38,7 +44,7 @@ def npz_driver(path: str) -> Driver:
     return drive
 
 
-def run(driver: Driver, episodes: int = 20, seed: int = 1000, worlds: str = DEFAULT_WORLDS) -> Dict[str, float]:
+def run(driver: Driver, episodes: int = 20, seed: int = EVAL_SEED, worlds: str = DEFAULT_WORLDS) -> Dict[str, float]:
     rows = []
     t0 = time.perf_counter()
     ticks = 0
@@ -68,6 +74,7 @@ def main() -> None:
     p.add_argument("--episodes", type=int, default=20)
     p.add_argument("--policy", default="expert")
     p.add_argument("--worlds", default=DEFAULT_WORLDS)
+    p.add_argument("--seed", type=int, default=EVAL_SEED, help="first episode seed; use 1000 to reproduce the 2026-10-17 rows")
     args = p.parse_args()
     if args.policy == "expert":
         driver = expert_driver
@@ -77,7 +84,8 @@ def main() -> None:
         from .model import load_driver
 
         driver = load_driver(args.policy)
-    for k, v in run(driver, args.episodes, worlds=args.worlds).items():
+    print("%-16s %d-%d" % ("seeds", args.seed, args.seed + args.episodes - 1))
+    for k, v in run(driver, args.episodes, args.seed, args.worlds).items():
         print("%-16s %s" % (k, "%.3f" % v if isinstance(v, float) else v))
 
 
