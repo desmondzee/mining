@@ -59,9 +59,11 @@ class DryRenderer:
     def __init__(self, sim, config: dict) -> None:
         import numpy as np
 
-        from isaac.sim.sensors import CAM_H, CAM_W
+        from isaac.sim.sensors import CAM_H, CAM_W, OVERVIEW_HFOV
+        from isaac.sim.zoom import OverviewZoom
 
         ow, oh = config.get("overview_res", [CAM_W, CAM_H])
+        self.zoom = OverviewZoom(np.eye(4), OVERVIEW_HFOV, ow / oh)
         self.frames = {t.id: np.zeros((CAM_H, CAM_W, 3), np.uint8) for t in sim.trucks}
         self.frames["overview"] = np.zeros((oh, ow, 3), np.uint8)
         self.frames.update({v.name: np.zeros((v.height, v.width, 3), np.uint8) for v in sim.views})
@@ -70,6 +72,7 @@ class DryRenderer:
         self.loads = {}
 
     def update(self, sim, dt: float) -> None:
+        self.zoom.step(dt)
         self.view_poses = sim.view_poses(dt)
 
     def render(self) -> dict:
@@ -102,7 +105,11 @@ def run(args: argparse.Namespace) -> None:
         renderer = IsaacRenderer(app, sim, args, config)
 
     host, port = args.brain.rsplit(":", 1)
-    bridge = Bridge(host, int(port), sim.hello, sim.command).start()
+    def on_view(camera: str, box: list | None) -> None:
+        if camera == "overview":
+            renderer.zoom.set(box)
+
+    bridge = Bridge(host, int(port), sim.hello, sim.command, on_view).start()
     jpeg_pool = ThreadPoolExecutor(6)
     publisher = ThreadPoolExecutor(1)
     noise = float(config.get("noise_sigma", 0.0))
@@ -121,7 +128,7 @@ def run(args: argparse.Namespace) -> None:
     last_sig: dict[str, bytes] = {}
     fresh: dict[str, int] = {}
 
-    def publish(images, depths, poses, cams, views, loads, frame):
+    def publish(images, depths, poses, cams, views, loads, overview, frame):
         new = {}
         for name, img in images.items():
             sig = img[::17, ::23].tobytes()
@@ -138,6 +145,8 @@ def run(args: argparse.Namespace) -> None:
                     bridge.send(encode_frame(name, data, w, h, depths[i], truck=name, pose=pose, speed=speed, cam=cams[name], **extra))
                 elif name in views:
                     bridge.send(encode_frame(name, data, w, h, cam=views[name]))
+                elif name == "overview":
+                    bridge.send(encode_frame(name, data, w, h, view=overview))
                 else:
                     bridge.send(encode_frame(name, data, w, h))
         if save and args.save_every and frame % args.save_every == 0:
@@ -183,7 +192,7 @@ def run(args: argparse.Namespace) -> None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        meta = (depths, poses, cams, views, dict(renderer.loads))
+        meta = (depths, poses, cams, views, dict(renderer.loads), renderer.zoom.meta())
         if lag:
             meta, previous = (previous or meta), meta
         pending = publisher.submit(publish, images, *meta, frames)

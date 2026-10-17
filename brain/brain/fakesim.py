@@ -172,6 +172,15 @@ def crossing_paths(roads: list[dict]) -> list[list[tuple[float, float]]]:
     return paths
 
 
+def square_box(box: list[float] | None) -> list[float] | None:
+    if box is None:
+        return None
+    x0, y0, x1, y1 = box
+    half = max(x1 - x0, y1 - y0) / 2
+    cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+    return [cx - half, cy - half, cx + half, cy + half]
+
+
 def camera_pose(t: Truck, ground: float = 0.0) -> dict:
     return {"x": t.x, "y": ground + CAM_HEIGHT, "z": t.z, "yaw": t.yaw, "pitch": 0.0, "roll": 0.0, "hfov": FOV_DEG}
 
@@ -220,6 +229,7 @@ class FakeQuarry:
             for i, path in enumerate(self.paths)
             for k in range(PEDESTRIANS_PER_PATH)
         ]
+        self.view_box: list[float] | None = None
 
     def step(self, dt: float) -> None:
         for t in self.trucks:
@@ -310,10 +320,12 @@ class FakeQuarry:
         return rgb.astype(np.uint8), depth
 
     def render_overview(self) -> np.ndarray:
-        s = OVERVIEW_PX / (2 * self.half)
+        x0, y0, x1, _ = square_box(self.view_box) or [0.0, 0.0, 1.0, 1.0]
+        zoom = 1 / (x1 - x0)
+        s = OVERVIEW_PX / (2 * self.half) * zoom
 
         def px(x: float, z: float) -> tuple[float, float]:
-            return (x + self.half) * s, (self.half - z) * s
+            return (x + self.half) * s - x0 * zoom * OVERVIEW_PX, (self.half - z) * s - y0 * zoom * OVERVIEW_PX
 
         img = Image.new("RGB", (OVERVIEW_PX, OVERVIEW_PX), tuple(int(c) for c in GROUND_COLOUR))
         d = ImageDraw.Draw(img)
@@ -380,6 +392,8 @@ async def run(host: str, port: int, n_trucks: int, world_dir: str | None = None)
                 if header.get("type") == "action" and t:
                     t.throttle = float(header["throttle"])
                     t.steer = float(header["steer"])
+                elif header.get("type") == "view" and header.get("camera") == "overview":
+                    quarry.view_box = header.get("box")
 
         receiver = asyncio.create_task(receive_actions())
         try:
@@ -395,7 +409,7 @@ async def run(host: str, port: int, n_trucks: int, world_dir: str | None = None)
                     next_lidar += 1 / LIDAR_HZ
                     for t in quarry.trucks:
                         writer.write(encode_lidar(t.id, quarry.scan_lidar(t), {"x": t.x, "z": t.z, "yaw": t.yaw}))
-                writer.write(encode_frame("overview", quarry.render_overview()))
+                writer.write(encode_frame("overview", quarry.render_overview(), view={"box": quarry.view_box, "settled": True}))
                 for t in quarry.trucks:
                     rgb, depth = quarry.render_truck(t)
                     ground = quarry.ground(t)

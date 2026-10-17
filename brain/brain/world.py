@@ -58,6 +58,7 @@ class World:
     sites: list[dict] = field(default_factory=list)
     junctions: list[dict] = field(default_factory=list)
     world_seq: int = 0
+    views: dict[str, dict] = field(default_factory=lambda: {"overview": {"box": None}})
 
     def set_network(self, roads: list[dict], sites: list[dict], junctions: list[dict]) -> None:
         self.roads, self.sites, self.junctions = roads, sites, junctions
@@ -86,4 +87,5 @@ class World:
             "paths": self.paths,
             "pedestrians": self.pedestrians,
             "trucks": [t.to_dict() for t in self.trucks.values()],
+            "views": self.views,
         }

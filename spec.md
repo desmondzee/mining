@@ -447,6 +447,7 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | `actors` | sim → brain | `pedestrians[{id,x,z,yaw}]` | none |
 | `lidar` | sim → brain | `truck`, `points`, `format` (`int16cm`; `f32` accepted), `pose{x,z,yaw}` | `points` × 3 int16 cm (or float32 m) |
 | `action` | brain → sim | `truck`, `throttle`, `steer` | none |
+| `view` | brain → sim | `camera` (`overview`), `box` `[x0,y0,x1,y1]` normalised top-left image coords of the unzoomed view, or null to reset; resent after every `hello` | none |
 
 ## Web
 
@@ -495,6 +496,11 @@ meiru-cam's candidate-path scorer (`sim2d/`, trained with BC then PPO in a 2D si
 | Go to site | `POST /api/trucks/{id}/site/{site_id}` (same as `{"site"}`) | |
 | Goal fields | `goal` [x, z], `goal_site` node id or null, `route` [[x, z], …] (planner path) | |
 | Clear goal | `DELETE /api/trucks/{id}/goal` (clears `goal`, `goal_site`, `route`) | |
+| Overview zoom | `POST /api/view/overview` `{"box":[x0,y0,x1,y1]}` (normalised, top-left origin, of the unzoomed frame; 409 while zoomed, one level), `DELETE /api/view/overview` resets; state `views.overview.box`. Shared: one viewer's zoom applies to every viewer | |
+| Zoom box minimum (normalised) | 0.02 | `brain/brain/app.py:MIN_BOX` |
+| Zoom box max aspect | 8 | `brain/brain/app.py:MAX_BOX_ASPECT` |
+| Zoom in sim | Isaac re-aims the overview at the box centre ray and narrows the focal length so the box fills the frame (smaller side expanded to the image aspect), eased over 0.4 s; overview frame meta `view{box,settled}`; fakesim renders the sub-region at full resolution | `isaac/sim/zoom.py` |
+| Zoom UI | crosshair on the overview, drag (≥ 8 px) selects, box expanded to the tile aspect; the frame scales to the box until a settled zoomed frame arrives; Esc or palette "Reset overview zoom" resets | `web/zoom.js` |
 
 ## Radio
 
