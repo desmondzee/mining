@@ -1,13 +1,13 @@
 import { createLidarView } from "./lidar.js";
+import { palette, renderChrome } from "./ui.js";
 
-const COLOURS = ["#f0b428", "#3ca0f0", "#e65050", "#78dc78"];
+const COLOURS = ["#4fc3f7", "#ffb74d", "#ef5350", "#81c784"];
 const feeds = document.getElementById("feeds");
 const map = document.getElementById("map");
 const ctx = map.getContext("2d");
 const truckList = document.getElementById("trucks");
 const simStatus = document.getElementById("sim-status");
 const summary = document.getElementById("summary");
-const PEDESTRIAN_COLOUR = "#ff7814";
 const lidarView = createLidarView(document.getElementById("lidar"));
 
 let state = { sim_connected: false, bounds: [-100, -100, 100, 100], trucks: [], obstacles: [], paths: [], pedestrians: [] };
@@ -48,13 +48,14 @@ function tileFor(name) {
   let tile = tiles.get(name);
   if (tile) return tile;
   const el = document.createElement("div");
-  el.className = "feed";
-  el.innerHTML = `<canvas></canvas><div class="label"><span></span><span class="fps"></span></div>`;
-  el.querySelector(".label span").textContent = name;
+  el.className = name === "overview" ? "feed featured" : "feed";
+  el.innerHTML = `<canvas></canvas><div class="feed-wait">Waiting for frames</div><div class="feed-bar top"><span class="chip name"><i></i><span></span></span><span class="spacer"></span><span class="chip status"></span></div><div class="feed-bar bottom"><span class="chip speed"></span><span class="chip fps"></span></div>`;
+  el.querySelector(".name span").textContent = name;
+  el.querySelector("canvas").setAttribute("aria-label", `${name} camera`);
   const names = [...tiles.keys(), name].sort((a, b) => (a === "overview" ? -1 : b === "overview" ? 1 : a.localeCompare(b)));
   const before = tiles.get(names[names.indexOf(name) + 1]);
   feeds.insertBefore(el, before ? before.el : null);
-  tile = { el, canvas: el.querySelector("canvas"), fpsEl: el.querySelector(".fps"), frames: 0, busy: false };
+  tile = { el, canvas: el.querySelector("canvas"), fpsEl: el.querySelector(".fps"), statusEl: el.querySelector(".status"), speedEl: el.querySelector(".speed"), frames: 0, busy: false };
   tiles.set(name, tile);
   return tile;
 }
@@ -73,6 +74,7 @@ async function onVideo(ev) {
     tile.canvas.getContext("2d").drawImage(bmp, 0, 0);
     bmp.close();
     tile.frames++;
+    tile.el.classList.add("live");
   } finally {
     tile.busy = false;
   }
@@ -81,6 +83,7 @@ async function onVideo(ev) {
 setInterval(() => {
   for (const tile of tiles.values()) {
     tile.fpsEl.textContent = `${tile.frames} fps`;
+    tile.el.classList.toggle("stale", tile.frames === 0);
     tile.frames = 0;
   }
 }, 1000);
@@ -101,19 +104,19 @@ function metresToPx(m) {
 
 function drawMap() {
   ctx.clearRect(0, 0, map.width, map.height);
-  ctx.strokeStyle = "#3a342c";
+  ctx.strokeStyle = palette.grid;
   ctx.lineWidth = 1;
   for (let i = 1; i < 10; i++) {
     const p = (i / 10) * map.width;
     ctx.beginPath(); ctx.moveTo(p, 0); ctx.lineTo(p, map.height); ctx.stroke();
     ctx.beginPath(); ctx.moveTo(0, p); ctx.lineTo(map.width, p); ctx.stroke();
   }
-  ctx.fillStyle = "#6e6e73";
+  ctx.fillStyle = palette.obstacle;
   for (const o of state.obstacles) {
     const [cx, cy] = toCanvas(o.x, o.z);
     ctx.beginPath(); ctx.arc(cx, cy, Math.max(metresToPx(o.r), 1.5), 0, Math.PI * 2); ctx.fill();
   }
-  ctx.strokeStyle = "rgba(255, 120, 20, 0.45)";
+  ctx.strokeStyle = palette.path;
   ctx.setLineDash([3, 3]);
   for (const path of state.paths) {
     if (path.length < 2) continue;
@@ -123,7 +126,7 @@ function drawMap() {
     ctx.stroke();
   }
   ctx.setLineDash([]);
-  ctx.fillStyle = PEDESTRIAN_COLOUR;
+  ctx.fillStyle = palette.pedestrian;
   for (const p of state.pedestrians) {
     const [cx, cy] = toCanvas(p.x, p.z);
     ctx.beginPath(); ctx.arc(cx, cy, 3.5, 0, Math.PI * 2); ctx.fill();
@@ -143,7 +146,7 @@ function drawMap() {
     ctx.translate(cx, cy);
     ctx.rotate((t.yaw * Math.PI) / 180);
     ctx.fillStyle = colour;
-    ctx.strokeStyle = t.id === selected ? "#fff" : "#000";
+    ctx.strokeStyle = t.id === selected ? palette.selected : palette.outline;
     ctx.lineWidth = 2;
     ctx.beginPath(); ctx.moveTo(0, -10); ctx.lineTo(7, 8); ctx.lineTo(-7, 8); ctx.closePath();
     ctx.fill(); ctx.stroke();
@@ -169,24 +172,53 @@ function select(id) {
 
 const truckItems = new Map();
 
+function setBar(bar, value, centered) {
+  const v = Math.max(-1, Math.min(1, value));
+  const fill = bar.querySelector(".bar-fill");
+  fill.style.left = centered ? `${50 + Math.min(v, 0) * 50}%` : "0%";
+  fill.style.width = `${Math.abs(v) * (centered ? 50 : 100)}%`;
+  bar.querySelector(".bar-value").textContent = `${v >= 0 && centered ? "+" : ""}${v.toFixed(2)}`;
+}
+
 function renderTruckList() {
   for (const t of state.trucks) {
     let li = truckItems.get(t.id);
     if (!li) {
       li = document.createElement("li");
-      li.innerHTML = `<span class="swatch"></span><span><b></b> <span class="meta"></span></span><button>stop</button>`;
-      li.querySelector("b").textContent = t.id;
+      li.innerHTML = `
+        <button type="button" class="truck-head"><span class="swatch"></span><span class="truck-id"></span><span class="chip status"></span><span class="truck-speed num"><span class="speed"></span><small>m/s</small></span></button>
+        <div class="bars">
+          <div class="bar throttle"><span>Thr</span><span class="bar-track"><span class="bar-fill"></span></span><span class="bar-value num"></span></div>
+          <div class="bar steer centered"><span>Str</span><span class="bar-track"><span class="bar-fill"></span></span><span class="bar-value num"></span></div>
+        </div>
+        <div class="truck-foot">
+          <span class="truck-goal"><span>Goal</span><span class="goal num"></span><span class="goal-site"></span></span>
+          <span class="truck-actions">
+            <span class="send-group" hidden><select class="btn send-site" aria-label="Destination site"><option value="">Send to…</option></select><button type="button" class="btn send">Send</button></span>
+            <button type="button" class="btn danger stop">Stop</button>
+          </span>
+        </div>`;
+      li.querySelector(".truck-id").textContent = t.id;
+      li.querySelector(".stop").setAttribute("aria-label", `Stop ${t.id}`);
       li.onclick = () => select(t.id);
-      li.querySelector("button").onclick = (e) => {
+      li.querySelector(".stop").onclick = (e) => {
         e.stopPropagation();
         fetch(`/api/trucks/${encodeURIComponent(t.id)}/goal`, { method: "DELETE" });
       };
       truckList.append(li);
       truckItems.set(t.id, li);
     }
-    li.className = t.id === selected ? "selected" : "";
+    li.className = t.id === selected ? "truck selected" : "truck";
+    li.querySelector(".truck-head").setAttribute("aria-pressed", String(t.id === selected));
     li.querySelector(".swatch").style.background = truckColour(t.id);
-    li.querySelector(".meta").textContent = `${t.status} · ${t.speed.toFixed(1)} m/s`;
+    const status = li.querySelector(".status");
+    status.textContent = t.status;
+    status.className = `chip status status-${t.status}`;
+    li.querySelector(".speed").textContent = t.speed.toFixed(1);
+    setBar(li.querySelector(".throttle"), t.throttle ?? 0, false);
+    setBar(li.querySelector(".steer"), t.steer ?? 0, true);
+    li.querySelector(".goal").textContent = t.goal ? `${t.goal[0].toFixed(0)}, ${t.goal[1].toFixed(0)}` : "—";
+    li.querySelector(".goal-site").textContent = t.goal_site || "";
   }
 }
 
@@ -199,6 +231,7 @@ function onState(ev) {
   summary.textContent = `${state.trucks.length} trucks · ${state.pedestrians.length} pedestrians · ${state.obstacles.length} rocks${model}`;
   renderTruckList();
   drawMap();
+  renderChrome(state, { tileFor, tiles, truckColour, selected });
 }
 
 map.addEventListener("click", (e) => {
