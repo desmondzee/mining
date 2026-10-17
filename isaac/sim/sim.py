@@ -15,7 +15,8 @@ PEDESTRIAN_PROBE = 30.0
 
 
 class Sim:
-    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None) -> None:
+    def __init__(self, world_dir: str | Path, raycast: bool = True, repo: Path = W.REPO, views: list[dict] | None = None, lidar_level: bool = True) -> None:
+        self.lidar_level = lidar_level
         self.views = [View.from_dict(v) for v in views or []]
         self.world = W.load_world(world_dir)
         self.truck_matrix, self.truck_size = W.truck_box(repo)
@@ -150,7 +151,14 @@ class Sim:
     def lidars(self) -> list[np.ndarray]:
         if not self.caster or not self.trucks:
             return [np.zeros((0, 3), np.float32) for _ in self.trucks]
-        return [lidar_points(d, self.rig.lidar_dirs) for d in self._cast_all(self.rig.lidar_rays, LIDAR_RANGE)]
+        scans = [lidar_points(d, self.rig.lidar_dirs) for d in self._cast_all(self.rig.lidar_rays, LIDAR_RANGE)]
+        if not self.lidar_level:
+            return scans
+        out = []
+        for t, pts in zip(self.trucks, scans):
+            level = yaw_matrix(t.yaw).T @ self.rotation(t)
+            out.append((pts @ level.T).astype(np.float32))
+        return out
 
     def actors(self) -> list[dict]:
         return [w.state() for w in self.walkers]

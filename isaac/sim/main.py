@@ -87,7 +87,7 @@ def run(args: argparse.Namespace) -> None:
     from isaac.sim.sensors import ACTORS_HZ, FPS, LIDAR_HZ, cam_field
     from isaac.sim.sim import Sim
 
-    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []))
+    sim = Sim(args.world, raycast=raycast_enabled(args.raycast), views=config.get("views", []), lidar_level=config.get("lidar_frame", "level") == "level")
     print(f"world {sim.world.id}: trucks {[t.id for t in sim.trucks]}, walkers {len(sim.walkers)}, views {[v.name for v in sim.views]}, raycast {sim.caster is not None}, fps {config.get("fps", FPS)}", flush=True)
     if args.dry_run:
         renderer = DryRenderer(sim)
@@ -142,7 +142,8 @@ def run(args: argparse.Namespace) -> None:
     start = last = next_tick = time.monotonic()
     next_lidar = next_actors = 0.0
     frames = 0
-    pending = None
+    pending = previous = None
+    lag = getattr(renderer, "lag", 0)
     timing = dict.fromkeys(["step", "render", "rays", "publish"], 0.0)
     stats_at = start + STATS_EVERY
     while app is None or app.is_running():
@@ -176,7 +177,10 @@ def run(args: argparse.Namespace) -> None:
             pending.result()
         t4 = time.monotonic()
         frames += 1
-        pending = publisher.submit(publish, images, depths, poses, cams, views, frames)
+        meta = (depths, poses, cams, views)
+        if lag:
+            meta, previous = (previous or meta), meta
+        pending = publisher.submit(publish, images, *meta, frames)
         timing["step"] += t1 - t0
         timing["render"] += t2 - t1
         timing["rays"] += t3 - t2

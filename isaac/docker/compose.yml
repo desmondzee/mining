@@ -1,4 +1,4 @@
-name: mining
+name: mining-isaac
 
 services:
   isaac-sim:
@@ -17,6 +17,7 @@ services:
       ACCEPT_EULA: "Y"
       PRIVACY_CONSENT: "Y"
       NVIDIA_DRIVER_CAPABILITIES: all
+      RADIO_URL: ${RADIO_URL:-http://127.0.0.1:8090}
     volumes:
       - ../..:/mining:ro
       - ../../data:/data:ro

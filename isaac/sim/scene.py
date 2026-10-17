@@ -160,6 +160,8 @@ class IsaacRenderer:
 
         self.annotators, self.tiles = [], None
         self.subframes = int(config.get("rt_subframes", 1))
+        self.step_mode = config.get("step", "step_nowait")
+        self.lag = int(self.step_mode == "step_nowait")
         sensors = cameras[: 1 + len(sim.trucks)]
         if config.get("tiled", True) and len(sensors) > 1:
             rp = rep.create.render_product_tiled(cameras=[p for _, p, _, _ in sensors], tile_resolution=(CAM_W, CAM_H))
@@ -254,7 +256,18 @@ class IsaacRenderer:
             self.views[name].Set(camera_matrix(r, p))
 
     def render(self) -> dict:
-        rep.orchestrator.step(rt_subframes=self.subframes, pause_timeline=False)
+        if self.step_mode == "update":
+            self.app.update()
+        else:
+            rep.orchestrator.step(
+                rt_subframes=self.subframes,
+                pause_timeline=False,
+                delta_time=0.0 if self.step_mode == "step_dt0" else None,
+                wait_for_render=self.step_mode != "step_nowait",
+            )
+        return self.collect()
+
+    def collect(self) -> dict:
         out = {}
         if self.tiles is not None:
             ann, names, side = self.tiles
