@@ -103,6 +103,28 @@ class World:
         return np.array(cells[::-1])
 
 
+def carve_roads(cost: np.ndarray, roads: list, cell: float, ox: float, oz: float) -> None:
+    """Make nav-grid cells within width_m/2 of each road centreline passable (in place).
+
+    The quarry nav grid blocks cells inside its own road corridors; same fix as
+    brain/brain/planning/navmap.py:carve_roads on worktree-brain-planner.
+    """
+    h, w = cost.shape
+    zs, xs = np.mgrid[0:h, 0:w]
+    centres = np.stack([ox + (xs.ravel() + 0.5) * cell, oz + (zs.ravel() + 0.5) * cell], axis=1)
+    flat = cost.reshape(-1)
+    for road in roads:
+        pts = np.array([[p[0], p[2]] for p in road.get("points", [])], dtype=float)
+        if len(pts) < 2 or not road.get("width_m"):
+            continue
+        line = resample(pts, cell / 2)
+        lo, hi = line.min(axis=0) - road["width_m"], line.max(axis=0) + road["width_m"]
+        near = np.flatnonzero(((centres >= lo) & (centres <= hi)).all(axis=1))
+        d = np.min(np.linalg.norm(centres[near, None, :] - line[None], axis=-1), axis=1)
+        on_road = near[d <= road["width_m"] / 2]
+        flat[on_road] = np.where(flat[on_road] < 0, 1.0, flat[on_road])
+
+
 def load(world_id: str = "default", worlds_dir: str = WORLDS_DIR) -> World:
     folder = os.path.join(worlds_dir, world_id)
     with open(os.path.join(folder, "navgrid.json")) as f:
@@ -111,6 +133,7 @@ def load(world_id: str = "default", worlds_dir: str = WORLDS_DIR) -> World:
         meta = json.load(f)
     n = nav["width"]
     cost = np.array(nav["cost"], dtype=float).reshape(nav["height"], n)
+    carve_roads(cost, meta.get("roads", []), float(nav["cell_m"]), float(nav["origin"][0]), float(nav["origin"][1]))
     blocked = cost < 0
     cost = np.where(blocked, np.inf, cost)
     inflated = blocked.copy()
