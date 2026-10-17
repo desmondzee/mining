@@ -26,13 +26,15 @@ import numpy as np
 from . import common as C
 from . import mine_spec as MS
 
-ROT = {  # up axis of the raw scan -> proper rotation taking it to +Y, with its XYZ euler (deg)
+# up axis of the raw scan -> (proper rotation R with R @ up = +Y, its XYZ euler in degrees). Euler convention:
+# active, right-handed, extrinsic X then Y then Z, i.e. R = Rz(ez) @ Ry(ey) @ Rx(ex) (each entry uses one axis).
+ROT = {
     "+y": (np.eye(3), [0, 0, 0]),
     "+z": (np.array([[1, 0, 0], [0, 0, 1], [0, -1, 0]], float), [-90, 0, 0]),
     "-z": (np.array([[1, 0, 0], [0, 0, -1], [0, 1, 0]], float), [90, 0, 0]),
     "-y": (np.array([[1, 0, 0], [0, -1, 0], [0, 0, -1]], float), [180, 0, 0]),
-    "+x": (np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], float), [0, 0, 90]),
-    "-x": (np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], float), [0, 0, -90]),
+    "+x": (np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]], float), [0, 0, 90]),
+    "-x": (np.array([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], float), [0, 0, -90]),
 }
 
 
