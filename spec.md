@@ -309,8 +309,10 @@
 
 | Item | Value | Source |
 |---|---|---|
-| World | `data/worlds/default/` (`world.json`, `navgrid.json`), override with `WORLD_DIR` | |
-| Route | A* on the nav grid (impassable cells grown by one cell), Chaikin smoothing, 2 m spacing | |
+| World | `data/worlds/quarry/` (`world.json`, `navgrid.json`), override with `WORLD_DIR`; `default` is also shipped | |
+| Road carving | nav-grid cells within half a road's `width_m` of its centreline are made passable at load | |
+| Route | road graph (Dijkstra over world.json roads, endpoints snapped within the node snap), else A* on the grown grid, else A* on the raw grid; Chaikin smoothing, 2 m spacing | |
+| Node snap (m) | 15.0 | `brain/brain/planning/navmap.py:NODE_SNAP_M` |
 | Route edge cost | step cost + edge cost × (1 − clearance / safe clearance), clearance = cell centre to nearest blocked cell | |
 | Edge cost | 2.0 | `brain/brain/planning/navmap.py:EDGE_COST` |
 | Safe clearance (m) | 6.0 | `brain/brain/planning/navmap.py:SAFE_CLEARANCE` |
@@ -326,11 +328,19 @@
 | Lidar mount override | `LIDAR_HEIGHT` env var | |
 | Min obstacle height above ground (m) | 0.8 | `brain/brain/planning/driver.py:MIN_OBSTACLE_HEIGHT` |
 | Obstacle radius (m) | 4.0 | `brain/brain/planning/driver.py:OBSTACLE_RADIUS` |
-| Obstacles | lidar points above the nav-grid ground on free cells; points on walls are left to the grid | |
+| Obstacles | lidar points above the nav-grid ground, except points within the wall snap of a blocked cell | |
+| Wall snap (m) | 1.0 | `brain/brain/planning/driver.py:WALL_SNAP_M` |
 | Truck half width (m) | 2.12 | `brain/brain/planning/driver.py:TRUCK_HALF_W` |
 | Edge margin (m) | 0.5 | `brain/brain/planning/driver.py:EDGE_MARGIN` |
-| Unsafe candidate | the centre or either side (half width + edge margin) hits a blocked cell, or comes within 1.5 m of an obstacle while closing in | |
+| Unsafe candidate | the centre or either side (half width + edge margin) hits a blocked cell, or comes within the hit margin of an obstacle while closing in | |
+| Hit margin (m) | 0.5 | `brain/brain/planning/driver.py:HIT_MARGIN` |
 | Holding | chosen target speed is 0, or no candidate is safe | |
+| Re-plan (static) | an obstacle stays in one 2 m cell for the static time and lies near the next 30 route points; cells near it are blocked for A* | |
+| Static time (s) | 1.5 | `brain/brain/planning/driver.py:STATIC_AFTER` |
+| Re-plan (waiting) | stopped for the wait time; all seen obstacles are blocked for A* | |
+| Wait time (s) | 4.0 | `brain/brain/planning/driver.py:REPLAN_AFTER` |
+| Re-plan cooldown (s) | 1.0 | `brain/brain/planning/follow.py:REPLAN_COOLDOWN` |
+| Re-plan rejected | the new route starts more than 90° from the truck heading (no reverse) | |
 | Scorer lidar bins | 60 | `brain/brain/planning/driver.py:N_RAYS` |
 | Truck state | `path` (route, `[x, z]`), `path_idx`, `ghost_paths` (safe candidates) | |
 | Route in state | `trucks[].route` = `path` | |

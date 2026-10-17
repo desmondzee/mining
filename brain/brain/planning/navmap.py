@@ -1,13 +1,26 @@
 import heapq
 import json
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
 
+NODE_SNAP_M = 15.0
 SAFE_CLEARANCE = 6.0
 EDGE_COST = 2.0
+
+
+@dataclass
+class Road:
+    start: str
+    end: str
+    points: np.ndarray
+    one_way: bool
+
+    @property
+    def length(self) -> float:
+        return float(np.hypot(*np.diff(self.points, axis=0).T).sum())
 
 
 @dataclass
@@ -24,6 +37,8 @@ class NavMap:
     clearance: np.ndarray
     sites: dict[str, tuple[float, float]]
     site_types: dict[str, str]
+    nodes: dict[str, tuple[float, float]] = field(default_factory=dict)
+    roads: list[Road] = field(default_factory=list)
 
     @property
     def bounds(self) -> list[float]:
@@ -55,13 +70,74 @@ class NavMap:
     def cell_centre(self, r: int, c: int) -> tuple[float, float]:
         return self.ox + (c + 0.5) * self.cell, self.oz + (r + 0.5) * self.cell
 
-    def astar(self, start: tuple[float, float], goal: tuple[float, float]) -> np.ndarray | None:
+    def nearest_node(self, x: float, z: float) -> str | None:
+        best = min(self.nodes.items(), key=lambda kv: math.hypot(kv[1][0] - x, kv[1][1] - z), default=None)
+        if best is None or math.hypot(best[1][0] - x, best[1][1] - z) > NODE_SNAP_M:
+            return None
+        return best[0]
+
+    def road_route(self, start: tuple[float, float], goal: tuple[float, float]) -> np.ndarray | None:
+        a, b = self.nearest_node(*start), self.nearest_node(*goal)
+        if a is None or b is None:
+            return None
+        if a == b:
+            return np.array([start, goal])
+        edges: dict[str, list[tuple[str, np.ndarray, float]]] = {}
+        for road in self.roads:
+            edges.setdefault(road.start, []).append((road.end, road.points, road.length))
+            if not road.one_way:
+                edges.setdefault(road.end, []).append((road.start, road.points[::-1], road.length))
+        dist = {a: 0.0}
+        parent: dict[str, tuple[str, np.ndarray]] = {}
+        heap = [(0.0, a)]
+        while heap:
+            d, node = heapq.heappop(heap)
+            if node == b:
+                break
+            if d > dist[node]:
+                continue
+            for nxt, pts, length in edges.get(node, []):
+                if d + length < dist.get(nxt, math.inf):
+                    dist[nxt] = d + length
+                    parent[nxt] = (node, pts)
+                    heapq.heappush(heap, (d + length, nxt))
+        if b not in parent:
+            return None
+        legs = []
+        node = b
+        while node != a:
+            node, pts = parent[node]
+            legs.append(pts)
+        return np.vstack([[start], *legs[::-1], [goal]])
+
+    def cells_near(self, points: np.ndarray, radius: float) -> np.ndarray:
+        mask = np.zeros((self.height, self.width), bool)
+        k = int(math.ceil(radius / self.cell))
+        for dr in range(-k, k + 1):
+            for dc in range(-k, k + 1):
+                if math.hypot(dr, dc) * self.cell > radius + self.cell:
+                    continue
+                r, c = self.cell_of(points[:, 0], points[:, 1])
+                r, c = r + dr, c + dc
+                ok = (r >= 0) & (c >= 0) & (r < self.height) & (c < self.width)
+                mask[r[ok], c[ok]] = True
+        return mask
+
+    def astar(
+        self,
+        start: tuple[float, float],
+        goal: tuple[float, float],
+        inflate: bool = True,
+        extra_blocked: np.ndarray | None = None,
+    ) -> np.ndarray | None:
         sr, sc = (int(v) for v in self.cell_of(*start))
         gr, gc = (int(v) for v in self.cell_of(*goal))
         h, w = self.height, self.width
         if not (0 <= sr < h and 0 <= sc < w and 0 <= gr < h and 0 <= gc < w):
             return None
-        passable = ~self.inflated
+        passable = ~(self.inflated if inflate else self.blocked)
+        if extra_blocked is not None:
+            passable &= ~extra_blocked
         passable[sr, sc] = passable[gr, gc] = True
         # Extra cost near blocked cells keeps routes in the middle of narrow roads.
         cost = self.cost + EDGE_COST * np.clip(1.0 - self.clearance / SAFE_CLEARANCE, 0.0, 1.0)
@@ -114,17 +190,44 @@ def edge_clearance(blocked: np.ndarray, cell: float, cap: float) -> np.ndarray:
     return out
 
 
+def carve_roads(cost: np.ndarray, roads: list[dict], cell: float, ox: float, oz: float) -> None:
+    h, w = cost.shape
+    zs, xs = np.mgrid[0:h, 0:w]
+    centres = np.stack([ox + (xs.ravel() + 0.5) * cell, oz + (zs.ravel() + 0.5) * cell], axis=1)
+    for road in roads:
+        pts = np.array([[p[0], p[2]] for p in road.get("points", [])], dtype=float)
+        if len(pts) < 2 or not road.get("width_m"):
+            continue
+        line = resample(pts, cell / 2)
+        lo, hi = line.min(axis=0) - road["width_m"], line.max(axis=0) + road["width_m"]
+        near = np.flatnonzero(((centres >= lo) & (centres <= hi)).all(axis=1))
+        d = np.min(np.linalg.norm(centres[near, None, :] - line[None], axis=-1), axis=1)
+        on_road = near[d <= road["width_m"] / 2]
+        flat = cost.reshape(-1)
+        flat[on_road] = np.where(flat[on_road] < 0, 1.0, flat[on_road])
+
+
 def load(world_dir: Path) -> NavMap:
     nav = json.loads((world_dir / "navgrid.json").read_text())
     meta = json.loads((world_dir / "world.json").read_text())
     w, h = nav["width"], nav["height"]
+    cell, ox, oz = float(nav["cell_m"]), float(nav["origin"][0]), float(nav["origin"][1])
     cost = np.array(nav["cost"], dtype=float).reshape(h, w)
+    carve_roads(cost, meta.get("roads", []), cell, ox, oz)
     blocked = cost < 0
     inflated = blocked.copy()
     padded = np.pad(blocked, 1, constant_values=True)
     for dr in (-1, 0, 1):
         for dc in (-1, 0, 1):
             inflated |= padded[1 + dr : 1 + dr + h, 1 + dc : 1 + dc + w]
+    sites = {s["id"]: (float(s["pos"][0]), float(s["pos"][1])) for s in meta["sites"]}
+    nodes = dict(sites)
+    nodes.update({j["id"]: (float(j["pos"][0]), float(j["pos"][2])) for j in meta.get("junctions", [])})
+    roads = [
+        Road(r["from"], r["to"], np.array([[p[0], p[2]] for p in r["points"]], dtype=float), bool(r.get("one_way")))
+        for r in meta.get("roads", [])
+        if len(r.get("points", [])) > 1
+    ]
     return NavMap(
         width=w,
         height=h,
@@ -136,8 +239,10 @@ def load(world_dir: Path) -> NavMap:
         blocked=blocked,
         inflated=inflated,
         clearance=edge_clearance(blocked, float(nav["cell_m"]), SAFE_CLEARANCE),
-        sites={s["id"]: (float(s["pos"][0]), float(s["pos"][1])) for s in meta["sites"]},
+        sites=sites,
         site_types={s["id"]: s["type"] for s in meta["sites"]},
+        nodes=nodes,
+        roads=roads,
     )
 
 
