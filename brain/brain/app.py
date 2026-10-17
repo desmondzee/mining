@@ -12,7 +12,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import planning, radio_proxy
+from . import hud, planning, radio_proxy
 from .bridge import SimBridge
 from .hub import LatestHub
 from .video import VideoHub
@@ -52,6 +52,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
     h264 = VideoHub()
     bridge = SimBridge(world, video, lidar, h264)
     lidar_period = 1 / float(os.environ.get("LIDAR_VIEWER_HZ", LIDAR_VIEWER_HZ))
+    heightmap = hud.load_heightmap(os.environ.get("WORLD_DIR"))
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
@@ -73,7 +74,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
 
     @app.get("/api/state")
     def get_state():
-        return world.snapshot()
+        return hud.augment(world.snapshot(), heightmap)
 
     @app.get("/api/world")
     def get_world():
@@ -190,7 +191,7 @@ def create_app(sim_port: int | None = 9000, web_dir: Path | None = DEFAULT_WEB_D
         await ws.accept()
         try:
             while True:
-                await ws.send_json(world.snapshot(network=False))
+                await ws.send_json(hud.augment(world.snapshot(network=False), heightmap))
                 await asyncio.sleep(1 / STATE_HZ)
         except (WebSocketDisconnect, RuntimeError):
             pass

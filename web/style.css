@@ -288,9 +288,11 @@ kbd {
 .idle .chrome-bottom { transform: translateY(6px); }
 .idle, .idle * { cursor: none !important; }
 
-.wordmark { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.wordmark { visibility: hidden; display: flex; align-items: center; gap: 12px; min-width: 0; }
 .wordmark h1 { font-family: var(--font-display); font-size: 15px; font-weight: 500; letter-spacing: -0.01em; }
 .wordmark .meta { color: var(--c-35); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.wordmark h1, .wordmark .rule-v { display: none; }
+.wordmark .meta:not(:empty) { visibility: visible; }
 .wordmark:has(.meta:empty) .rule-v { display: none; }
 .rule-v { width: 1px; height: 12px; background: currentColor; opacity: 0.22; flex: none; }
 
@@ -305,6 +307,7 @@ kbd {
 }
 
 .tab.active { color: var(--c-90); }
+.tab:not(.active) { display: none; }
 
 .tab-rule {
   position: absolute;
@@ -315,6 +318,7 @@ kbd {
   background: var(--c-90);
   transform-origin: 0 0;
   transition: transform var(--t-slow) var(--ease-spring);
+  display: none;
 }
 
 .slash {
@@ -323,12 +327,9 @@ kbd {
   align-items: center;
   gap: 8px;
   height: 28px;
-  padding: 0 10px 0 6px;
-  border: 1px solid var(--glass-border);
-  border-radius: var(--radius-sm);
-  background: var(--glass-bg);
-  -webkit-backdrop-filter: var(--glass-blur);
-  backdrop-filter: var(--glass-blur);
+  padding: 0;
+  border: 0;
+  background: none;
   color: var(--ink-60);
   font-family: var(--font-mono);
   font-size: 11px;
@@ -338,7 +339,7 @@ kbd {
 }
 
 .slash kbd { border: 0; min-width: 0; padding: 0 2px; font-size: 12px; color: inherit; height: auto; }
-.slash:hover { color: var(--ink-90); border-color: var(--rule-strong); }
+.slash:hover { color: var(--ink-90); }
 .slash:active { transform: scale(0.97); }
 
 .caption { min-width: 0; display: grid; gap: 10px; }
@@ -698,4 +699,38 @@ kbd {
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+
+/* Glass tokens */
+
+:root {
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --glass-blur: blur(18px) saturate(140%);
+  --glass-bg: rgba(255, 255, 255, 0.55);
+  --glass-border: rgba(0, 0, 0, 0.08);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.14);
+  --glass-scrim: rgba(20, 22, 26, 0.32);
+  --media-glass-bg: rgba(10, 10, 12, 0.45);
+  --media-glass-border: rgba(255, 255, 255, 0.12);
+  --media-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --media-glass-ink: #ffffff;
+  --media-glass-text-shadow: 0 1px 2px rgba(0, 0, 0, 0.45);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --glass-bg: rgba(10, 10, 12, 0.45);
+    --glass-border: rgba(255, 255, 255, 0.12);
+    --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+    --glass-scrim: rgba(0, 0, 0, 0.55);
+  }
+}
+
+:root[data-theme="dark"] {
+  --glass-bg: rgba(10, 10, 12, 0.45);
+  --glass-border: rgba(255, 255, 255, 0.12);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.35);
+  --glass-scrim: rgba(0, 0, 0, 0.55);
 }

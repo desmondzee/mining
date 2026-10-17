@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/brain_sim.schema.json",
+  "title": "Sim <-> brain TCP message headers (summary)",
+  "description": "TCP port 9000 (SIM_PORT). Framing: u32 header_len | u32 payload_len | header JSON | payload, little-endian; header <= 65536 B, payload <= 64 MiB (brain/brain/protocol.py). spec.md 'Sim protocol (TCP)' is authoritative; these schemas cover the JSON headers only, loosely. Unity BrainClient is the sim; brain/brain/fakesim.py is a stand-in.",
+  "oneOf": [
+    {"$ref": "#/$defs/Hello"}, {"$ref": "#/$defs/Frame"}, {"$ref": "#/$defs/Lidar"}, {"$ref": "#/$defs/Actors"}, {"$ref": "#/$defs/Action"}
+  ],
+  "$defs": {
+    "PoseXZYaw": {"type": "object", "required": ["x", "z", "yaw"], "properties": {"x": {"type": "number"}, "z": {"type": "number"}, "yaw": {"type": "number"}}},
+    "Hello": {
+      "description": "sim -> brain, once per connection. No payload. roads/sites/junctions come from world.json (reduced to x, z).",
+      "type": "object",
+      "required": ["type", "trucks"],
+      "properties": {
+        "type": {"const": "hello"},
+        "trucks": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/TruckId"}},
+        "cameras": {"type": "array", "items": {"type": "string"}},
+        "bounds": {"$ref": "common.schema.json#/$defs/Bounds"},
+        "truck_model": {"type": "string"},
+        "obstacles": {"type": "array", "items": {"$ref": "brain_state.schema.json#/$defs/Obstacle"}},
+        "paths": {"type": "array", "items": {"type": "object", "properties": {"points": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/XZ"}}}}},
+        "roads": {"type": "array", "items": {"$ref": "brain_state.schema.json#/$defs/NetRoad"}},
+        "sites": {"type": "array", "items": {"$ref": "brain_state.schema.json#/$defs/NetSite"}},
+        "junctions": {"type": "array", "items": {"$ref": "brain_state.schema.json#/$defs/NetJunction"}}
+      }
+    },
+    "Frame": {
+      "description": "sim -> brain camera frame. Payload: raw RGB(A) w*h*channels (or JPEG 'bytes'), then optional float32 depth.",
+      "type": "object",
+      "required": ["type", "camera", "rgb"],
+      "properties": {
+        "type": {"const": "frame"},
+        "camera": {"type": "string"},
+        "truck": {"description": "'' for the overview camera.", "type": "string"},
+        "rgb": {"type": "object", "required": ["w", "h"], "properties": {"w": {"type": "integer"}, "h": {"type": "integer"}, "flip": {"type": "boolean"}, "channels": {"enum": [3, 4]}, "format": {"enum": ["raw", "jpeg"]}, "bytes": {"type": "integer"}}},
+        "depth": {"type": "object", "properties": {"w": {"type": "integer"}, "h": {"type": "integer"}}},
+        "pose": {"$ref": "#/$defs/PoseXZYaw"},
+        "speed": {"type": "number"}
+      }
+    },
+    "Lidar": {
+      "description": "sim -> brain. Payload: points x 3 int16 cm (format int16cm) or float32 m (f32).",
+      "type": "object",
+      "required": ["type", "truck", "points", "pose"],
+      "properties": {
+        "type": {"const": "lidar"},
+        "truck": {"type": "string"},
+        "points": {"type": "integer", "minimum": 0},
+        "format": {"enum": ["int16cm", "f32"]},
+        "pose": {"$ref": "#/$defs/PoseXZYaw"}
+      }
+    },
+    "Actors": {
+      "type": "object",
+      "required": ["type", "pedestrians"],
+      "properties": {"type": {"const": "actors"}, "pedestrians": {"type": "array", "items": {"$ref": "brain_state.schema.json#/$defs/Pedestrian"}}}
+    },
+    "Action": {
+      "description": "brain -> sim, one per truck frame. No payload.",
+      "type": "object",
+      "required": ["type", "truck", "throttle", "steer"],
+      "properties": {
+        "type": {"const": "action"},
+        "truck": {"type": "string"},
+        "throttle": {"type": "number", "minimum": 0, "maximum": 1},
+        "steer": {"type": "number", "minimum": -1, "maximum": 1}
+      }
+    }
+  }
+}

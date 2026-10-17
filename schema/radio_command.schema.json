@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/radio_command.schema.json",
+  "title": "POST /api/radio/command (request); response, parser tool calls, transcribe in $defs",
+  "description": "Phone -> radio. Pipeline: POST /api/radio/transcribe (audio) -> {text}; POST /api/radio/command {text} -> parser (OpenAI tool calling with tools from Parser.tools_schema(), regex/fuzzy fallback) -> ToolCall[] -> Radio.execute -> actions + radio replies (also broadcast on /ws/radio). Errors from any route are {\"error\": detail} with the HTTP status (400 empty command; 502/503 STT).",
+  "$ref": "#/$defs/CommandRequest",
+  "$defs": {
+    "CommandRequest": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {"text": {"description": "Operator words (STT output or typed). Must be non-empty after strip.", "type": "string", "minLength": 1}},
+      "additionalProperties": false
+    },
+    "CommandResponse": {
+      "type": "object",
+      "required": ["heard", "parser", "actions", "replies", "ms"],
+      "properties": {
+        "heard": {"type": "string"},
+        "parser": {"description": "llm when OpenAI returned tool calls, else regex.", "type": "string", "enum": ["llm", "regex"]},
+        "actions": {"type": "array", "items": {"$ref": "#/$defs/Action"}},
+        "replies": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/Reply"}},
+        "ms": {"type": "integer", "minimum": 0}
+      },
+      "additionalProperties": false
+    },
+    "Reply": {
+      "type": "object",
+      "required": ["id", "truck_id", "callsign", "text", "audio_url"],
+      "properties": {
+        "id": {"description": "RadioEvent id.", "type": "string"},
+        "truck_id": {"description": "Truck id, excavator id or null (Control).", "type": ["string", "null"]},
+        "callsign": {"type": "string"},
+        "text": {"type": "string"},
+        "audio_url": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "TruckRef": {"description": "Truck id or 'all'. An empty list means: dispatch picks an idle truck (stop/status/return_to_parking: all trucks).", "anyOf": [{"$ref": "common.schema.json#/$defs/TruckId"}, {"const": "all"}]},
+    "TruckList": {"type": "array", "items": {"$ref": "#/$defs/TruckRef"}},
+    "ExcRef": {"anyOf": [{"$ref": "common.schema.json#/$defs/ExcavatorId"}, {"const": "all"}]},
+    "ExcList": {"type": "array", "items": {"$ref": "#/$defs/ExcRef"}},
+    "ExcOne": {"description": "Excavator to go to / load at; 'nearest' = nearest digging excavator (else nearest). Overrides site / from_site with that excavator's face.", "anyOf": [{"$ref": "common.schema.json#/$defs/ExcavatorId"}, {"const": "nearest"}, {"type": "null"}]},
+    "SiteRef": {"description": "world.json site id (the LLM is given an enum of ids; regex may also resolve names/aliases).", "type": ["string", "null"]},
+    "ToolCall": {
+      "description": "One parsed intent {name, args}. go_to/haul/return_to_parking/stop/status act on trucks; dig/hold/exc_status on excavators. exc_status is produced by the regex parser only (not offered to the LLM). 'hold' targets excavators, not trucks (use stop for trucks).",
+      "type": "object",
+      "required": ["name", "args"],
+      "properties": {"name": {"enum": ["go_to", "haul", "return_to_parking", "stop", "status", "dig", "hold", "exc_status"]}, "args": {"type": "object"}},
+      "oneOf": [
+        {"properties": {"name": {"const": "go_to"}, "args": {"$ref": "#/$defs/GoToArgs"}}},
+        {"properties": {"name": {"const": "haul"}, "args": {"$ref": "#/$defs/HaulArgs"}}},
+        {"properties": {"name": {"enum": ["return_to_parking", "stop", "status"]}, "args": {"$ref": "#/$defs/TrucksArgs"}}},
+        {"properties": {"name": {"enum": ["dig", "hold", "exc_status"]}, "args": {"$ref": "#/$defs/ExcavatorsArgs"}}}
+      ]
+    },
+    "GoToArgs": {
+      "description": "Send trucks to a site (or an excavator's face load point) and stop there. Parking -> treated as return_to_parking (own slot).",
+      "type": "object",
+      "required": ["trucks"],
+      "properties": {"trucks": {"$ref": "#/$defs/TruckList"}, "site": {"$ref": "#/$defs/SiteRef"}, "excavator": {"$ref": "#/$defs/ExcOne"}},
+      "additionalProperties": false
+    },
+    "HaulArgs": {
+      "description": "Haul cycle: load at an ore face, dump at crusher or dump, repeat. Defaults: from_site = truck's last face or first ore site; to_site = crusher; loads null = continuous.",
+      "type": "object",
+      "required": ["trucks"],
+      "properties": {
+        "trucks": {"$ref": "#/$defs/TruckList"},
+        "from_site": {"$ref": "#/$defs/SiteRef", "description": "Ore site id."},
+        "to_site": {"$ref": "#/$defs/SiteRef", "description": "Crusher or dump site id."},
+        "loads": {"type": ["integer", "null"], "minimum": 1},
+        "excavator": {"$ref": "#/$defs/ExcOne"}
+      },
+      "additionalProperties": false
+    },
+    "TrucksArgs": {
+      "type": "object",
+      "required": ["trucks"],
+      "properties": {"trucks": {"$ref": "#/$defs/TruckList"}},
+      "additionalProperties": false
+    },
+    "ExcavatorsArgs": {
+      "type": "object",
+      "required": ["excavators"],
+      "properties": {"excavators": {"$ref": "#/$defs/ExcList"}},
+      "additionalProperties": false
+    },
+    "Action": {
+      "description": "What Radio.execute did for one tool call (trucks/excavators already resolved to ids).",
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["tool", "trucks", "args"],
+          "properties": {
+            "tool": {"enum": ["go_to", "haul", "return_to_parking", "stop", "status"]},
+            "trucks": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/TruckId"}},
+            "args": {"description": "Tool args minus trucks; haul is filled in with resolved from_site/to_site/loads.", "type": "object"},
+            "route_m": {"description": "Road route length of the last truck's first leg.", "type": "integer"},
+            "excavator": {"$ref": "common.schema.json#/$defs/ExcavatorId"},
+            "excavators_held": {"description": "All-stop also held every excavator.", "const": true},
+            "error": {"type": "string", "enum": ["unknown site", "unknown tool"]}
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["tool", "excavators"],
+          "properties": {
+            "tool": {"enum": ["dig", "hold", "exc_status"]},
+            "excavators": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ExcavatorId"}},
+            "error": {"const": "unknown excavator"}
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "TranscribeRequest": {
+      "description": "POST /api/radio/transcribe, multipart/form-data, field 'audio' (webm/ogg/m4a/wav/mp3). ElevenLabs Scribe, else OpenAI whisper; 503 when neither key is set.",
+      "type": "object",
+      "required": ["audio"],
+      "properties": {"audio": {"description": "binary file part", "type": "string", "contentMediaType": "audio/*"}}
+    },
+    "TranscribeResponse": {
+      "type": "object",
+      "required": ["text"],
+      "properties": {
+        "text": {"type": "string"},
+        "ms": {"type": "integer"},
+        "note": {"description": "'recording too short' when < 800 bytes (then text is '').", "type": "string"}
+      },
+      "additionalProperties": false
+    },
+    "ReleaseResponse": {"description": "POST /api/radio/release: clears every truck job and holds every excavator.", "type": "object", "required": ["ok"], "properties": {"ok": {"const": true}}},
+    "Error": {"type": "object", "required": ["error"], "properties": {"error": {}}}
+  }
+}

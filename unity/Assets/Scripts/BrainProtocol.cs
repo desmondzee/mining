@@ -5,7 +5,8 @@ public static class BrainProtocol
 {
     [Serializable] public class Size { public int w; public int h; }
     [Serializable] public class RgbMeta { public int w; public int h; public bool flip; public int channels = 4; public string format = "raw"; public int bytes; }
-    [Serializable] public class Pose { public float x; public float z; public float yaw; }
+    [Serializable] public class Pose { public float x; public float y; public float z; public float yaw; }
+    [Serializable] public class CamPose { public float x; public float y; public float z; public float yaw; public float pitch; public float roll; public float hfov; }
 
     [Serializable]
     public class FrameHeader
@@ -17,6 +18,7 @@ public static class BrainProtocol
         public Size depth = new Size();
         public Pose pose = new Pose();
         public float speed;
+        public CamPose cam = new CamPose();
     }
 
     [Serializable] public class MapPoint { public float x; public float z; }

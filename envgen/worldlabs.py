@@ -88,7 +88,7 @@ def concept_image(out: Path) -> Path:
 def generate(prompt, image, model, name, seed=None):
     if image:
         ext = Path(image).suffix.lstrip(".").lower() or "png"
-        wp = {"type": "image", "text_prompt": prompt or None, "is_pano": "false",
+        wp = {"type": "image", "text_prompt": prompt or None, "is_pano": False,
               "image_prompt": {"source": "data_base64", "extension": ext,
                                "data_base64": base64.b64encode(Path(image).read_bytes()).decode()}}
     else:

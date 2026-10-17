@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://physical-mining.local/schema/radio_state.schema.json",
+  "title": "Radio state (GET /api/radio/state) and /ws/radio messages",
+  "description": "radio/server.py (port 8090). GET /api/radio/state = the WebSocket 'state' message plus 'log' (last 15 radio events). $defs also cover GET /api/radio/health and every /ws/radio message. Truck x/z/yaw/speed/status/goal come from the brain's /api/state (or the in-process MockBrain); phase/task/target/route are the radio's own job state.",
+  "allOf": [{"$ref": "#/$defs/StateMessage"}],
+  "required": ["log"],
+  "properties": {
+    "log": {"type": "array", "maxItems": 15, "items": {"$ref": "#/$defs/RadioEvent"}}
+  },
+  "$defs": {
+    "Mode": {"description": "brain = real brain at BRAIN_URL; mock = in-process MockBrain.", "type": ["string", "null"], "enum": ["brain", "mock", null]},
+    "TruckStatus": {"description": "Brain policy status (spec.md Policy); MockBrain uses idle/driving/arrived.", "type": ["string", "null"], "enum": ["idle", "driving", "avoiding", "holding", "arrived", null]},
+    "Phase": {"description": "Radio job phase (TruckCtl.phase).", "type": "string", "enum": ["idle", "to_site", "to_load", "loading", "to_dump", "dumping", "returning"]},
+    "ExcState": {"description": "Excavator state, radio-only. Nothing digs until told.", "type": "string", "enum": ["digging", "holding"]},
+    "RadioTruck": {
+      "type": "object",
+      "required": ["id", "callsign", "x", "z", "yaw", "speed", "status", "goal", "phase", "task", "target", "remaining_m", "route"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/TruckId"},
+        "callsign": {"description": "Spoken callsign: truck-0 -> 'Truck One' (id number + 1).", "type": "string"},
+        "x": {"type": "number"},
+        "z": {"type": "number"},
+        "yaw": {"description": "Degrees, 0 = +z, clockwise.", "type": "number"},
+        "speed": {"description": "m/s.", "type": "number"},
+        "status": {"$ref": "#/$defs/TruckStatus"},
+        "goal": {"description": "Current brain goal [x, z] (the active waypoint), or null.", "oneOf": [{"$ref": "common.schema.json#/$defs/Vec2"}, {"type": "null"}]},
+        "phase": {"$ref": "#/$defs/Phase"},
+        "task": {"description": "Human text, e.g. 'hauling to Primary Crusher (1 done)' or 'standing by'.", "type": "string"},
+        "target": {"description": "Display NAME (not id) of the current leg's site, or null.", "type": ["string", "null"]},
+        "remaining_m": {"description": "Remaining road route length, rounded, or null when no route.", "type": ["integer", "null"]},
+        "route": {"description": "Remaining radio waypoints [[x, z], ...] along world.json roads (rounded 0.1 m).", "$ref": "common.schema.json#/$defs/Polyline2"}
+      },
+      "additionalProperties": false
+    },
+    "RadioExcavator": {
+      "type": "object",
+      "required": ["id", "callsign", "face", "face_name", "state", "x", "z", "heading_deg", "pos3"],
+      "properties": {
+        "id": {"$ref": "common.schema.json#/$defs/ExcavatorId"},
+        "callsign": {"description": "exc-0 -> 'Excavator One'.", "type": "string"},
+        "face": {"description": "Ore site id (world.json equipment[].face).", "type": ["string", "null"]},
+        "face_name": {"type": ["string", "null"]},
+        "state": {"$ref": "#/$defs/ExcState"},
+        "x": {"type": "number"},
+        "z": {"type": "number"},
+        "heading_deg": {"type": "number"},
+        "pos3": {"oneOf": [{"$ref": "common.schema.json#/$defs/Vec3"}, {"type": "null"}]}
+      },
+      "additionalProperties": false
+    },
+    "RadioEvent": {
+      "description": "One radio transmission (also broadcast on /ws/radio).",
+      "type": "object",
+      "required": ["type", "id", "from", "truck_id", "text", "kind", "audio_url", "spoken", "t"],
+      "properties": {
+        "type": {"const": "radio"},
+        "id": {"type": "string", "pattern": "^[0-9a-f]{12}$"},
+        "from": {"description": "Speaker: 'Dispatch' (operator), 'Control', a truck callsign or an excavator callsign.", "type": "string"},
+        "truck_id": {"description": "Speaker id: truck id, excavator id (exc-N) or null for Dispatch/Control.", "type": ["string", "null"], "pattern": "^(truck-[0-9]+|T[0-9]+|exc-[0-9]+)$"},
+        "text": {"type": "string"},
+        "kind": {"type": "string", "enum": ["operator", "control", "truck", "excavator"]},
+        "audio_url": {"description": "/api/radio/audio/<20 hex>.mp3 (ElevenLabs TTS) or null.", "type": ["string", "null"], "pattern": "^/api/radio/audio/[0-9a-f]{20}\\.mp3$"},
+        "spoken": {"type": "boolean"},
+        "t": {"description": "Unix time, seconds.", "type": "number"}
+      },
+      "additionalProperties": false
+    },
+    "StateMessage": {
+      "type": "object",
+      "required": ["type", "t", "mode", "brain_ok", "sim_connected", "trucks", "excavators"],
+      "properties": {
+        "type": {"const": "state"},
+        "t": {"description": "Unix time, seconds.", "type": "number"},
+        "mode": {"$ref": "#/$defs/Mode"},
+        "brain_ok": {"type": "boolean"},
+        "sim_connected": {"type": ["boolean", "null"]},
+        "trucks": {"type": "array", "items": {"$ref": "#/$defs/RadioTruck"}},
+        "excavators": {"type": "array", "items": {"$ref": "#/$defs/RadioExcavator"}},
+        "log": true
+      },
+      "additionalProperties": false
+    },
+    "Health": {
+      "description": "GET /api/radio/health. Feature flags only; never key values.",
+      "type": "object",
+      "required": ["ok", "mode", "mock", "brain_url", "brain_ok", "world", "trucks", "excavators", "stt", "tts", "llm"],
+      "properties": {
+        "ok": {"const": true},
+        "mode": {"$ref": "#/$defs/Mode"},
+        "mock": {"type": "boolean"},
+        "brain_url": {"type": "string"},
+        "brain_ok": {"type": "boolean"},
+        "sim_connected": {"type": ["boolean", "null"]},
+        "world": {"description": "world.json id loaded from RADIO_WORLD.", "type": ["string", "null"]},
+        "trucks": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/TruckId"}},
+        "excavators": {"type": "array", "items": {"$ref": "common.schema.json#/$defs/ExcavatorId"}},
+        "stt": {"type": "boolean"},
+        "stt_provider": {"type": ["string", "null"], "enum": ["elevenlabs", "openai", null]},
+        "tts": {"type": "boolean"},
+        "tts_model": {"type": ["string", "null"]},
+        "llm": {"type": "boolean"},
+        "llm_model": {"type": ["string", "null"]},
+        "voices_ready": {"type": "boolean"},
+        "last_error": {"type": ["string", "null"]}
+      },
+      "additionalProperties": false
+    },
+    "HelloMessage": {
+      "description": "First /ws/radio message after connect (followed by a 'state' message).",
+      "type": "object",
+      "required": ["type", "health", "log"],
+      "properties": {
+        "type": {"const": "hello"},
+        "health": {"$ref": "#/$defs/Health"},
+        "log": {"description": "Up to 60 recent events.", "type": "array", "items": {"$ref": "#/$defs/RadioEvent"}}
+      }
+    },
+    "PongMessage": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {"type": {"const": "pong"}, "t": {"description": "Echo of the ping's t."}}
+    },
+    "WsServerMessage": {
+      "description": "Any server -> client /ws/radio message: hello, state (~5 Hz), radio, pong.",
+      "oneOf": [
+        {"$ref": "#/$defs/HelloMessage"},
+        {"$ref": "#/$defs/StateMessage"},
+        {"$ref": "#/$defs/RadioEvent"},
+        {"$ref": "#/$defs/PongMessage"}
+      ]
+    },
+    "WsClientMessage": {
+      "description": "Client -> server on /ws/radio. Only ping is handled; commands go over POST /api/radio/command.",
+      "type": "object",
+      "required": ["type"],
+      "properties": {"type": {"const": "ping"}, "t": {}}
+    }
+  }
+}

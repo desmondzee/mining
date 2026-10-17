@@ -1,0 +1,54 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Marble Splat Viewer</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Marble world splat viewer (Spark). ?world=<id>[&res=100k][&c=x,y,z&t=x,y,z&fov=60]
+     Applies world.json splat_transform: p = raw*scale; p.y -= ground_offset (OpenCV frame); rotate 180 deg about X -> Y-up metres. -->
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#9aa7ad}#s{position:absolute;left:10px;top:8px;font:12px/1.4 monospace;color:#fff;text-shadow:0 1px 2px #000}</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.180.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.180.0/examples/jsm/",
+               "@sparkjsdev/spark": "https://cdn.jsdelivr.net/npm/@sparkjsdev/spark@2.1.0/dist/spark.module.js" } }
+</script></head><body><div id="s">loading...</div>
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { SparkRenderer, SplatMesh } from '@sparkjsdev/spark';
+const q = new URLSearchParams(location.search);
+const WORLD = q.get('world') || 'marble_surround', base = `../../data/worlds/${WORLD}/`;
+const status = document.getElementById('s');
+const world = await (await fetch(base + 'world.json', { cache: 'no-store' })).json();
+const T = world.splat_transform || { scale: 1, ground_offset: 0, rotation_euler_deg: [180, 0, 0] };
+const file = q.get('res') === '100k' ? world.assets.splat_lowres : world.assets.splat;
+
+const renderer = new THREE.WebGLRenderer({ antialias: false, preserveDrawingBuffer: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 1.5)); renderer.setSize(innerWidth, innerHeight);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.add(new SparkRenderer({ renderer }));
+const splat = new SplatMesh({ url: base + file });
+splat.scale.setScalar(T.scale);
+splat.rotation.set(...T.rotation_euler_deg.map(THREE.MathUtils.degToRad));
+// raw y -= offset before the flip  ==>  +offset after a 180 deg X rotation (y' = -(y - off))
+splat.position.y = (T.rotation_euler_deg[0] === 180 ? 1 : -1) * T.ground_offset;
+scene.add(splat);
+
+const cam = new THREE.PerspectiveCamera(Number(q.get('fov') || 65), innerWidth / innerHeight, 0.05, 5000);
+const v3 = s => new THREE.Vector3(...s.split(',').map(Number));
+// default: Marble's capture camera (raw origin) at eye height, looking forward (-Z after the flip)
+const eye = 1.0 * T.ground_offset;
+cam.position.copy(q.get('c') ? v3(q.get('c')) : new THREE.Vector3(0, eye, 0));
+const controls = new OrbitControls(cam, renderer.domElement);
+controls.target.copy(q.get('t') ? v3(q.get('t')) : new THREE.Vector3(0, eye, -0.01 * Math.max(1, T.scale)));
+controls.enableDamping = true; controls.update();
+window.setView = (c, t, fov) => { cam.position.copy(v3(c)); controls.target.copy(v3(t)); if (fov) cam.fov = fov; cam.updateProjectionMatrix(); controls.update(); };
+window.capture = async (c, t, fov, qual = 0.92) => {
+  if (c) setView(c, t, fov);
+  for (let i = 0; i < 20; i++) { renderer.render(scene, cam); await new Promise(r => setTimeout(r, 60)); }   // let Spark re-sort
+  return renderer.domElement.toDataURL('image/jpeg', qual);
+};
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); });
+await splat.initialized;
+window.READY = true;
+status.textContent = `${WORLD} · ${file} · ${splat.packedSplats?.numSplats ?? '?'} splats · scale ${T.scale} · world ${world.size_m?.join(' x ')} m`;
+renderer.setAnimationLoop(() => { controls.update(); renderer.render(scene, cam); });
+</script></body></html>

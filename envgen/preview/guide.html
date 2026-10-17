@@ -1,0 +1,49 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Quarry Guide Render</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<!-- Clean full-frame render of a scan world (no overlays) for making Marble guide images.
+     ?world=quarry&c=x,y,z&t=x,y,z&fov=60  (metres, world Y-up frame) -->
+<style>html,body{margin:0;height:100%;overflow:hidden;background:#c9d3d6}#s{position:absolute;left:8px;top:8px;font:12px monospace;color:#0008}</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@0.169.0/build/three.module.js",
+               "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.169.0/examples/jsm/" } }
+</script></head><body><div id="s">loading...</div>
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+const q = new URLSearchParams(location.search);
+const WORLD = q.get('world') || 'quarry', base = `../../data/worlds/${WORLD}/`;
+const v3 = (s, d) => new THREE.Vector3(...(s ? s.split(',').map(Number) : d));
+const world = await (await fetch(base + 'world.json', { cache: 'no-store' })).json();
+const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1); renderer.setSize(innerWidth, innerHeight);
+renderer.toneMapping = THREE.ACESFilmicToneMapping; renderer.toneMappingExposure = Number(q.get('exp') || 1.0);
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog(0xb8b6ad, 900, 4000);
+scene.add(new THREE.HemisphereLight(0xfff1d6, 0x5a4a38, 1.2));
+const sun = new THREE.DirectionalLight(0xffe2b8, 2.2); sun.position.set(-160, 160, -90); scene.add(sun);
+const loader = new GLTFLoader();
+if (world.assets.pano) {
+  const tex = await new THREE.TextureLoader().loadAsync(base + world.assets.pano);
+  tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
+  scene.background = tex;
+}
+const g = (await loader.loadAsync(base + (world.assets.visual || world.assets.terrain_mesh))).scene;
+if (world.assets.visual && world.scan_transform) { g.matrixAutoUpdate = false; g.matrix.set(...world.scan_transform.matrix.flat()); }
+scene.add(g);
+if (world.assets.surround) {
+  const sur = (await loader.loadAsync(base + world.assets.surround)).scene;
+  sur.traverse(o => { if (o.isMesh) o.material = new THREE.MeshLambertMaterial({ vertexColors: true }); });
+  scene.add(sur);
+}
+const cam = new THREE.PerspectiveCamera(Number(q.get('fov') || 60), innerWidth / innerHeight, 0.5, 8000);
+window.setView = (c, t, fov) => { cam.position.copy(v3(c)); cam.lookAt(v3(t)); if (fov) cam.fov = fov; cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); };
+setView(q.get('c') || '-250,-100,40', q.get('t') || '50,-60,0');
+addEventListener('resize', () => { renderer.setSize(innerWidth, innerHeight); cam.aspect = innerWidth / innerHeight; cam.updateProjectionMatrix(); });
+renderer.setAnimationLoop(() => renderer.render(scene, cam));
+// capture helper (renders synchronously, so it works in a hidden/throttled tab)
+window.capture = (c, t, fov, q = 0.93) => { setView(c, t, fov); renderer.render(scene, cam); return renderer.domElement.toDataURL('image/jpeg', q); };
+document.getElementById('s').remove();
+window.READY = true;
+</script></body></html>
