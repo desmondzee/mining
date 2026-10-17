@@ -11,6 +11,7 @@ services:
     environment:
       WORLD_DIR: /app/data/worlds/quarry
       RADIO_URL: ${RADIO_URL:-http://radio:8090}
+      LIDAR_HEIGHT: ${LIDAR_HEIGHT:-2.7}
     volumes:
       - ./data:/app/data:ro
     restart: unless-stopped

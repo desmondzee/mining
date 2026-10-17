@@ -1,4 +1,6 @@
+using System;
 using System.Collections.Generic;
+using System.IO;
 using UnityEngine;
 
 namespace MineSim
@@ -20,6 +22,14 @@ namespace MineSim
     /// <c>body.rotation.eulerAngles.y</c> and reports <c>transform.eulerAngles.y</c> as the pose). Tilt is applied to child
     /// transforms only (the model, and the sensor mounts when <see cref="tiltSensors"/> is on), pivoting about the root origin
     /// (bottom centre of the truck, per spec).
+    ///
+    /// Keep-in-bounds guard (<see cref="keepInBounds"/>, on by default) is a DEMO SAFETY CLAMP, not part of the vehicle model.
+    /// At the start of each FixedUpdate (i.e. right after the physics step applied TruckAgent's previous MovePosition, the
+    /// earliest point the move is visible; a +100 FixedUpdate would still see the pre-move pose) it checks the footprint
+    /// centre: outside world bounds minus <see cref="boundsMarginM"/>, or on an impassable navgrid cell (navgrid.json from
+    /// MineWorldRoot.worldDir; without it, outside the MineRoad corridors widened by <see cref="corridorSlackM"/> and the site
+    /// pads), it sets <c>rb.position</c> back to the last valid position. Yaw, rotation and TruckAgent's speed/steer commands
+    /// are never touched. The RL team can switch it off per truck (keepInBounds = false) to see raw policy behaviour.
     /// </summary>
     [DefaultExecutionOrder(-100)]
     [DisallowMultipleComponent]
@@ -73,6 +83,21 @@ namespace MineSim
         [Tooltip("Tilt smoothing time (s)")]
         public float tiltSmoothTime = 0.15f;
 
+        [Header("Keep in bounds (demo safety clamp; RL team can disable)")]
+        [Tooltip("Demo safety clamp: if the footprint centre leaves the drivable area, put rb.position back to the last valid position. " +
+                 "Never changes yaw or speed commands. Turn off to see the raw policy.")]
+        public bool keepInBounds = true;
+        [Tooltip("Metres inside the world bounds (world.json bounds / MineGoals.bounds, else MineWorldRoot origin + size)")]
+        public float boundsMarginM = 5f;
+        [Tooltip("Use navgrid.json passability (cost < 0 = impassable) from MineWorldRoot.worldDir when the file is there")]
+        public bool useNavgrid = true;
+        [Tooltip("Without a navgrid: also require the truck to be on a MineRoad corridor (width/2 + slack) or a site pad")]
+        public bool roadCorridorFallback = true;
+        [Tooltip("Extra metres beyond road width/2 accepted by the corridor fallback")]
+        public float corridorSlackM = 1.5f;
+        [Tooltip("Corridor fallback: radius (m) around each site marker that counts as drivable")]
+        public float siteRadiusM = 15f;
+
         [Header("Debug")]
         public bool drawGizmos = true;
 
@@ -82,6 +107,8 @@ namespace MineSim
         public bool Grounded { get; private set; }
         /// <summary>Last ground height under the truck (world y).</summary>
         public float GroundY { get; private set; }
+        /// <summary>How many physics steps the keep-in-bounds guard has put the truck back (diagnostics).</summary>
+        public int BoundsCorrections { get; private set; }
 
         struct Tilted { public Transform t; public Vector3 pos; public Quaternion rot; }
 
@@ -94,6 +121,8 @@ namespace MineSim
         bool hasY;
         float smoothY;
         bool tiltInit;
+        Vector3 lastValid;
+        bool hasLastValid;
 
         void Awake()
         {
@@ -108,6 +137,7 @@ namespace MineSim
         {
             hasY = false;
             tiltInit = false;
+            hasLastValid = false;
         }
 
         void OnDisable()
@@ -118,6 +148,7 @@ namespace MineSim
         /// <summary>Re-reads the world ground (call after reimporting the world at runtime).</summary>
         public void ResolveGround()
         {
+            if (Application.isPlaying && rb != null) MineDriveArea.Invalidate();   // world may have changed: rebuild the guard's area
             ground.Clear();
             fallbackGround.Clear();
             if (groundColliders != null)
@@ -193,6 +224,7 @@ namespace MineSim
 
         void FixedUpdate()
         {
+            if (keepInBounds) GuardBounds();
             Vector3 p = rb.position;
             Quaternion yaw = Quaternion.Euler(0f, rb.rotation.eulerAngles.y, 0f);
             float refY = hasY ? smoothY - heightOffset : p.y - heightOffset;
@@ -235,6 +267,24 @@ namespace MineSim
             }
 
             if (tiltVisual || tiltSensors) UpdateTilt(hFL, hFR, hRL, hRR, dt);
+        }
+
+        /// <summary>Keep-in-bounds guard: snap back to the last valid x/z when the footprint centre is not drivable.</summary>
+        void GuardBounds()
+        {
+            var area = MineDriveArea.Current;
+            if (area == null) return;
+            Vector3 p = rb.position;
+            Vector3 c = p + Quaternion.Euler(0f, rb.rotation.eulerAngles.y, 0f) * new Vector3(0f, 0f, (frontAxleZ + rearAxleZ) * 0.5f);
+            if (area.Allowed(c.x, c.z, boundsMarginM, useNavgrid, roadCorridorFallback, corridorSlackM, siteRadiusM))
+            {
+                lastValid = p;
+                hasLastValid = true;
+                return;
+            }
+            if (!hasLastValid) return;   // spawned/teleported outside: don't pin it there, start guarding once it is inside
+            rb.position = new Vector3(lastValid.x, p.y, lastValid.z);   // x/z only; height is corrected below, yaw untouched
+            BoundsCorrections++;
         }
 
         void UpdateTilt(float hFL, float hFR, float hRL, float hRR, float dt)
@@ -332,6 +382,7 @@ namespace MineSim
                 rb.rotation = rot;
             }
             hasY = false;
+            hasLastValid = false;
         }
 
         void OnDrawGizmosSelected()
@@ -346,6 +397,141 @@ namespace MineSim
                          new Vector3(-halfTrack, 0f, rearAxleZ), new Vector3(halfTrack, 0f, rearAxleZ),
                      })
                 Gizmos.DrawWireSphere(p + yaw * l, 0.4f);
+        }
+    }
+
+    /// <summary>
+    /// Drivable area shared by all trucks for the keep-in-bounds guard: world bounds, navgrid passability (navgrid.json next to
+    /// world.json, read once) and, as a fallback, the MineRoad corridors plus site pads. Rebuilt when the MineWorldRoot changes.
+    /// </summary>
+    public sealed class MineDriveArea
+    {
+        static MineDriveArea cached;
+        static MineWorldRoot cachedRoot;
+        static bool cachedNone;
+
+        bool hasBounds;
+        Vector4 bounds;   // xmin, zmin, xmax, zmax
+        bool[] passable;
+        int gw, gh;
+        float cell;
+        Vector2 gOrigin;
+        readonly List<Vector4> segs = new List<Vector4>();   // ax, az, bx, bz
+        readonly List<float> segHalfWidth = new List<float>();
+        readonly List<Vector2> sites = new List<Vector2>();
+
+        public bool HasNavgrid => passable != null;
+
+        /// <summary>The area for the current world, or null when there is nothing to guard against.</summary>
+        public static MineDriveArea Current
+        {
+            get
+            {
+                if (cached != null && cachedRoot != null) return cached;
+                if (cachedNone && Time.frameCount % 100 != 0) return null;   // retry occasionally (world loaded later)
+                var root = UnityEngine.Object.FindFirstObjectByType<MineWorldRoot>();
+                cached = root != null ? Build(root) : null;
+                cachedRoot = cached != null ? root : null;
+                cachedNone = cached == null;
+                return cached;
+            }
+        }
+
+        /// <summary>Forget the cached area (call after reimporting the world at runtime).</summary>
+        public static void Invalidate()
+        {
+            cached = null;
+            cachedRoot = null;
+            cachedNone = false;
+        }
+
+        static MineDriveArea Build(MineWorldRoot root)
+        {
+            var a = new MineDriveArea();
+            var goals = MineGoals.Instance;
+            if (goals != null && goals.bounds.z > goals.bounds.x && goals.bounds.w > goals.bounds.y)
+            {
+                a.bounds = goals.bounds;
+                a.hasBounds = true;
+            }
+            else if (root != null && root.sizeM.x > 0f && root.sizeM.y > 0f)
+            {
+                a.bounds = new Vector4(root.origin.x, root.origin.y, root.origin.x + root.sizeM.x, root.origin.y + root.sizeM.y);
+                a.hasBounds = true;
+            }
+            if (root != null && !string.IsNullOrEmpty(root.worldDir)) a.LoadNavgrid(root.worldDir);
+            foreach (var r in UnityEngine.Object.FindObjectsByType<MineRoad>(FindObjectsSortMode.None))
+            {
+                if (r.points == null) continue;
+                for (int i = 1; i < r.points.Length; i++)
+                {
+                    a.segs.Add(new Vector4(r.points[i - 1].x, r.points[i - 1].z, r.points[i].x, r.points[i].z));
+                    a.segHalfWidth.Add(Mathf.Max(0.5f, r.widthM * 0.5f));
+                }
+            }
+            foreach (var s in UnityEngine.Object.FindObjectsByType<MineSiteMarker>(FindObjectsSortMode.None))
+                a.sites.Add(new Vector2(s.transform.position.x, s.transform.position.z));
+            if (!a.hasBounds && a.passable == null && a.segs.Count == 0) return null;
+            return a;
+        }
+
+        void LoadNavgrid(string worldDir)
+        {
+            try
+            {
+                string name = "navgrid.json";
+                string wj = Path.Combine(worldDir, "world.json");
+                if (File.Exists(wj))
+                {
+                    var n = MiniJson.Str(MiniJson.Parse(File.ReadAllText(wj)), "navgrid", null);
+                    if (!string.IsNullOrEmpty(n)) name = n;
+                }
+                string path = Path.Combine(worldDir, name);
+                if (!File.Exists(path)) return;
+                var root = MiniJson.Parse(File.ReadAllText(path));
+                int w = (int)MiniJson.Num(root, "width", 0), h = (int)MiniJson.Num(root, "height", 0);
+                float c = (float)MiniJson.Num(root, "cell_m", 0);
+                var o = MiniJson.Nums(MiniJson.Arr(root, "origin"));
+                var cost = MiniJson.Nums(MiniJson.Arr(root, "cost"));
+                if (w < 1 || h < 1 || c <= 0f || o == null || o.Length < 2 || cost == null || cost.Length < w * h) return;
+                passable = new bool[w * h];
+                for (int i = 0; i < w * h; i++) passable[i] = cost[i] >= 0;
+                gw = w; gh = h; cell = c; gOrigin = new Vector2((float)o[0], (float)o[1]);
+            }
+            catch (Exception e)
+            {
+                passable = null;
+                Debug.LogWarning("[MineSim] keep-in-bounds: navgrid unreadable, using road corridors: " + e.Message);
+            }
+        }
+
+        /// <summary>True when world (x, z) is drivable for the guard.</summary>
+        public bool Allowed(float x, float z, float margin, bool useNavgrid, bool corridorFallback, float slack, float siteRadius)
+        {
+            if (hasBounds && (x < bounds.x + margin || x > bounds.z - margin || z < bounds.y + margin || z > bounds.w - margin))
+                return false;
+            if (useNavgrid && passable != null)
+            {
+                int col = Mathf.FloorToInt((x - gOrigin.x) / cell), row = Mathf.FloorToInt((z - gOrigin.y) / cell);
+                if (col < 0 || row < 0 || col >= gw || row >= gh) return false;
+                return passable[row * gw + col];
+            }
+            if (!corridorFallback || segs.Count == 0) return true;
+            float r2 = siteRadius * siteRadius;
+            for (int i = 0; i < sites.Count; i++)
+            {
+                float dx = x - sites[i].x, dz = z - sites[i].y;
+                if (dx * dx + dz * dz <= r2) return true;
+            }
+            for (int i = 0; i < segs.Count; i++)
+            {
+                var s = segs[i];
+                float sx = s.z - s.x, sz = s.w - s.y, l2 = sx * sx + sz * sz;
+                float t = l2 > 1e-8f ? Mathf.Clamp01(((x - s.x) * sx + (z - s.y) * sz) / l2) : 0f;
+                float dx = x - (s.x + t * sx), dz = z - (s.y + t * sz), lim = segHalfWidth[i] + slack;
+                if (dx * dx + dz * dz <= lim * lim) return true;
+            }
+            return false;
         }
     }
 }

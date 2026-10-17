@@ -5,7 +5,7 @@ const IDLE_MS = 3200;
 const root = document.documentElement;
 const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
 
-export const VIEWS = ["video", "map", "lidar", "fleet", "radio", "judge", "split"];
+export const VIEWS = ["ops", "video", "map", "lidar", "fleet", "radio", "judge", "split"];
 export const SPLITS = ["video map", "video lidar", "video radio", "map lidar", "map radio", "video map lidar", "video map radio"];
 const SEAM = "0.5px";
 const narrow = matchMedia("(max-width: 720px)");
@@ -49,7 +49,7 @@ export function createShell({ onView, onCamera }) {
   const views = document.getElementById("views");
   const tabs = [...document.querySelectorAll("[data-tab]")];
   const tabRule = document.querySelector(".tab-rule");
-  let view = load(VIEW_KEY, "video", VIEWS);
+  let view = load(VIEW_KEY, "ops", VIEWS);
   let split = load(SPLIT_KEY, "video map lidar", SPLITS);
   let camera = load(CAMERA_KEY, null);
   let switching = 0;
@@ -67,7 +67,7 @@ export function createShell({ onView, onCamera }) {
       const i = names.indexOf(el.dataset.surface);
       const r = i >= 0 ? rects[i] : null;
       for (const side of ["top", "right", "bottom", "left"]) el.style[side] = r ? r[side] : "";
-      el.classList.toggle("shown", i >= 0 || el.dataset.surface === view);
+      el.classList.toggle("shown", i >= 0 || el.dataset.surface === view || (view === "ops" && (el.dataset.surface === "video" || el.dataset.surface === "map")));
     }
   }
 
@@ -110,7 +110,7 @@ export function createShell({ onView, onCamera }) {
     clearTimeout(idleTimer);
     idleTimer = setTimeout(() => {
       if (root.classList.contains("palette-open") || document.querySelector(".chrome:hover, .chrome :focus-visible")) return wake();
-      if (view === "video") root.classList.add("idle");
+      if (view === "video" || view === "ops") root.classList.add("idle");
     }, IDLE_MS);
   }
   for (const ev of ["pointermove", "pointerdown", "keydown", "wheel"]) addEventListener(ev, wake, { passive: true });

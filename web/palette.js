@@ -58,7 +58,8 @@ function loadRecent() {
   try { return JSON.parse(localStorage.getItem(RECENT_KEY)) || []; } catch { return []; }
 }
 
-export function createPalette({ root, commands }) {
+export function createPalette({ root, commands, recents = true }) {
+  const pre = root.id;
   const input = root.querySelector("input");
   const list = root.querySelector('[role="listbox"]');
   const body = root.querySelector(".palette-body");
@@ -68,11 +69,12 @@ export function createPalette({ root, commands }) {
   let active = 0;
   let restore = null;
   let closeTimer = 0;
-  let recent = loadRecent();
+  let recent = recents ? loadRecent() : [];
   let armed = null;
   let armTimer = 0;
 
   function remember(id) {
+    if (!recents) return;
     recent = [id, ...recent.filter((r) => r !== id)].slice(0, RECENT_MAX);
     try { localStorage.setItem(RECENT_KEY, JSON.stringify(recent)); } catch {}
   }
@@ -101,13 +103,14 @@ export function createPalette({ root, commands }) {
   function disarm() {
     clearTimeout(armTimer);
     if (!armed) return;
-    const opt = list.querySelector(`#po-${armed.index}`);
+    const opt = list.querySelector(`#${pre}-o${armed.index}`);
     if (opt) { opt.classList.remove("armed"); highlight(opt.querySelector(".label"), armed.cmd.title, input.value); }
     armed = null;
   }
 
-  function render() {
-    disarm();
+  function render(keep) {
+    const keepId = keep ? items[active]?.id : null;
+    if (!keep) disarm();
     const query = input.value;
     items = results(query);
     active = 0;
@@ -121,7 +124,7 @@ export function createPalette({ root, commands }) {
         groupEl.setAttribute("role", "group");
         const label = document.createElement("div");
         label.className = "palette-group-label";
-        label.id = `pg-${i}`;
+        label.id = `${pre}-g${i}`;
         label.textContent = group;
         groupEl.setAttribute("aria-labelledby", label.id);
         groupEl.append(label);
@@ -129,7 +132,7 @@ export function createPalette({ root, commands }) {
       }
       const opt = document.createElement("div");
       opt.className = "palette-option";
-      opt.id = `po-${i}`;
+      opt.id = `${pre}-o${i}`;
       opt.setAttribute("role", "option");
       opt.dataset.index = i;
       const label = document.createElement("span");
@@ -158,6 +161,11 @@ export function createPalette({ root, commands }) {
     list.replaceChildren(frag);
     empty.hidden = items.length > 0;
     body.hidden = !items.length;
+    const keepIndex = keepId ? items.findIndex((c) => c.id === keepId) : -1;
+    if (keepIndex >= 0) {
+      setActive(keepIndex, true);
+      return;
+    }
     cursor.classList.add("jump");
     setActive(0, true);
     requestAnimationFrame(() => cursor.classList.remove("jump"));
@@ -171,7 +179,7 @@ export function createPalette({ root, commands }) {
     }
     active = (i + items.length) % items.length;
     for (const o of list.querySelectorAll('[aria-selected="true"]')) o.setAttribute("aria-selected", "false");
-    const opt = list.querySelector(`#po-${active}`);
+    const opt = list.querySelector(`#${pre}-o${active}`);
     opt.setAttribute("aria-selected", "true");
     input.setAttribute("aria-activedescendant", opt.id);
     cursor.style.transform = `translateY(${opt.offsetTop + list.offsetTop}px)`;
@@ -188,7 +196,7 @@ export function createPalette({ root, commands }) {
     if (cmd.confirm && armed?.cmd.id !== cmd.id) {
       disarm();
       armed = { cmd, index: i };
-      const opt = list.querySelector(`#po-${i}`);
+      const opt = list.querySelector(`#${pre}-o${i}`);
       opt.classList.add("armed");
       opt.querySelector(".label").textContent = cmd.confirm;
       armTimer = setTimeout(disarm, 2000);
@@ -248,5 +256,5 @@ export function createPalette({ root, commands }) {
   list.addEventListener("mousedown", (e) => e.preventDefault());
   root.querySelector("[data-close]").addEventListener("click", () => close());
 
-  return { open, close, isOpen, toggle: () => (isOpen() ? close() : open()), refresh: () => isOpen() && render() };
+  return { open, close, isOpen, toggle: () => (isOpen() ? close() : open()), refresh: () => isOpen() && render(true) };
 }

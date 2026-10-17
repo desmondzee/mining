@@ -13,7 +13,7 @@
   <link rel="stylesheet" href="hud.css">
   <script>
     try { document.documentElement.dataset.theme = localStorage.getItem("quarry-theme") || "dark"; } catch { document.documentElement.dataset.theme = "dark"; }
-    try { document.documentElement.dataset.view = localStorage.getItem("quarry-view") || "video"; } catch { document.documentElement.dataset.view = "video"; }
+    try { document.documentElement.dataset.view = localStorage.getItem("quarry-view") || "ops"; } catch { document.documentElement.dataset.view = "ops"; }
   </script>
 </head>
 <body>
@@ -58,6 +58,7 @@
 
   <header class="chrome bar">
     <nav class="bar-left tabs" aria-label="Views">
+      <button type="button" class="tab" data-tab="ops">ops</button>
       <button type="button" class="tab" data-tab="video">video</button>
       <button type="button" class="tab" data-tab="map">map</button>
       <button type="button" class="tab" data-tab="lidar">lidar</button>
@@ -99,10 +100,25 @@
     <div class="palette" role="dialog" aria-modal="true" aria-label="Command palette">
       <div class="palette-input-row">
         <span class="palette-glyph" aria-hidden="true">/</span>
-        <input id="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="command">
+        <input id="palette-input" class="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="palette-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="command">
       </div>
       <div class="palette-body">
         <div id="palette-list" class="palette-list" role="listbox" aria-label="Commands"></div>
+        <span class="palette-cursor" aria-hidden="true"></span>
+      </div>
+      <p class="palette-empty" hidden>no match</p>
+    </div>
+  </div>
+
+  <div id="schedule" class="palette-root" hidden>
+    <div class="palette-scrim" data-close></div>
+    <div class="palette schedule" role="dialog" aria-modal="true" aria-label="Schedule">
+      <div class="palette-input-row">
+        <span class="palette-glyph" aria-hidden="true">\</span>
+        <input class="palette-input" type="text" role="combobox" aria-expanded="true" aria-controls="schedule-list" aria-autocomplete="list" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="schedule">
+      </div>
+      <div class="palette-body">
+        <div id="schedule-list" class="palette-list" role="listbox" aria-label="Schedule"></div>
         <span class="palette-cursor" aria-hidden="true"></span>
       </div>
       <p class="palette-empty" hidden>no match</p>

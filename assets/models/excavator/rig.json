@@ -1,0 +1,179 @@
+{
+  "model": "excavator_rigged.glb",
+  "frame": "glTF scene coordinates of excavator_rigged.glb (identical to excavator.glb): metres, +Y up, +Z forward (boom reach), +X = cab side, right-handed",
+  "joints": {
+    "tracks": {
+      "node": "tracks",
+      "parent": "excavator_rigged",
+      "pivot_m": [
+        0.0,
+        0.0,
+        0.0
+      ],
+      "axis": null,
+      "positive": null
+    },
+    "house": {
+      "node": "house",
+      "parent": "excavator_rigged",
+      "pivot_m": [
+        0.0,
+        1.6123,
+        -0.123
+      ],
+      "axis": [
+        0,
+        1,
+        0
+      ],
+      "positive": "swing toward the cab (+X) side"
+    },
+    "boom": {
+      "node": "boom",
+      "parent": "house",
+      "pivot_m": [
+        0.0,
+        2.2465,
+        -0.0468
+      ],
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "positive": "boom down"
+    },
+    "stick": {
+      "node": "stick",
+      "parent": "boom",
+      "pivot_m": [
+        0.0,
+        5.0126,
+        5.1826
+      ],
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "positive": "stick in (toward machine)"
+    },
+    "bucket": {
+      "node": "bucket",
+      "parent": "stick",
+      "pivot_m": [
+        0.0,
+        2.1158,
+        5.3135
+      ],
+      "axis": [
+        1,
+        0,
+        0
+      ],
+      "positive": "bucket curl"
+    }
+  },
+  "notes": "Each node's local origin is its pivot. Angles are rotations about the axis in the node's parent frame (right-handed). tracks is static.",
+  "poses_deg": {
+    "rest": {
+      "house": 0,
+      "boom": 0,
+      "stick": 0,
+      "bucket": 0
+    },
+    "reach": {
+      "house": 0,
+      "boom": 20,
+      "stick": -50,
+      "bucket": -85
+    },
+    "dig": {
+      "house": 0,
+      "boom": 14,
+      "stick": -12,
+      "bucket": -10
+    },
+    "lifted": {
+      "house": 0,
+      "boom": -14,
+      "stick": -5,
+      "bucket": 0
+    },
+    "dump": {
+      "house": 97.4,
+      "boom": -12,
+      "stick": -35,
+      "bucket": -110
+    }
+  },
+  "dig_cycle": {
+    "period_s": 8,
+    "columns": [
+      "phase",
+      "house",
+      "boom",
+      "stick",
+      "bucket"
+    ],
+    "keys_deg": [
+      [
+        0.0,
+        0.0,
+        12,
+        -42,
+        -60
+      ],
+      [
+        0.12,
+        0.0,
+        20,
+        -50,
+        -85
+      ],
+      [
+        0.3,
+        0.0,
+        14,
+        -12,
+        -10
+      ],
+      [
+        0.42,
+        0.0,
+        -14,
+        -5,
+        0
+      ],
+      [
+        0.6,
+        97.4,
+        -14,
+        -15,
+        0
+      ],
+      [
+        0.7,
+        97.4,
+        -12,
+        -35,
+        -110
+      ],
+      [
+        0.78,
+        97.4,
+        -12,
+        -35,
+        -100
+      ],
+      [
+        1.0,
+        0.0,
+        12,
+        -42,
+        -60
+      ]
+    ],
+    "interp": "smootherstep between keys; holding eases to rest"
+  }
+}
