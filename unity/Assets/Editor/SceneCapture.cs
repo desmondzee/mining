@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using System.Linq;
+using MineSim;
 using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
@@ -11,6 +12,7 @@ public static class SceneCapture
     const int Width = 1280;
     const int Height = 720;
     const float WalkSampleTime = 0.4f;
+    const float FarClip = 2000f;
 
     [MenuItem("Tools/Mining/Capture Views")]
     public static void Capture()
@@ -43,6 +45,19 @@ public static class SceneCapture
             var diagonal = (truck.forward + truck.right).normalized;
             Inspect(truck.position + Vector3.up * 2.5f, diagonal, 22f, 5f, Path.Combine(dir, "truck_front_right.png"));
             Inspect(truck.position + Vector3.up * 2.5f, truck.right, 22f, 3f, Path.Combine(dir, "truck_side.png"));
+
+            var world = UnityEngine.Object.FindFirstObjectByType<MineWorldRoot>();
+            if (world == null || world.groundCollider == null) return;
+            var b = world.groundCollider.bounds;
+            Inspect(b.center, new Vector3(-0.6f, 0, -0.8f), b.extents.x * 1.3f, b.extents.x * 0.9f, Path.Combine(dir, "world_oblique.png"));
+            Inspect(truck.position + Vector3.up * 3f, (truck.right * 0.3f - truck.forward).normalized, 45f, 18f, Path.Combine(dir, "trucks_spawn.png"));
+            for (int i = 0; GameObject.Find($"Path_{i}") is GameObject path; i++)
+            {
+                var a = path.transform.GetChild(0).position;
+                var c = path.transform.GetChild(path.transform.childCount - 1).position;
+                var along = Vector3.Cross(c - a, Vector3.up).normalized;
+                Inspect((a + c) / 2 + Vector3.up, along, 30f, 6f, Path.Combine(dir, $"crossing_{i}.png"));
+            }
         }
         finally
         {
@@ -57,6 +72,8 @@ public static class SceneCapture
         {
             var cam = go.AddComponent<Camera>();
             cam.fieldOfView = 40f;
+            cam.farClipPlane = FarClip;
+            cam.cullingMask = ~(1 << LayerMask.NameToLayer("MineDebug"));
             go.transform.position = target + direction * distance + Vector3.up * (height - 1f);
             go.transform.LookAt(target);
             Render(cam, Width, Height, file);

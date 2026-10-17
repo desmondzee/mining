@@ -1,11 +1,16 @@
+using System;
 using System.IO;
 using System.Linq;
+using MineSim;
+using MineSim.EditorTools;
 using UnityEditor;
 using UnityEditor.Animations;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.Rendering;
 using UnityEngine.Rendering.Universal;
+using UnityEngine.SceneManagement;
+using Object = UnityEngine.Object;
 
 public static class QuarrySceneBuilder
 {
@@ -28,6 +33,15 @@ public static class QuarrySceneBuilder
     const float MaxWalkSpeed = 1.6f;
     const string PeopleDir = "Assets/Models/People";
     const string ControllerDir = "Assets/Generated/People";
+    const string WorldDir = "../data/worlds/quarry";
+    const string DebugLayer = "MineDebug";
+    const int CrossingCount = 4;
+    const float CrossingMargin = 12f;
+    const float SpawnLookAhead = 20f;
+    const float SpawnGap = 2f;
+    const float SpawnSearch = 10f;
+    const float SpawnSearchStep = 0.5f;
+    const float WheelFraction = 0.8f;
 
     static readonly string[] LodNames = { "hipoly", "midpoly", "lowpoly", "ultralowpoly" };
     static readonly float[] LodHeights = { 0.25f, 0.08f, 0.03f, 0.005f };
@@ -61,7 +75,113 @@ public static class QuarrySceneBuilder
     [MenuItem("Tools/Mining/Build Quarry Scene (CAT 785C)")]
     public static void BuildCat() => Build(Cat);
 
-    static void Build(TruckModel model)
+    [MenuItem("Tools/Mining/Build Quarry Scene (Quarry World)")]
+    public static void BuildQuarry()
+    {
+        var scene = Build(Komatsu, false);
+        var worldDir = Path.GetFullPath(Path.Combine(Application.dataPath, "..", WorldDir));
+        MineQuarryIntegration.Run(new MineQuarryIntegration.Options { worldDir = worldDir, reimportWorld = true, pedestrians = MineQuarryIntegration.PedestrianMode.Leave });
+        var world = Object.FindFirstObjectByType<MineWorldRoot>();
+        if (world == null) throw new Exception($"world import failed: {worldDir}");
+
+        foreach (var debug in new[] { "Sites", "Junctions", "Roads" })
+            foreach (var t in world.transform.Find(debug).GetComponentsInChildren<Transform>(true))
+                t.gameObject.layer = LayerMask.NameToLayer(DebugLayer);
+
+        var roads = world.GetComponentsInChildren<MineRoad>().OrderBy(r => r.roadId, StringComparer.Ordinal).ToArray();
+        AimTrucks(roads);
+        SpreadTrucks(world);
+        Func<Vector3, Vector3> ground = p => new Vector3(p.x, world.GroundHeight(p.x, p.z), p.z);
+        AddPedestrians(roads.Take(CrossingCount).Select(r => CrossingPath(r).Select(ground).ToArray()).ToArray(), ground);
+        Save(scene);
+    }
+
+    static Vector3[] CrossingPath(MineRoad road)
+    {
+        var p = road.points;
+        float remaining = 0;
+        for (int i = 0; i + 1 < p.Length; i++) remaining += Flat(p[i + 1] - p[i]).magnitude;
+        remaining /= 2;
+        for (int i = 0; i + 1 < p.Length; i++)
+        {
+            var segment = Flat(p[i + 1] - p[i]);
+            if (remaining > segment.magnitude && i + 2 < p.Length)
+            {
+                remaining -= segment.magnitude;
+                continue;
+            }
+            var mid = Flat(p[i]) + segment.normalized * remaining;
+            var half = new Vector3(segment.z, 0, -segment.x).normalized * (road.widthM + CrossingMargin) / 2;
+            return new[] { mid - half, mid + half };
+        }
+        throw new ArgumentException($"road {road.roadId} has fewer than 2 points");
+    }
+
+    static void AimTrucks(MineRoad[] roads)
+    {
+        var sites = Object.FindObjectsByType<MineSiteMarker>(FindObjectsSortMode.None);
+        foreach (var agent in Object.FindObjectsByType<TruckAgent>(FindObjectsSortMode.None))
+        {
+            var t = agent.transform;
+            var site = sites.OrderBy(s => Flat(s.Position - t.position).sqrMagnitude).First();
+            var road = roads.FirstOrDefault(r => r.from == site.siteId);
+            var points = road != null ? road.points : roads.First(r => r.to == site.siteId).points.Reverse().ToArray();
+            var start = points[0];
+            var ahead = points.Last();
+            float travelled = 0;
+            for (int i = 0; i + 1 < points.Length; i++)
+            {
+                travelled += Flat(points[i + 1] - points[i]).magnitude;
+                if (travelled >= SpawnLookAhead) { ahead = points[i + 1]; break; }
+            }
+            var dir = Flat(ahead - start);
+            t.rotation = Quaternion.Euler(0, Mathf.Atan2(dir.x, dir.z) * Mathf.Rad2Deg, 0);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(t);
+        }
+    }
+
+    static void SpreadTrucks(MineWorldRoot world)
+    {
+        var trucks = Object.FindObjectsByType<TruckAgent>(FindObjectsSortMode.None).OrderBy(a => a.truckId, StringComparer.Ordinal).Select(a => a.transform).ToArray();
+        if (trucks.Length < 2) return;
+        var box = trucks[0].GetComponent<BoxCollider>().size;
+        var line = Flat(trucks[^1].position - trucks[0].position);
+        float spacing = Mathf.Max(line.magnitude / (trucks.Length - 1), box.x + SpawnGap);
+        var centre = trucks.Aggregate(Vector3.zero, (sum, t) => sum + t.position) / trucks.Length;
+        Func<float, int, Vector3> at = (shift, i) => centre + line.normalized * (spacing * (i - (trucks.Length - 1) / 2f) + shift);
+        var best = Enumerable.Range(-(int)(SpawnSearch / SpawnSearchStep), 2 * (int)(SpawnSearch / SpawnSearchStep) + 1)
+            .Select(k => k * SpawnSearchStep)
+            .OrderBy(shift => Enumerable.Range(0, trucks.Length).Max(i => Slope(world, at(shift, i), trucks[i].rotation, box)))
+            .ThenBy(Mathf.Abs)
+            .First();
+        for (int i = 0; i < trucks.Length; i++)
+        {
+            var p = at(best, i);
+            trucks[i].position = new Vector3(p.x, world.GroundHeight(p.x, p.z), p.z);
+            PrefabUtility.RecordPrefabInstancePropertyModifications(trucks[i]);
+        }
+    }
+
+    static float Slope(MineWorldRoot world, Vector3 p, Quaternion rotation, Vector3 box)
+    {
+        float H(float x, float z) { var q = p + rotation * new Vector3(x, 0, z); return world.GroundHeight(q.x, q.z); }
+        float w = box.x * WheelFraction / 2, l = box.z * WheelFraction / 2;
+        float fl = H(-w, l), fr = H(w, l), rl = H(-w, -l), rr = H(w, -l);
+        return Mathf.Max(Mathf.Abs(fl + fr - rl - rr) / (4 * l), Mathf.Abs(fl + rl - fr - rr) / (4 * w));
+    }
+
+    static Vector3 Flat(Vector3 v) => new Vector3(v.x, 0, v.z);
+
+    static void Build(TruckModel model) => Save(Build(model, true));
+
+    static void Save(Scene scene)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
+        EditorSceneManager.SaveScene(scene, ScenePath);
+        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+    }
+
+    static Scene Build(TruckModel model, bool flat)
     {
         EnsurePipeline();
         ReimportForPipeline();
@@ -73,16 +193,17 @@ public static class QuarrySceneBuilder
         sun.shadows = LightShadows.Soft;
         sun.transform.rotation = Quaternion.Euler(50, -30, 0);
 
-        var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
-        ground.name = "Ground";
-        ground.transform.localScale = new Vector3(HalfSize / 5, 1, HalfSize / 5);
-        ground.GetComponent<Renderer>().sharedMaterial = LitMaterial("Ground", GroundColour);
-
-        var rocks = AddRocks();
-        AddPedestrians();
         var brain = new GameObject("BrainClient").AddComponent<BrainClient>();
         brain.truckModel = model.file;
-        brain.obstacles = rocks;
+        if (flat)
+        {
+            var ground = GameObject.CreatePrimitive(PrimitiveType.Plane);
+            ground.name = "Ground";
+            ground.transform.localScale = new Vector3(HalfSize / 5, 1, HalfSize / 5);
+            ground.GetComponent<Renderer>().sharedMaterial = LitMaterial("Ground", GroundColour);
+            brain.obstacles = AddRocks();
+            AddPedestrians(PedestrianPaths, p => p);
+        }
 
         for (int i = 0; i < TruckCount; i++)
         {
@@ -102,11 +223,16 @@ public static class QuarrySceneBuilder
         overview.orthographicSize = HalfSize;
         overview.farClipPlane = 400;
         overview.transform.SetPositionAndRotation(new Vector3(0, 200, 0), Quaternion.Euler(90, 0, 0));
+        overview.cullingMask = SensorMask();
         overview.gameObject.AddComponent<SensorCamera>().cameraName = "overview";
+        return scene;
+    }
 
-        Directory.CreateDirectory(Path.GetDirectoryName(ScenePath));
-        EditorSceneManager.SaveScene(scene, ScenePath);
-        EditorBuildSettings.scenes = new[] { new EditorBuildSettingsScene(ScenePath, true) };
+    static int SensorMask()
+    {
+        int layer = LayerMask.NameToLayer(DebugLayer);
+        if (layer < 0) throw new Exception($"layer {DebugLayer} missing from ProjectSettings/TagManager.asset");
+        return ~(1 << layer);
     }
 
     static void EnsurePipeline()
@@ -155,12 +281,16 @@ public static class QuarrySceneBuilder
         var cam = new GameObject("FrontCamera", typeof(Camera), typeof(SensorCamera));
         cam.transform.SetParent(root.transform, false);
         cam.transform.localPosition = new Vector3(0, b.size.y * CameraHeightFraction, front);
-        cam.GetComponent<SensorCamera>().truck = agent;
+        cam.GetComponent<Camera>().cullingMask = SensorMask();
+        var sensor = cam.GetComponent<SensorCamera>();
+        sensor.truck = agent;
+        sensor.depthMask = SensorMask();
 
         var lidar = new GameObject("Lidar", typeof(LidarSensor));
         lidar.transform.SetParent(root.transform, false);
         lidar.transform.localPosition = new Vector3(0, b.size.y * LidarHeightFraction, front);
         lidar.GetComponent<LidarSensor>().truck = agent;
+        lidar.GetComponent<LidarSensor>().mask = SensorMask();
 
         Directory.CreateDirectory(PrefabDir);
         var prefab = PrefabUtility.SaveAsPrefabAsset(root, $"{PrefabDir}/{model.file}.prefab");
@@ -188,17 +318,17 @@ public static class QuarrySceneBuilder
         return parent;
     }
 
-    static void AddPedestrians()
+    static void AddPedestrians(Vector3[][] paths, Func<Vector3, Vector3> ground)
     {
         var parent = new GameObject("Pedestrians").transform;
         var avatars = LoadAvatars();
         var rng = new System.Random(1);
         int index = 0;
-        for (int i = 0; i < PedestrianPaths.Length; i++)
+        for (int i = 0; i < paths.Length; i++)
         {
             var path = new GameObject($"Path_{i}").transform;
             path.SetParent(parent);
-            foreach (var point in PedestrianPaths[i])
+            foreach (var point in paths[i])
             {
                 var waypoint = new GameObject($"WP_{path.childCount}").transform;
                 waypoint.SetParent(path);
@@ -209,18 +339,19 @@ public static class QuarrySceneBuilder
             {
                 var person = new GameObject($"Pedestrian_{index:00}", typeof(CapsuleCollider), typeof(Rigidbody), typeof(PedestrianWalker));
                 person.transform.SetParent(parent);
-                person.transform.position = PedestrianPaths[i][0];
+                person.transform.position = paths[i][0];
                 var capsule = person.GetComponent<CapsuleCollider>();
                 capsule.height = PedestrianHeight;
                 capsule.radius = PedestrianRadius;
                 capsule.center = Vector3.up * PedestrianHeight / 2;
                 var walker = person.GetComponent<PedestrianWalker>();
                 walker.path = path;
-                walker.loop = PedestrianPaths[i].Length > 2;
+                walker.loop = paths[i].Length > 2;
                 walker.startFraction = (float)k / PedestriansPerPath;
                 walker.speed = Mathf.Lerp(MinWalkSpeed, MaxWalkSpeed, (float)rng.NextDouble());
 
                 walker.PlaceOnPath();
+                person.transform.position = ground(person.transform.position);
                 if (avatars.Length > 0) AddAvatar(person, avatars[index % avatars.Length]);
                 else AddPlaceholder(person);
             }
