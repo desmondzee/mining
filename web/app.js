@@ -135,6 +135,7 @@ function layoutOps() {
   }
   const { r, primary } = opsRects();
   if (primary && shell.camera !== primary) shell.setCamera(primary, tiles);
+  if (primary && selected !== primary) select(primary);
   for (const [name, t] of tiles) {
     const rect = r.get(name);
     t.el.classList.toggle("slot", !!rect);
@@ -407,6 +408,7 @@ const onLidar = lidarDecoder((points) => lidarView.update(points));
 function select(id) {
   if (id === selected) return;
   selected = id;
+  if (shell.view === "ops" && tiles.has(id) && shell.camera !== id) { shell.setCamera(id, tiles); layoutOps(); }
   if (stopLidar) stopLidar();
   lidarView.clear();
   stopLidar = connect(`/ws/lidar?truck=${encodeURIComponent(id)}`, onLidar, true);
