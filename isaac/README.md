@@ -311,3 +311,31 @@ motion, then removes the worktree.
 * The fake core is flat (y = 0) with the fakesim terrain offset on lidar y; it does not test ground follow on slopes.
 * Brain `LIDAR_HEIGHT` defaults to 3.0 m; the Komatsu lidar mount is 0.6 × 4.4 ≈ 2.6 m (same mismatch as Unity).
 <!-- ======================================================================================= brain bridge (end) -->
+
+<!-- ================================================================================= first run on watson (begin) -->
+## First run on watson
+
+Target: the **team pipeline `isaac/sim`** (Isaac Sim **6.2** container `nvcr.io/nvidia/isaac-sim:6.2.0`, a multi-arch
+tag that also runs on aarch64). Not `load_world.py`. Isaac 5.1 is not enough: `isaac/sim/main.py:91` needs Python 3.12
+(6.x ships 3.12, 5.1 ships 3.11), and `RealTimePathTracing` is not a documented 5.1 renderer value. Livestream is
+not available on DGX Spark, so the brain web viewer (`ssh -N -L 8080:127.0.0.1:8080 watson`) shows the cameras.
+
+```bash
+isaac/run_watson.sh check     # driver (DGX Spark: 580.x), docker + NVIDIA runtime/CDI, image arch, assets, brain/radio
+isaac/run_watson.sh smoke     # isaac/smoke_test.py in the container -> isaac/logs/smoke/{report.json,*.png,*_lidar.npy}
+docker compose up -d brain    # brain first; keep the fakesim profile stopped
+isaac/run_watson.sh up        # isaac/sim/main.py via isaac/docker/compose.yml, waits for sim_connected + trucks
+isaac/run_watson.sh status    # /api/state summary + lidar point counts per truck
+# add-on path (instead of up): isaac/sim scene + isaac/truck.py KeepInBounds, Unity rates
+isaac/run_watson.sh bridge
+```
+Logs go to `isaac/logs/` (gitignored). `ISAAC_MODE=native ISAACSIM_PATH=~/isaacsim` uses a local 6.x install instead
+of docker. Without Isaac (Mac), `uv run --with numpy --with pillow --with warp-lang python isaac/smoke_test.py --dry-run` checks the
+world, Warp depth/lidar, ground follow, the drive test and KeepInBounds (15 PASS, 5 SKIP locally).
+
+Smoke checks: python ≥ 3.12, SimulationApp headless, warp (otherwise no depth or lidar), world + 3 trucks, guard
+(KeepInBounds), stage prims, 300 frames settle, Warp ground ray under each spawn, USD prim pose = sim pose through
+`(x, z, y)`, RTX RGB per truck (PNG, not black), depth stats, lidar count, and a 5 s drive (throttle 0.5, steer 0.2)
+that must stay on the ground and inside bounds. RTX lidar and the brain socket are reported as INFO only.
+For the demo-day go/no-go and the fallbacks, see [CHECKLIST.md](CHECKLIST.md).
+<!-- =================================================================================== first run on watson (end) -->
