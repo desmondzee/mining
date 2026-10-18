@@ -28,6 +28,16 @@ DEFAULT_WORLDS = os.environ.get("SIM2D_WORLDS", "default,quarry")
 #   lidar:  only lidar hits on movers, treated as still obstacles, as the brain does
 DEFAULT_MOVERS = os.environ.get("SIM2D_MOVERS", "oracle")
 MOVER_MODES = ("oracle", "lidar")
+# Episode seeds kept for tests: the 2026-10-17 rows (1000+) and evaluate.EVAL_SEED (900000+).
+TEST_SEEDS = (range(1000, 1100), range(900_000, 1_000_000))
+
+
+def check_train_seeds(seeds) -> None:
+    """Refuse training seeds that are also test seeds: make_env(seed) gives the same trip in both."""
+    lo, hi = min(seeds), max(seeds)
+    for r in TEST_SEEDS:
+        if lo < r.stop and hi >= r.start:
+            raise ValueError("training seeds %d-%d overlap test seeds %d-%d" % (lo, hi, r.start, r.stop - 1))
 
 
 _WORLD_CACHE: Dict[str, World] = {}

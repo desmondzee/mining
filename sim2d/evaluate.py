@@ -4,7 +4,9 @@ Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.
 
 Evaluation seeds start at EVAL_SEED, far from the training seeds: datagen uses
 --seed + 0..episodes-1 (bc_v1/bc_v2: 0-1999, bc_v3: 50000-55999) and PPO
-workers use --seed * 1000 + 0..envs-1.
+workers use --seed * 1000 + 0..envs-1. bc_v1/bc_v2 data contains the 1000+ trips
+of the 2026-10-17 rows, so those rows are not clean for bc_v2 and the PPO runs
+started from it. env.check_train_seeds now refuses such overlaps.
 """
 
 from __future__ import annotations

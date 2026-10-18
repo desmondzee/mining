@@ -103,3 +103,12 @@ def test_expert_keeps_body_on_ramp_next_to_obstacle(world, start, goal, road_id,
         assert not info["collided"] and not _body_over_edge(env)
         if done:
             break
+
+
+def test_training_seeds_must_not_overlap_test_seeds():
+    from sim2d.env import check_train_seeds
+
+    check_train_seeds(range(10000, 12000))
+    for seeds in (range(0, 2000), range(1000, 1030), [950000]):
+        with pytest.raises(ValueError):
+            check_train_seeds(seeds)

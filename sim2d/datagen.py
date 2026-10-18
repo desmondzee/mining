@@ -15,7 +15,7 @@ from multiprocessing import Pool
 
 import numpy as np
 
-from .env import make_env
+from .env import check_train_seeds, make_env
 
 
 def episode(args):
@@ -43,10 +43,11 @@ def main() -> None:
     p.add_argument("--episodes", type=int, default=200)
     p.add_argument("--explore", type=float, default=0.2)
     p.add_argument("--workers", type=int, default=os.cpu_count())
-    p.add_argument("--seed", type=int, default=0)
+    p.add_argument("--seed", type=int, default=10000)
     p.add_argument("--out", default="data/bc.npz")
     args = p.parse_args()
     jobs = [(args.seed + i, args.explore) for i in range(args.episodes)]
+    check_train_seeds([j[0] for j in jobs])
     with Pool(args.workers) as pool:
         parts = pool.map(episode, jobs)
     obs, cands, masks, labels = (np.concatenate(x) for x in zip(*parts))

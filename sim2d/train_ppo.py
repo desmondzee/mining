@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .env import HOLD_ACTION, OBS_DIM, make_env
+from .env import HOLD_ACTION, OBS_DIM, check_train_seeds, make_env
 from .model import PathScorer, load_model, save
 
 
@@ -97,6 +97,7 @@ def main() -> None:
     value = Value(actor.config["width"]).to(args.device)
     opt = torch.optim.Adam(list(actor.parameters()) + list(value.parameters()), lr=args.lr)
 
+    check_train_seeds([args.seed * 1000 + i for i in range(args.envs)])
     ctx = mp.get_context("spawn")
     pipes, procs = [], []
     for i in range(args.envs):
