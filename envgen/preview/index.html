@@ -79,12 +79,39 @@ Object.assign(sun.shadow.camera, { left: -160, right: 160, top: 160, bottom: -16
 scene.add(sun);
 
 const loader = new GLTFLoader();
-if (world.assets.pano) {   // Marble-generated 360 panorama as sky + horizon
+// [procedural-sky] physical sky (three.js Sky addon, same three version), sun = the DirectionalLight, fog = horizon colour.
+// Default; ?sky=pano uses world.assets.pano (Marble 360 pano, kept for Isaac lighting) instead.
+if (world.assets.pano && new URLSearchParams(location.search).get('sky') === 'pano') {
   const tex = await new THREE.TextureLoader().loadAsync(base + world.assets.pano);
   tex.mapping = THREE.EquirectangularReflectionMapping; tex.colorSpace = THREE.SRGBColorSpace;
   scene.background = tex; scene.backgroundIntensity = 1.15;
   scene.fog.color.set(0xb3aea3);
+} else {
+  const { Sky } = await import('three/addons/objects/Sky.js');
+  const skyMesh = new Sky(); skyMesh.scale.setScalar(450000); skyMesh.frustumCulled = false;
+  const u = skyMesh.material.uniforms;
+  u.turbidity.value = 6; u.rayleigh.value = 1.4; u.mieCoefficient.value = 0.006; u.mieDirectionalG.value = 0.8;
+  const sunDir = sun.position.clone().normalize();
+  u.sunPosition.value.copy(sunDir);
+  // horizon colour: render the bare sky (HDR, before tone mapping) at the horizon in 4 directions and average it
+  const skyScene = new THREE.Scene(); skyScene.add(skyMesh);
+  const rt = new THREE.WebGLRenderTarget(8, 8, { type: THREE.FloatType });
+  const cam = new THREE.PerspectiveCamera(20, 1, 1, 1e6), px = new Float32Array(4), acc = [0, 0, 0];
+  for (let k = 0; k < 4; k++) {
+    const a = Math.atan2(sunDir.z, sunDir.x) + Math.PI / 4 + k * Math.PI / 2;
+    cam.lookAt(Math.cos(a), 0.02, Math.sin(a));
+    renderer.setRenderTarget(rt); renderer.render(skyScene, cam);
+    try { renderer.readRenderTargetPixels(rt, 4, 4, 1, 1, px); } catch { px.set([0.62, 0.68, 0.74, 1]); }
+    for (let c = 0; c < 3; c++) acc[c] += px[c] / 4;
+  }
+  renderer.setRenderTarget(null); rt.dispose();
+  if (acc.every(Number.isFinite) && acc[2] > 0.01) scene.fog.color.setRGB(acc[0] * 0.92 + 0.04, acc[1] * 0.92 + 0.04, acc[2] * 0.92 + 0.04);
+  scene.background = scene.fog.color.clone();
+  scene.add(skyMesh);
+  // slight haze: far end of the fog lies just inside the 3 km apron edge, so the ground melts into the horizon
+  scene.fog.near = Math.max(450, 0.8 * Math.max(...world.size_m)); scene.fog.far = 2900;
 }
+// [/procedural-sky]
 const m4 = (rows) => new THREE.Matrix4().set(...rows.flat());
 
 // --- ground: textured scan (scan worlds) or generated terrain
@@ -102,8 +129,44 @@ scene.add(ground);
 // Prefer the generated surround.glb (envgen/surround.py, same frame as collider.glb); fall back to the inline apron.
 if (world.assets.surround) {
   const sur = (await loader.loadAsync(base + world.assets.surround)).scene;
-  sur.traverse(o => { if (o.isMesh) { o.receiveShadow = true; o.material = new THREE.MeshLambertMaterial({ vertexColors: true }); } });
+  sur.traverse(o => { if (o.isMesh) {   // [forest] keep the tiling ground texture (COLOR_0 x map)
+    const map = o.material.map || null; if (map) map.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+    o.receiveShadow = true; o.material = new THREE.MeshLambertMaterial({ vertexColors: true, map }); } });
   scene.add(sur);
+  // [forest] procedural trees: forest.glb archetype meshes x forest_instances.json, one InstancedMesh per
+  // archetype per 1 km tile (frustum-culled per tile, so the cab views only draw nearby tiles; fog hides the far ones)
+  if (world.assets.forest_instances && world.assets.forest) {
+    try {
+      const [fg, fi] = await Promise.all([loader.loadAsync(base + world.assets.forest),
+        fetch(base + world.assets.forest_instances, { cache: 'no-store' }).then(r => r.json())]);
+      const geos = {};
+      fg.scene.traverse(o => { if (o.isMesh) geos[o.geometry.name || o.name] = geos[o.name.replace(/^trees_/, '')] = o.geometry; });
+      const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
+      const TILE = 1000, tiles = new Map();
+      for (const r of fi.instances) {
+        const key = `${r[0]}:${Math.floor(r[1] / TILE)}:${Math.floor(r[3] / TILE)}`;
+        (tiles.get(key) || tiles.set(key, []).get(key)).push(r);
+      }
+      const m = new THREE.Matrix4(), q = new THREE.Quaternion(), p = new THREE.Vector3(), s = new THREE.Vector3(), up = new THREE.Vector3(0, 1, 0), c = new THREE.Color();
+      let n = 0;
+      for (const [key, rows] of tiles) {
+        const name = fi.archetypes[Number(key.split(':')[0])].name, geo = geos[name];
+        if (!geo) continue;
+        const im = new THREE.InstancedMesh(geo, mat, rows.length);
+        rows.forEach((r, i) => {
+          q.setFromAxisAngle(up, r[5]); p.set(r[1], r[2], r[3]); s.setScalar(r[4]);
+          im.setMatrixAt(i, m.compose(p, q, s));
+          const h = Math.sin(r[1] * 12.9898 + r[3] * 78.233) * 43758.5453, f = h - Math.floor(h);   // stable per-tree tint
+          if (r.length >= 9) im.setColorAt(i, c.setRGB(r[6], r[7], r[8]));   // tint matched to the scan's canopy at the seam
+          else im.setColorAt(i, c.setRGB(0.82 + 0.3 * f, 0.85 + 0.25 * f, 0.8 + 0.2 * (1 - f)));
+        });
+        im.instanceMatrix.needsUpdate = true; im.computeBoundingSphere(); im.computeBoundingBox?.();
+        scene.add(im); n += rows.length;
+      }
+      console.log(`forest: ${n} trees in ${tiles.size} instanced tiles`);
+    } catch (e) { console.warn('forest not loaded', e); }
+  }
+  // [/forest]
 } else {
   const meta = await (await fetch(base + 'heightmap_meta.json', { cache: 'no-store' })).json();
   const hm = new Uint16Array(await (await fetch(base + 'heightmap.raw', { cache: 'no-store' })).arrayBuffer());
@@ -138,6 +201,10 @@ if (world.assets.surround) {
 const roadMat = new THREE.MeshBasicMaterial({ color: 0xf2b63c, transparent: true, opacity: 0.38, depthWrite: false,
   polygonOffset: true, polygonOffsetFactor: -4, side: THREE.DoubleSide });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0xffd27a, transparent: true, opacity: 0.85 });
+// yellow road overlay: hidden by default; press R to toggle (or ?roads=1)
+let SHOW_ROADS = new URLSearchParams(location.search).get('roads') === '1';
+const ROAD_OBJS = [];
+addEventListener('keydown', e => { if (e.key === 'r' || e.key === 'R') { SHOW_ROADS = !SHOW_ROADS; for (const o of ROAD_OBJS) o.visible = SHOW_ROADS; } });
 for (const r of world.roads || []) {
   const P = r.points.map(p => new THREE.Vector3(p[0], p[1] + 0.35, p[2])), w = (r.width_m || 15) / 2;
   const pos = [], idx = [], left = [], right = [];
@@ -149,8 +216,8 @@ for (const r of world.roads || []) {
     if (k) idx.push(2*k-2, 2*k-1, 2*k, 2*k-1, 2*k+1, 2*k);
   });
   const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setIndex(idx);
-  const ribbon = new THREE.Mesh(g, roadMat); ribbon.renderOrder = 2; scene.add(ribbon);
-  for (const edge of [left, right]) scene.add(new THREE.Line(new THREE.BufferGeometry().setFromPoints(edge), edgeMat));
+  const ribbon = new THREE.Mesh(g, roadMat); ribbon.renderOrder = 2; ribbon.visible = SHOW_ROADS; ROAD_OBJS.push(ribbon); scene.add(ribbon);
+  for (const edge of [left, right]) { const ln = new THREE.Line(new THREE.BufferGeometry().setFromPoints(edge), edgeMat); ln.visible = SHOW_ROADS; ROAD_OBJS.push(ln); scene.add(ln); }
 }
 const siteColor = { ore: 0x3fd0b0, crusher: 0xe5484d, dump: 0x9b6bd6, parking: 0x4a8fe0, fuel: 0xf2b63c };
 const labels = [];
@@ -343,7 +410,13 @@ const excavators = equipment.filter(e => e.type === undefined || e.type === 'exc
   cam.rotation.order = 'YXZ'; cam.rotation.set(THREE.MathUtils.degToRad(-10), Math.PI, 0);
   cam.position.set(EXC_CAB.x, EXC_CAB.y, EXC_CAB.z); g.add(cam);
   const faceName = faces.find(f => f.id === e.face)?.name || e.face;
-  return { g, cam, face: e.face, faceName, name: `Excavator ${NUM[i] || i + 1}`, busy: false, base: g.rotation.y, phase: Math.random() * 6 };
+  // [exc-aim] scripted per-machine cycle from world.json (envgen/exc_aim.py): dig at the toe of the face, dump over
+  // the truck bed at the load point. House column deg -> rad; falls back to the generic EXC_KEYS below.
+  const keys = Array.isArray(e.exc_keys_deg) && e.exc_keys_deg.length > 1
+    ? e.exc_keys_deg.map(k => [k[0], THREE.MathUtils.degToRad(k[1]), k[2], k[3], k[4]]) : null;
+  if (e.exc_aim?.warnings?.length) console.warn(`[exc-aim] ${e.id}:`, e.exc_aim.warnings.join('; '));
+  return { g, cam, face: e.face, faceName, name: `Excavator ${NUM[i] || i + 1}`, busy: false, base: g.rotation.y, phase: Math.random() * 6,
+           keys, period: e.exc_period_s || null };   // [exc-aim]
 });
 // [exc-rig] dig cycle keyframes (8 s loop): [phase 0..1, house yaw rad (+ = toward cab/+X side = truck side),
 // boom, stick, bucket deg about local X (+ = boom down / stick in / bucket curl); 0,0,0,0 = modelled rest pose]
@@ -358,9 +431,9 @@ const EXC_KEYS = [
   [0.78, EXC_DUMP_YAW, -12, -35, -100],
   [1.00, 0, 12, -42, -60],                   // swing back to the face
 ];
-function excPose(u) {
-  let i = 0; while (i < EXC_KEYS.length - 2 && u > EXC_KEYS[i + 1][0]) i++;
-  const a = EXC_KEYS[i], b = EXC_KEYS[i + 1], s = THREE.MathUtils.smootherstep(u, a[0], b[0]);
+function excPose(u, KEYS = EXC_KEYS) {   // [exc-aim] per-excavator keys
+  let i = 0; while (i < KEYS.length - 2 && u > KEYS[i + 1][0]) i++;
+  const a = KEYS[i], b = KEYS[i + 1], s = THREE.MathUtils.smootherstep(u, a[0], b[0]);
   return [1, 2, 3, 4].map(k => a[k] + (b[k] - a[k]) * s);
 }
 function animateExcavators(t) {
@@ -381,7 +454,8 @@ function animateExcavators(t) {
       continue;
     }
     const r = x.rig, dt = Math.min(Math.max(t - r.t, 0), 0.1); r.t = t;
-    const goal = busy ? excPose(((t + x.phase * 1.3) % EXC_CYCLE_S) / EXC_CYCLE_S) : [0, 0, 0, 0];
+    const P = x.period || EXC_CYCLE_S;   // [exc-aim]
+    const goal = busy ? excPose(((t + x.phase * 1.3) % P) / P, x.keys || EXC_KEYS) : [0, 0, 0, 0];
     const k = 1 - Math.exp(-dt * (busy ? 8 : 2.5));   // tight tracking while digging, gentle ease to rest
     for (let j = 0; j < 4; j++) r.pose[j] += (goal[j] - r.pose[j]) * k;
     const D = THREE.MathUtils.degToRad;

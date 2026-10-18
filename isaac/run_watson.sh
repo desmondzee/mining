@@ -3,9 +3,9 @@
 # Targets the TEAM pipeline isaac/sim (Isaac Sim 6.2 container, spec.md "Isaac sim"). Idempotent: safe to re-run.
 #
 #   isaac/run_watson.sh check      GPU/driver/arch, docker + NVIDIA runtime, image, assets, brain/radio reachability
-#   isaac/run_watson.sh smoke      isaac/smoke_test.py inside Isaac (headless) -> isaac/logs/smoke/ (PNGs, report.json)
+#   isaac/run_watson.sh smoke      isaac/smoke_test.py --excavators inside Isaac (headless) -> isaac/logs/smoke/
 #   isaac/run_watson.sh up         isaac/sim/main.py in the container (docker compose, profile isaac) -> brain :9000
-#   isaac/run_watson.sh bridge     add-on path instead of `up`: isaac/brain_bridge.py --backend isaac (KeepInBounds on)
+#   isaac/run_watson.sh bridge     old name of `up` (our separate bridge is gone: isaac/sim/main.py is the only bridge)
 #   isaac/run_watson.sh status     brain /api/state summary (sim_connected, trucks, cameras) + container state
 #   isaac/run_watson.sh logs       follow the sim container log
 #   isaac/run_watson.sh down       stop the sim container(s)
@@ -17,6 +17,8 @@
 #   ISAACSIM_PATH=~/isaacsim   native install dir (must be Isaac 6.x: isaac/sim needs Python 3.12)
 #   BRAIN_HOST=127.0.0.1 BRAIN_PORT=9000 BRAIN_WEB=http://127.0.0.1:8080 RADIO_URL=http://127.0.0.1:8090
 #   WORLD=quarry  SMOKE_ARGS="--renderer RaytracedLighting"  SIM_ARGS="--fps 15"
+#   EXCAVATORS=1               smoke: animate excavators (isaac/excavators.py, radio $RADIO_URL); native up: pass
+#                              --excavators --keep-in-bounds when isaac/sim/main.py has them (isaac/patches/*.patch)
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,6 +37,7 @@ RADIO_URL="${RADIO_URL:-http://127.0.0.1:8090}"
 WORLD="${WORLD:-quarry}"
 SMOKE_ARGS="${SMOKE_ARGS:-}"
 SIM_ARGS="${SIM_ARGS:-}"
+EXCAVATORS="${EXCAVATORS:-1}"
 STAMP="$(date +%Y%m%d_%H%M%S)"
 
 mkdir -p "$LOGS" "$LOGS/smoke" "$CACHE"
@@ -154,7 +157,7 @@ cmd_check() {
     warn "brain web $BRAIN_WEB not answering"; next "cd $REPO && docker compose up -d brain   (NOT the 'fake' profile)"
   fi
   if (exec 3<>"/dev/tcp/$BRAIN_HOST/$BRAIN_PORT") 2>/dev/null; then ok "brain sim socket $BRAIN_HOST:$BRAIN_PORT open"
-  else warn "brain sim socket $BRAIN_HOST:$BRAIN_PORT closed (needed for up/bridge, not for smoke)"; fi
+  else warn "brain sim socket $BRAIN_HOST:$BRAIN_PORT closed (needed for up, not for smoke)"; fi
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -q 'fakesim'; then
     warn "a fakesim container is running: the brain keeps only the latest sim connection"
     next "docker compose stop fakesim"
@@ -181,6 +184,16 @@ PY
 }
 
 # ---------------------------------------------------------------------------------------------------------- smoke
+exc_smoke_args() { [ "$EXCAVATORS" = "1" ] && echo "--excavators --radio-url $RADIO_URL"; }
+
+# add-on flags only when isaac/sim/main.py parses them (isaac/patches/main_excavators.patch, keep_in_bounds.patch)
+addon_sim_args() {
+  local a=""
+  if [ "$EXCAVATORS" = "1" ] && grep -q -- '"--excavators"' "$REPO/isaac/sim/main.py"; then a="$a --excavators --radio-url $RADIO_URL"; fi
+  grep -q -- '"--keep-in-bounds"' "$REPO/isaac/sim/main.py" && a="$a --keep-in-bounds"
+  echo "$a"
+}
+
 cmd_smoke() {
   hdr "smoke test ($ISAAC_MODE, world $WORLD)"
   local log="$LOGS/smoke_${STAMP}.log"
@@ -188,7 +201,7 @@ cmd_smoke() {
   if [ "$ISAAC_MODE" = "native" ]; then
     local root; root="$(native_root)" || { fail "no native Isaac"; return 1; }
     ( cd "$root" && ./python.sh "$REPO/isaac/smoke_test.py" --world "$REPO/data/worlds/$WORLD" --cache "$CACHE" \
-        --out "$LOGS/smoke" --brain "$BRAIN_HOST:$BRAIN_PORT" $SMOKE_ARGS ) 2>&1 | tee "$log"
+        --out "$LOGS/smoke" --brain "$BRAIN_HOST:$BRAIN_PORT" $(exc_smoke_args) $SMOKE_ARGS ) 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
   else
     docker image inspect "$IMAGE" >/dev/null 2>&1 || { echo "pulling $IMAGE (first time only, large)"; docker pull "$IMAGE" || { fail "docker pull $IMAGE"; next "docker login nvcr.io (user \$oauthtoken, NGC API key) or check network"; return 1; }; }
@@ -202,7 +215,7 @@ cmd_smoke() {
       -v mining-isaac-config:/isaac-sim/.nvidia-omniverse/config:rw -v mining-isaac-data:/isaac-sim/.local/share/ov/data:rw \
       --entrypoint /isaac-sim/python.sh "$IMAGE" \
       /mining/isaac/smoke_test.py --world "/data/worlds/$WORLD" --cache /cache --out /logs/smoke \
-      --brain "$BRAIN_HOST:$BRAIN_PORT" $SMOKE_ARGS 2>&1 | tee "$log"
+      --brain "$BRAIN_HOST:$BRAIN_PORT" $(exc_smoke_args) $SMOKE_ARGS 2>&1 | tee "$log"
     rc=${PIPESTATUS[0]}
   fi
   echo "log: $log   report: $LOGS/smoke/report.json   images: $LOGS/smoke/*.png"
@@ -222,12 +235,9 @@ EOF
   return "$rc"
 }
 
-# ---------------------------------------------------------------------------------------------------------- up / bridge
+# ---------------------------------------------------------------------------------------------------------- up
 cmd_up() {
   hdr "isaac/sim up (container mining-isaac-sim -> brain $BRAIN_HOST:$BRAIN_PORT)"
-  if docker ps --format '{{.Names}}' | grep -q '^mining-isaac-bridge$'; then
-    warn "mining-isaac-bridge is running; stopping it (one sim connection at a time)"; docker rm -f mining-isaac-bridge >/dev/null
-  fi
   if docker ps --format '{{.Names}}' | grep -q '^mining-isaac-sim$'; then
     ok "mining-isaac-sim already running (idempotent: not restarting; 'down' then 'up' to restart)"
   else
@@ -235,39 +245,23 @@ cmd_up() {
       local root; root="$(native_root)" || { fail "no native Isaac"; return 1; }
       local log="$LOGS/sim_${STAMP}.log"
       ( cd "$REPO" && nohup "$root/python.sh" isaac/sim/main.py --brain "$BRAIN_HOST:$BRAIN_PORT" \
-          --world "data/worlds/$WORLD" --cache "$CACHE" $SIM_ARGS >"$log" 2>&1 & echo $! >"$LOGS/sim.pid" )
+          --world "data/worlds/$WORLD" --cache "$CACHE" $(addon_sim_args) $SIM_ARGS >"$log" 2>&1 & echo $! >"$LOGS/sim.pid" )
       ok "native isaac/sim started, pid $(cat "$LOGS/sim.pid"), log $log"; return 0
+    fi
+    if [ -n "$(addon_sim_args)" ] && ! grep -q -- '--excavators\|--keep-in-bounds' "$HERE/docker/compose.yml"; then
+      warn "isaac/sim/main.py has add-on flags but isaac/docker/compose.yml 'command:' does not pass them"
+      next "add$(addon_sim_args) to its command (Des's file), or ISAAC_MODE=native"
     fi
     ISAAC_TAG="$ISAAC_TAG" "${COMPOSE[@]}" up -d --build 2>&1 | tee "$LOGS/compose_up_${STAMP}.log"
     if [ "${PIPESTATUS[0]}" -ne 0 ]; then
       fail "compose up"
       next "CDI error ('unresolvable CDI devices')? sudo nvidia-ctk cdi generate --output=/etc/cdi/nvidia.yaml"
-      next "or use the add-on path: isaac/run_watson.sh bridge (plain docker run --gpus all)"
+      next "or ISAAC_MODE=native with a local Isaac 6.x install"
       return 1
     fi
   fi
   ( docker logs -f mining-isaac-sim >"$LOGS/sim_${STAMP}.log" 2>&1 & )
   wait_connected "mining-isaac-sim"
-}
-
-cmd_bridge() {
-  hdr "add-on bridge: isaac/brain_bridge.py --backend isaac (isaac/sim scene + KeepInBounds, Unity rates)"
-  if docker ps --format '{{.Names}}' | grep -q '^mining-isaac-sim$'; then
-    warn "mining-isaac-sim is running; stopping it (one sim connection at a time)"; "${COMPOSE[@]}" down >/dev/null 2>&1
-  fi
-  if docker ps --format '{{.Names}}' | grep -q '^mining-isaac-bridge$'; then ok "mining-isaac-bridge already running"; else
-    docker run -d --name mining-isaac-bridge --restart unless-stopped $(gpu_flags) --network host \
-      -e ACCEPT_EULA=Y -e PRIVACY_CONSENT=Y -e NVIDIA_DRIVER_CAPABILITIES=all -e PYTHONUNBUFFERED=1 \
-      -e BRAIN_HOST="$BRAIN_HOST" -e BRAIN_PORT="$BRAIN_PORT" \
-      -v "$REPO:/mining:ro" -v "$REPO/data:/data:ro" -v "$CACHE:/cache:rw" \
-      -v mining-isaac-cache-main:/isaac-sim/.cache:rw -v mining-isaac-cache-compute:/isaac-sim/.nv/ComputeCache:rw \
-      -v mining-isaac-cache-kit:/isaac-sim/kit/cache:rw -v mining-isaac-config:/isaac-sim/.nvidia-omniverse/config:rw \
-      --entrypoint /isaac-sim/python.sh "$IMAGE" \
-      /mining/isaac/brain_bridge.py --backend isaac --world "/data/worlds/$WORLD" --cache /cache $SIM_ARGS \
-      || { fail "docker run bridge"; return 1; }
-  fi
-  ( docker logs -f mining-isaac-bridge >"$LOGS/bridge_${STAMP}.log" 2>&1 & )
-  wait_connected "mining-isaac-bridge"
 }
 
 wait_connected() {
@@ -303,9 +297,9 @@ cmd_status() {
   done
 }
 
-cmd_logs() { docker logs -f --tail 100 "$(docker ps --format '{{.Names}}' | grep -E '^mining-isaac-(sim|bridge)$' | head -1)"; }
+cmd_logs() { docker logs -f --tail 100 mining-isaac-sim; }
 cmd_down() {
-  "${COMPOSE[@]}" down 2>/dev/null; docker rm -f mining-isaac-bridge mining-isaac-smoke >/dev/null 2>&1
+  "${COMPOSE[@]}" down 2>/dev/null; docker rm -f mining-isaac-smoke >/dev/null 2>&1
   [ -f "$LOGS/sim.pid" ] && kill "$(cat "$LOGS/sim.pid")" 2>/dev/null && rm -f "$LOGS/sim.pid"
   ok "sim containers stopped"
 }
@@ -314,10 +308,10 @@ case "${1:-all}" in
   check)  cmd_check ;;
   smoke)  cmd_smoke ;;
   up)     cmd_up ;;
-  bridge) cmd_bridge ;;
+  bridge) ylw "'bridge' is now 'up' (isaac/sim/main.py is the only bridge)"; cmd_up ;;
   status) cmd_status ;;
   logs)   cmd_logs ;;
   down)   cmd_down ;;
   all)    cmd_check; cmd_smoke && cmd_up && cmd_status ;;
-  *) sed -n '2,22p' "$0"; exit 2 ;;
+  *) sed -n '2,24p' "$0"; exit 2 ;;
 esac

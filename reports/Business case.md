@@ -1,6 +1,6 @@
 # R² (Rocky Robotics): business case
 
-**"Talk to your quarry."** Retrofit autonomy and voice dispatch for mid-size quarries.
+**"Mining autonomy."** Retrofit autonomy and voice dispatch for mid-size quarries.
 
 *Prepared 17 Oct 2026 for the hackathon pitch. Every number either links to its source or is marked **[A]** (our assumption) or **[M]** (output of our model, built from sourced inputs plus [A]). Evidence base: `reports/Autonomous quarry haulage financials.md` and `research_notes/Autonomous quarry haulage financials/`.*
 
@@ -25,7 +25,7 @@
 
 ## 1. Pitch and problem
 
-**Pitch.** Quarries cannot hire enough drivers, and the autonomy on the market was built for BHP, not for a 6-truck limestone pit. R² turns the trucks and excavators a quarry already owns into a supervised autonomous fleet. Onboarding takes days: we fly a drone, generate a simulation of the site, train and check the driving policy there, bolt on a sensor pod, and supervisors run the fleet by voice over the radio they already carry. The quarry pays a subscription that costs less than the shifts it can no longer staff. **R², "talk to your quarry": the quarry crew stays in charge, the machines do the driving.**
+**Pitch.** Quarries cannot hire enough drivers, and the autonomy on the market was built for BHP, not for a 6-truck limestone pit. R² turns the trucks and excavators a quarry already owns into a supervised autonomous fleet. Onboarding takes days: we fly a drone, generate a simulation of the site, train and check the driving policy there, bolt on a sensor pod, and supervisors run the fleet by voice over the radio they already carry. The quarry pays a subscription that costs less than the shifts it can no longer staff. **R², "mining autonomy": the quarry crew stays in charge, the machines do the driving.**
 
 **The problem in five numbers.**
 

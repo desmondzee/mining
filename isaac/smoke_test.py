@@ -8,15 +8,15 @@ only opens and closes a TCP connection).
     /isaac-sim/python.sh /mining/isaac/smoke_test.py --world /data/worlds/quarry --cache /cache --out /logs/smoke
     # native install
     $ISAACSIM_PATH/python.sh isaac/smoke_test.py
-    # no Isaac (Mac / CI): checks world, Warp raycasts, ground follow, drive + keep-in-bounds; no RTX
-    uv run --with numpy --with pillow --with warp-lang python isaac/smoke_test.py --dry-run
+    # no Isaac (Mac / CI): checks world, Warp raycasts, ground follow, drive, excavator cycle; no RTX
+    uv run --with numpy --with pillow --with warp-lang python isaac/smoke_test.py --dry-run --excavators
 
 Checks (each one is independent; a missing API is reported as SKIP/FAIL with the reason, never a crash):
   python        Python >= 3.12 (isaac/sim/main.py uses 3.12 f-string syntax; Isaac 6.x = 3.12, Isaac 5.1 = 3.11)
   isaac_app     SimulationApp starts headless; Isaac / Kit version
   warp          Warp importable -> raycasts on (depth + lidar + ground follow); off = no depth/lidar in the brain
   world         world.json loads, 3 trucks spawned
-  guard         isaac/truck.py KeepInBounds installed (our add-on; optional)
+  guard         INFO: KeepInBounds in isaac/sim (only after isaac/patches/keep_in_bounds.patch; --keep-in-bounds)
   stage         IsaacRenderer built the stage (scan, trucks, cameras, rgb annotators)
   settle        300 physics frames at 1/60 s (+ RTX renders every --render-every frames), fps
   ground:<id>   Warp ray straight down hits terrain under the spawn, truck y within tolerance of it
@@ -24,6 +24,9 @@ Checks (each one is independent; a missing API is reported as SKIP/FAIL with the
   rgb:<id>      RTX rgb annotator frame not empty / not black, PNG saved
   depth:<id>    64x36 depth stats (min / median / max, % misses)
   lidar:<id>    lidar point count (Warp 240x30 pattern, <= 7200)
+  excavators    (--excavators) isaac/excavators.py installed: key source per machine, radio URL
+  stage         ... and with --excavators the rigged parts under /World/Equipment/<id>/rig, static model inactive
+  exc:<id>      (--excavators) dig cycle advanced during settle (house swing range), caster part boxes, USD joint moved
   drive         truck-0 throttle 0.5 / steer 0.2 for 5 s: moves, stays on the ground, stays inside bounds
   rtx_lidar     INFO only: is the isaacsim.sensors.rtx extension importable (isaac/sim does not use it)
   brain         INFO only (with --brain host:port): TCP connect
@@ -92,7 +95,9 @@ def parse_args(argv=None) -> argparse.Namespace:
     p.add_argument("--frames", type=int, default=300)
     p.add_argument("--render-every", type=int, default=10, help="RTX render every N physics frames while settling")
     p.add_argument("--drive-seconds", type=float, default=5.0)
-    p.add_argument("--no-keep-in-bounds", action="store_true", help="drive with plain isaac/sim Truck (Unity dynamics)")
+    p.add_argument("--keep-in-bounds", action="store_true", help="Sim(keep_in_bounds=True); needs isaac/patches/keep_in_bounds.patch")
+    p.add_argument("--excavators", action="store_true", help="install isaac/excavators.py (rigged, animated excavators)")
+    p.add_argument("--radio-url", default=None, help="radio for the excavators (default $RADIO_URL; '' = off)")
     p.add_argument("--brain", default="", help="host:port, INFO-only TCP connect test")
     p.add_argument("--dry-run", action="store_true", help="no Isaac: skip SimulationApp / stage / RTX checks")
     a, _ = p.parse_known_args(argv)
@@ -196,31 +201,31 @@ def _body(a, rep: Report, app, config: dict, out: Path, t_start: float) -> int:
 
     from isaac.sim.sim import Sim
 
-    sim = rep.run("world", Sim, a.world, raycast=raycast, views=[])
+    import inspect
+
+    kib_supported = "keep_in_bounds" in inspect.signature(Sim.__init__).parameters
+    kw = {"keep_in_bounds": True} if a.keep_in_bounds and kib_supported else {}
+    sim = rep.run("world", Sim, a.world, raycast=raycast, views=[], **kw)
     if sim is None:
         return 1
     ids = [t.id for t in sim.trucks]
     rep.add("world", "PASS" if len(ids) == 3 else "WARN", f"{sim.world.id}: trucks {ids}, bounds {sim.world.bounds}, "
             f"excavators {len(sim.excavators)}, walkers {len(sim.walkers)}, caster {'warp' if sim.caster else 'none'}")
 
-    # our add-on: keep-in-bounds guard (isaac/truck.py, subclass of isaac/sim Truck)
-    guarded = False
-    if not a.no_keep_in_bounds:
-        def guard():
-            from isaac.truck import install_controllers
-            install_controllers(sim, keep_in_bounds=True)
-            g = sim.trucks[0].guard
-            rep.add("guard", "PASS", f"KeepInBounds on: inner box {g.lo.tolist()}..{g.hi.tolist()}, "
-                    f"navgrid {'yes' if g.navgrid is not None else 'no'}")
-            return True
-        guarded = bool(rep.run("guard", guard))
+    # KeepInBounds lives in isaac/sim only once isaac/patches/keep_in_bounds.patch is applied (RL: isaac/rl_env.py wrapper)
+    guarded = bool(kw) and getattr(sim.trucks[0], "guard", None) is not None
+    if guarded:
+        g = sim.trucks[0].guard
+        rep.add("guard", "INFO", f"KeepInBounds on: inner box {g.lo.tolist()}..{g.hi.tolist()}")
+    elif a.keep_in_bounds and not kib_supported:
+        rep.add("guard", "WARN", "--keep-in-bounds given but isaac/sim has no KeepInBounds (apply isaac/patches/keep_in_bounds.patch)")
     else:
-        rep.add("guard", "SKIP", "--no-keep-in-bounds")
+        rep.add("guard", "INFO", f"off (isaac/sim {'supports --keep-in-bounds' if kib_supported else 'without the keep_in_bounds patch'})")
 
     # stage + RTX
     renderer = None
     if app is not None:
-        def build_stage():
+        def make_stage():
             from isaac.sim.scene import IsaacRenderer
             t0 = time.time()
             r = IsaacRenderer(app, sim, argparse.Namespace(cache=a.cache, fx="off"), config)
@@ -232,9 +237,24 @@ def _body(a, rep: Report, app, config: dict, out: Path, t_start: float) -> int:
             rep.add("stage", "FAIL" if missing else "PASS",
                     f"built in {time.time() - t0:.1f}s, cameras {names}" + (f", missing {missing}" if missing else ""))
             return r
-        renderer = rep.run("stage", build_stage)
+        renderer = rep.run("stage", make_stage)
     else:
         rep.add("stage", "SKIP", "no SimulationApp")
+
+    excavators = None
+    if a.excavators:
+        def install_excavators():
+            from isaac.excavators import install
+            ex = install(sim, renderer, a.radio_url, cache=a.cache)
+            if not ex.items:
+                rep.add("excavators", "WARN", "world.json has no excavators")
+                return ex
+            srcs = ", ".join(f"{x.id}: {x.source}" for x in ex.items)
+            radio = ex.links[0].url if ex.links else "off"
+            rep.add("excavators", "PASS", f"{len(ex.items)} animated ({srcs}); radio {radio}; usd parts {'yes' if ex.ops else 'no'}")
+            return ex
+        excavators = rep.run("excavators", install_excavators)
+        house_seen = {}
 
     # settle: N physics frames (no commands), render every k frames
     def settle():
@@ -242,6 +262,9 @@ def _body(a, rep: Report, app, config: dict, out: Path, t_start: float) -> int:
         renders = 0
         for k in range(a.frames):
             sim.step(PHYSICS_DT, sim.time + PHYSICS_DT)
+            if excavators is not None:
+                for x in excavators.items:
+                    house_seen.setdefault(x.id, []).append(float(x.pose[0]))
             if renderer is not None:
                 renderer.update(sim, PHYSICS_DT)
                 if a.render_every and k % a.render_every == 0:
@@ -251,6 +274,27 @@ def _body(a, rep: Report, app, config: dict, out: Path, t_start: float) -> int:
         el = time.time() - t0
         rep.add("settle", "PASS", f"{a.frames} frames in {el:.1f}s ({a.frames / max(el, 1e-6):.0f} fps, {renders} RTX renders)")
     rep.run("settle", settle)
+
+    if excavators is not None and excavators.items:
+        def check_excavator(x):
+            swing = max(house_seen.get(x.id, [0])) - min(house_seen.get(x.id, [0]))
+            moved = bool(np.abs(x.pose).max() > 1.0)
+            detail = f"pose (house, boom, stick, bucket) {np.round(x.pose, 1).tolist()}, house swing {swing:.0f} deg over settle, " \
+                     f"digging {x.digging}"
+            if sim.caster is not None:
+                detail += f", caster boxes {sim.caster.nbox} (trucks {len(sim.trucks)} + {len(excavators.items)} x 5 parts)"
+            if excavators.ops:
+                from pxr import UsdGeom  # noqa: F401
+                base = f"/World/Equipment/{x.id.replace('-', '_')}"
+                model = renderer.stage.GetPrimAtPath(base + "/model")
+                boom = renderer.stage.GetPrimAtPath(base + "/rig/boom")
+                detail += f", rig {'ok' if boom else 'MISSING'}, static model {'inactive' if model and not model.IsActive() else 'active?'}"
+            ok = moved or not x.digging
+            rep.add(f"exc:{x.id}", "PASS" if ok else "FAIL", detail + ("" if ok else " (digging but did not move)"))
+        for x in excavators.items:
+            rep.run(f"exc:{x.id}", check_excavator, x)
+        for link in excavators.links:
+            rep.add("radio", "INFO", f"GET {link.url}: polls {link.polls}, errors {link.errors}, states {link.states}")
 
     # ground under each spawn (Warp ray down = what isaac/sim's GroundFollow uses; PhysX has no colliders here)
     for t in sim.trucks:
@@ -351,7 +395,7 @@ def _body(a, rep: Report, app, config: dict, out: Path, t_start: float) -> int:
                 f"{t.id} {a.drive_seconds:.0f}s thr {DRIVE_THROTTLE} steer {DRIVE_STEER}: moved {dist:.1f} m, "
                 f"yaw {start[2]:.0f}->{t.yaw:.0f}, speed {t.speed:.1f} m/s, max ground err {max_err:.2f} m, "
                 f"min bounds margin {min_margin:.1f} m, guard {statuses}"
-                + ("" if guarded else " (no KeepInBounds)"))
+                + ("" if guarded else " (no KeepInBounds in isaac/sim)"))
         sim.sync_obstacles()
         if renderer is not None:
             grab_images("_after_drive")

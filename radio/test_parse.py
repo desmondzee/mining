@@ -177,5 +177,28 @@ def test_excavator_commands_end_to_end(mock_radio):
     assert len(light) == 3 and set(light[0]) == {"id", "face", "state", "heading_deg", "pos3"}
 
 
+CLARIFY_CASES = [
+    ("truck one start digging", "truck-0", "Truck One here, I haul, I don't dig. Want me at an excavator?"),
+    ("truck two dig", "truck-1", "Truck Two here, I haul, I don't dig. Want me at an excavator?"),
+    ("excavator two drive to the crusher", "exc-1", "Excavator Two here, I stay at Middle Face. Want me to start digging?"),
+    ("excavator one go to the waste dump", "exc-0", "Excavator One here, I stay at Lower Face. Want me to start digging?"),
+    ("truck five go to the dump", "dispatch", "Control, we only have trucks one to three."),
+    ("truck four", "dispatch", "Control, we only have trucks one to three."),
+    ("truck three do a backflip", "truck-2",
+     "Truck Three here, say again? I can go to a face, an excavator, the crusher, the dump, fuel or the ready line."),
+    ("excavator three sing a song", "exc-2", "Excavator Three here, I can start digging or hold. Say again?"),
+]
+
+
+@pytest.mark.parametrize("text,unit,msg", CLARIFY_CASES)
+def test_regex_clarify(text, unit, msg):
+    assert p.parse_regex(text) == [{"name": "clarify", "args": {"unit": unit, "message": msg}}]
+
+
+def test_no_unit_no_clarify():
+    assert p.parse_regex("good morning") == []
+    assert p.parse_regex("the weather is nice") == []
+
+
 if __name__ == "__main__":
     sys.exit(pytest.main([__file__, "-q"]))

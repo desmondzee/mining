@@ -1,0 +1,104 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>R² · Rocky Robotics: Mining autonomy</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Source+Serif+4:wght@400..700&family=DM+Sans:wght@400..700&display=swap">
+<style>
+html,body{margin:0;height:100%;background:#111;overflow:hidden}
+#stage{position:absolute;left:50%;top:50%;width:1920px;height:1080px;transform-origin:center}
+.slide{position:absolute;inset:0;width:1920px;height:1080px;box-sizing:border-box;display:none;overflow:hidden}
+.slide.on{display:flex} .slide[style*="display:grid"].on{display:grid}
+.slide *{margin:0;box-sizing:border-box} .slide table{border-collapse:collapse} .slide td,.slide th{padding:.35em .6em;border-bottom:1px solid #cfc9bc}
+x-icon,x-connector{display:none}
+#hint{position:fixed;bottom:8px;right:12px;color:#888;font:14px sans-serif}
+</style></head><body><div id="stage">
+<section class="slide" id="cover" data-transition="fade" style="display:flex; flex-direction:column; gap:24px; justify-content:end; padding:128px; background:#1f1e1d">
+  <img src="img/quarry.png" alt="Terraced limestone quarry from the rim" style="position:absolute; top:0; left:0; width:1920px; height:1080px; opacity:0.55">
+  <div style="position:absolute; top:0; left:0; width:1920px; height:1080px; display:flex; flex-direction:column; background:linear-gradient(0deg, #1f1e1d 0%, #1f1e1d8c 55%, #1f1e1d1a 100%)">
+  </div>
+  <img src="img/r2-mark.png" alt="R² mark" style="width:150px; height:160px; background:#f0eee6; border-radius:16px; object-fit:contain">
+  <h1 style="font-family:'Source Serif 4', Georgia, serif; font-size:140px; font-weight:600; line-height:1.05; color:#f0eee6">Rocky Robotics</h1>
+  <p style="font-family:'DM Sans', Arial, sans-serif; font-size:44px; letter-spacing:8px; text-transform:uppercase; color:#e0a184">Mining autonomy</p>
+  <p id="2f909eee" style="position:absolute; top:50%; left:50%; width:800px; font-family:'DM Sans', Arial, sans-serif; font-size:36px; transform:translate(-50%, -50%)"></p>
+  
+</section>
+<section class="slide" id="business" data-transition="fade" style="background:#F0EEE6;color:#1F1E1D;font-family:'DM Sans', Arial, sans-serif;padding:128px 128px 160px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;letter-spacing:4px;text-transform:uppercase;color:#A84E31">The opportunity</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:72px;font-weight:600;line-height:1.1">Quarries are left out of autonomy, and it pays to fix</h2>
+</div>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:32px">
+<div style="display:flex;flex-direction:column;gap:8px;background:#FBFAF6;padding:32px;border:1px solid #DDD8CC;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#A84E31">39 Bt</p><p style="font-size:30px">quarried a year, a driver in every truck</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;background:#FBFAF6;padding:32px;border:1px solid #DDD8CC;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#A84E31">$2.3M</p><p style="font-size:30px">per truck for OEM autonomy, big mines only</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;background:#FBFAF6;padding:32px;border:1px solid #DDD8CC;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#A84E31">25–43%</p><p style="font-size:30px">of US mining deaths from powered haulage</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;background:#FBFAF6;padding:32px;border:1px solid #DDD8CC;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#A84E31">25–35%</p><p style="font-size:30px">of quarry-truck cost is the driver</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;background:#FBFAF6;padding:32px;border:1px solid #DDD8CC;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#A84E31">$0.3–1.2B</p><p style="font-size:30px">a year serviceable market today</p></div>
+<div style="display:flex;flex-direction:column;gap:8px;background:#1F1E1D;color:#F0EEE6;padding:32px;border-radius:16px"><p style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;color:#E0A184">~1 yr</p><p style="font-size:30px">payback, 10-truck quarry on 2 shifts</p></div>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#6B6A65">Sources: GAIN 2024; Boliden/Komatsu 2021; MSHA 2023–26; BLS 2025; USGS/UEPG. Market size and payback are our model.</p>
+
+</section>
+<section class="slide" id="solution" data-transition="fade" style="background:#1F1E1D;color:#F0EEE6;font-family:'DM Sans', Arial, sans-serif;padding:128px;display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center">
+<div style="display:flex;flex-direction:column;gap:40px">
+<p style="font-size:28px;letter-spacing:4px;text-transform:uppercase;color:#E0A184">The solution</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:72px;font-weight:600;line-height:1.1">Retrofit the trucks they own. Run the site by voice.</h2>
+<ul style="font-size:40px;line-height:1.6;color:#D8D3C8">
+<li>Bolt-on sensor pod</li>
+<li>Vision policy drives</li>
+<li>Radio dispatch by voice</li>
+<li>Safety stop built in</li>
+</ul>
+</div>
+<img src="img/pod_mounted_worn.png" alt="Weathered R² sensor pod mounted on a haul truck canopy" style="width:832px;height:624px;object-fit:cover;border-radius:16px">
+
+</section>
+<section class="slide" id="built" data-transition="fade" style="background:#F0EEE6;color:#1F1E1D;font-family:'DM Sans', Arial, sans-serif;padding:128px;display:flex;flex-direction:column;gap:48px">
+<div style="display:flex;flex-direction:column;gap:16px">
+<p style="font-size:28px;letter-spacing:4px;text-transform:uppercase;color:#A84E31">Built today</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:72px;font-weight:600;line-height:1.1">The tech behind the demo</h2>
+</div>
+<div style="display:flex;gap:48px">
+<div style="flex:1;display:flex;flex-direction:column;gap:24px;background:#FBFAF6;padding:48px;border:1px solid #DDD8CC;border-radius:16px">
+<h3 style="font-size:40px;font-weight:700">Built and running</h3>
+<ul style="font-size:36px;line-height:1.6">
+<li>Drone scan to simulator</li>
+<li>NVIDIA Isaac Sim</li>
+<li>Voice radio dispatch</li>
+<li>Live ops view</li>
+<li>RL training environment</li>
+</ul>
+</div>
+<div style="flex:1;display:flex;flex-direction:column;gap:24px;background:#1F1E1D;color:#F0EEE6;padding:48px;border-radius:16px">
+<h3 style="font-size:40px;font-weight:700;color:#E0A184">Ready for hardware</h3>
+<ul style="font-size:36px;line-height:1.6">
+<li>Sensors match the pod</li>
+<li>One protocol, sim or truck</li>
+<li>Drive-by-wire ready</li>
+<li>Next: pod, safety case</li>
+</ul>
+</div>
+</div>
+
+</section>
+<section class="slide" id="demo" data-transition="fade" style="background:#1F1E1D;color:#F0EEE6;font-family:'DM Sans', Arial, sans-serif;padding:128px;display:grid;grid-template-columns:1fr 1fr;gap:64px;align-items:center">
+<div style="display:flex;flex-direction:column;gap:32px">
+<p style="font-size:28px;letter-spacing:4px;text-transform:uppercase;color:#E0A184">Live demo</p>
+<h2 style="font-family:'Source Serif 4', Georgia, serif;font-size:80px;font-weight:600;line-height:1.1">Give the quarry an order</h2>
+<p style="font-size:32px;line-height:1.4;color:#D8D3C8">Hold Space, speak, release. Every machine answers in its own voice.</p>
+</div>
+<div style="display:flex;flex-direction:column;gap:20px">
+<p style="font-size:36px;background:#2E2C2A;padding:24px 32px;border-radius:12px">“Excavator one, start digging.”</p>
+<p style="font-size:36px;background:#2E2C2A;padding:24px 32px;border-radius:12px">“Truck one, go unload at excavator one.”</p>
+<p style="font-size:36px;background:#2E2C2A;padding:24px 32px;border-radius:12px">“Truck one, start digging.” <span style="color:#E0A184">(it talks back)</span></p>
+<p style="font-size:36px;background:#2E2C2A;padding:24px 32px;border-radius:12px">“Everyone stop.”</p>
+</div>
+<p style="position:absolute;left:128px;bottom:64px;font-size:24px;color:#9A968D">Credits (CC-BY 4.0): quarry scan 3Dnovator · Komatsu HD465 drcrazzie · excavator Dioramass design</p>
+
+</section>
+
+</div><div id="hint">← → or click to navigate</div>
+<script>
+const s=[...document.querySelectorAll('.slide')];let i=0;
+function show(n){i=Math.max(0,Math.min(s.length-1,n));s.forEach((e,k)=>e.classList.toggle('on',k===i));}
+function fit(){const k=Math.min(innerWidth/1920,innerHeight/1080);document.getElementById('stage').style.transform=`translate(-50%,-50%) scale(${k})`;}
+addEventListener('keydown',e=>{if(['ArrowRight',' ','PageDown'].includes(e.key))show(i+1);if(['ArrowLeft','PageUp'].includes(e.key))show(i-1);});
+addEventListener('click',e=>show(e.clientX>innerWidth/2?i+1:i-1));addEventListener('resize',fit);fit();show(0);
+</script></body></html>

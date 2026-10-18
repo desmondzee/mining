@@ -142,7 +142,7 @@ def write_json(path, obj, compact=False):
             json.dump(obj, f, indent=2)
 
 
-PRESERVED_ASSETS = ("pano", "pano_source", "surround")
+PRESERVED_ASSETS = ("pano", "pano_source", "surround", "forest", "forest_instances", "ground_texture")
 
 
 def preserve_assets(out_dir, world, keys=PRESERVED_ASSETS):
@@ -181,6 +181,14 @@ def refresh_surround(out_dir, world):
         finally:
             SR.DATA_DIR = old
         world.setdefault("assets", {})["surround"] = "surround.glb"
+        try:                                                       # build() wrote forest/texture keys + environment
+            cur = json.loads((out_dir / "world.json").read_text())
+            world["assets"].update({k: cur["assets"].get(k) for k in ("forest", "forest_instances",
+                                                                       "ground_texture")})
+            if "environment" in cur:
+                world["environment"] = cur["environment"]
+        except Exception:  # noqa: BLE001
+            pass
         print(f"  surround: rebuilt {path.name} ({len(mesh.faces)} tris)")
     except Exception as e:  # noqa: BLE001 - surroundings are cosmetic
         print(f"  WARNING: surround.glb not rebuilt: {e}")

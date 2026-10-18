@@ -1,0 +1,24 @@
+diff --git a/isaac/sim/main.py b/isaac/sim/main.py
+index c899865..1a8df82 100644
+--- a/isaac/sim/main.py
++++ b/isaac/sim/main.py
+@@ -30,6 +30,8 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+     p.add_argument("--save-dir", default="")
+     p.add_argument("--save-every", type=int, default=0)
+     p.add_argument("--duration", type=float, default=0.0)
++    p.add_argument("--excavators", action="store_true")
++    p.add_argument("--radio-url", default=None)
+     args, _ = p.parse_known_args(argv)
+     return args
+ 
+@@ -95,6 +97,10 @@ def run(args: argparse.Namespace) -> None:
+         from isaac.sim.scene import IsaacRenderer
+ 
+         renderer = IsaacRenderer(app, sim, args, config)
++    if args.excavators:
++        from isaac.excavators import install
++
++        install(sim, None if args.dry_run else renderer, args.radio_url, cache=args.cache)
+ 
+     host, port = args.brain.rsplit(":", 1)
+     bridge = Bridge(host, int(port), sim.hello, sim.command).start()
