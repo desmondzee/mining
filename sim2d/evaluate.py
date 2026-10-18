@@ -1,6 +1,6 @@
 """Run a driver on fixed scenarios and report the comparison metrics.
 
-Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz] [--seed 900000]
+Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz] [--seed 900000] [--movers oracle|lidar]
 
 Evaluation seeds start at EVAL_SEED, far from the training seeds: datagen uses
 --seed + 0..episodes-1 (bc_v1/bc_v2: 0-1999, bc_v3: 50000-55999) and PPO
@@ -15,7 +15,7 @@ from typing import Callable, Dict
 
 import numpy as np
 
-from .env import DEFAULT_WORLDS, HOLD_ACTION, DriveEnv, make_env
+from .env import DEFAULT_MOVERS, DEFAULT_WORLDS, HOLD_ACTION, MOVER_MODES, DriveEnv, make_env
 
 Driver = Callable[[DriveEnv, Dict[str, np.ndarray]], int]
 
@@ -44,24 +44,28 @@ def npz_driver(path: str) -> Driver:
     return drive
 
 
-def run(driver: Driver, episodes: int = 20, seed: int = EVAL_SEED, worlds: str = DEFAULT_WORLDS) -> Dict[str, float]:
+def run(
+    driver: Driver, episodes: int = 20, seed: int = EVAL_SEED, worlds: str = DEFAULT_WORLDS, movers: str = DEFAULT_MOVERS
+) -> Dict[str, float]:
     rows = []
     t0 = time.perf_counter()
     ticks = 0
     for ep in range(episodes):
-        env = make_env(seed + ep, worlds)
+        env = make_env(seed + ep, worlds, movers)
         ob = env.reset()
         done, info = False, {}
         while not done:
             ob, _, done, info = env.step(driver(env, ob))
         ticks += env.ticks
-        rows.append((info["arrived"], info["collided"], env.stops, env.t, env.min_clear))
+        rows.append((info["arrived"], info["collided"], env.stops, env.t, env.min_clear, info["off_road"]))
     a = np.array(rows, dtype=float)
     ok = a[:, 0] == 1
     return {
         "episodes": episodes,
         "success": a[:, 0].mean(),
         "collision": a[:, 1].mean(),
+        "off_road": a[:, 5].mean(),
+        "timeout": ((a[:, 0] == 0) & (a[:, 1] == 0)).mean(),
         "stops_per_ep": a[:, 2].mean(),
         "time_to_goal_s": a[ok, 3].mean() if ok.any() else float("nan"),
         "near_miss_rate": (a[:, 4] < 2.0).mean(),
@@ -74,6 +78,7 @@ def main() -> None:
     p.add_argument("--episodes", type=int, default=20)
     p.add_argument("--policy", default="expert")
     p.add_argument("--worlds", default=DEFAULT_WORLDS)
+    p.add_argument("--movers", default=DEFAULT_MOVERS, choices=MOVER_MODES, help="what the safety mask knows about movers")
     p.add_argument("--seed", type=int, default=EVAL_SEED, help="first episode seed; use 1000 to reproduce the 2026-10-17 rows")
     args = p.parse_args()
     if args.policy == "expert":
@@ -85,7 +90,8 @@ def main() -> None:
 
         driver = load_driver(args.policy)
     print("%-16s %d-%d" % ("seeds", args.seed, args.seed + args.episodes - 1))
-    for k, v in run(driver, args.episodes, args.seed, args.worlds).items():
+    print("%-16s %s" % ("movers", args.movers))
+    for k, v in run(driver, args.episodes, args.seed, args.worlds, args.movers).items():
         print("%-16s %s" % (k, "%.3f" % v if isinstance(v, float) else v))
 
 

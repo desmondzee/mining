@@ -23,16 +23,21 @@ from .world import World, chaikin, load, resample
 
 # Worlds used for training and evaluation, comma-separated; worker processes inherit it.
 DEFAULT_WORLDS = os.environ.get("SIM2D_WORLDS", "default,quarry")
+# What the safety mask and the clearance feature know about movers; worker processes inherit it.
+#   oracle: true positions and velocities, predicted 3 s ahead
+#   lidar:  only lidar hits on movers, treated as still obstacles, as the brain does
+DEFAULT_MOVERS = os.environ.get("SIM2D_MOVERS", "oracle")
+MOVER_MODES = ("oracle", "lidar")
 
 
 _WORLD_CACHE: Dict[str, World] = {}
 
 
-def make_env(seed: Optional[int] = None, worlds: str = DEFAULT_WORLDS) -> "DriveEnv":
+def make_env(seed: Optional[int] = None, worlds: str = DEFAULT_WORLDS, movers: str = DEFAULT_MOVERS) -> "DriveEnv":
     for w in worlds.split(","):
         if w not in _WORLD_CACHE:
             _WORLD_CACHE[w] = load(w)
-    return DriveEnv([_WORLD_CACHE[w] for w in worlds.split(",")], seed=seed)
+    return DriveEnv([_WORLD_CACHE[w] for w in worlds.split(",")], seed=seed, movers=movers)
 
 MAX_V = 8.0
 MAX_STEER = math.radians(30.0)
@@ -69,6 +74,13 @@ HIT_MARGIN = 0.5  # m of gap a candidate path must keep from a mover it closes i
 REPLAN_AFTER = 4.0  # s of waiting before re-planning the route around movers
 MAX_TICKS = 1500
 HOLD_FREE_CLEAR = 15.0  # m: a stop with no mover nearer than this is idle waiting and costs reward
+
+# Lidar-only mover mode, the same rules as brain/brain/planning/driver.py.
+SCAN_RAYS = 240  # Unity / Isaac lidar: 240 columns over 120 deg
+SCAN_STEP = 0.5  # m between wall samples along a ray
+WALL_SNAP_M = 1.0  # hits this close to a blocked cell are taken as wall, not as a mover
+OBSTACLE_RADIUS = 4.0  # truck reach around a still obstacle point
+OBSTACLE_REACH = MAX_V * HORIZON + OBSTACLE_RADIUS + 2.0
 
 
 @dataclass
@@ -116,11 +128,16 @@ class DriveEnv:
         n_movers: Tuple[int, int] = (1, 3),
         n_peds: Tuple[int, int] = (2, 6),
         seed: Optional[int] = None,
+        movers: str = DEFAULT_MOVERS,
     ):
-        """Each reset picks one of `worlds` at random."""
+        """Each reset picks one of `worlds` at random. `movers` is one of MOVER_MODES."""
+        if movers not in MOVER_MODES:
+            raise ValueError(f"movers must be one of {MOVER_MODES}, not {movers!r}")
         self.worlds = [worlds] if isinstance(worlds, World) else list(worlds)
         self.n_movers = n_movers
         self.n_peds = n_peds
+        self.mover_info = movers
+        self.obstacles = np.zeros((0, 2))
         self.rng = np.random.default_rng(seed)
         self._roads = {w.name: [resample(r, 1.0) for r in w.roads if len(r) > 1] for w in self.worlds}
         self.world = self.worlds[0]
@@ -294,7 +311,16 @@ class DriveEnv:
         # over the edge is unsafe, so the only safe choice left is to stop.
         hit = self._off_road(fine[..., 0], fine[..., 1], fine_yaw, TRUCK_HALF_W + EDGE_MARGIN).any(axis=1)
         clear = np.full(N_CAND, np.inf)
-        if self.movers:
+        if self.mover_info == "lidar":
+            self.obstacles = obs = self.scan_obstacles()
+            if len(obs):
+                d = np.linalg.norm(pts[:, :, None, :] - obs[None, None], axis=-1)  # (C, T, P)
+                d0 = np.hypot(obs[:, 0] - tr.x, obs[:, 1] - tr.z) - OBSTACLE_RADIUS
+                # Still points: a path may not come closer than HIT_MARGIN, or than the point already is.
+                limit = OBSTACLE_RADIUS + np.minimum(HIT_MARGIN, d0 - 0.05)
+                hit |= (d < np.maximum(limit, 0.0)[None, None, :]).any(axis=(1, 2))
+                clear = d.min(axis=(1, 2)) - OBSTACLE_RADIUS
+        elif self.movers:
             times = RDT * np.arange(1, N_ROLL + 1)
             mp = np.array([[m.x, m.z] for m in self.movers])
             mv = np.array([[m.vx, m.vz] for m in self.movers])
@@ -327,9 +353,13 @@ class DriveEnv:
         yy, xx = np.mgrid[0 : w.n, 0 : w.n]
         cx, cz = w.ox + (xx + 0.5) * w.cell, w.oz + (yy + 0.5) * w.cell
         extra = np.zeros((w.n, w.n), dtype=bool)
-        for m in self.movers:
-            if math.hypot(m.x - tr.x, m.z - tr.z) < 40:
-                extra |= (cx - m.x) ** 2 + (cz - m.z) ** 2 < (TRUCK_R + m.radius) ** 2
+        if self.mover_info == "lidar":
+            for ox, oz in self.obstacles:
+                extra |= (cx - ox) ** 2 + (cz - oz) ** 2 < OBSTACLE_RADIUS**2
+        else:
+            for m in self.movers:
+                if math.hypot(m.x - tr.x, m.z - tr.z) < 40:
+                    extra |= (cx - m.x) ** 2 + (cz - m.z) ** 2 < (TRUCK_R + m.radius) ** 2
         tr_r, tr_c = w.cell_of(tr.x, tr.z)
         extra[tr_r, tr_c] = False
         path = w.astar((tr.x, tr.z), tuple(self.route[-1]), extra_blocked=extra)
@@ -366,6 +396,36 @@ class DriveEnv:
     def expert_action(self) -> int:
         score = np.where(self.cand_hit, np.inf, self.expert_score)
         return int(np.argmin(score)) if np.isfinite(score).any() else HOLD_ACTION
+
+    def scan_hits(self) -> np.ndarray:
+        """World x/z of lidar rays that hit a mover before a wall, within OBSTACLE_REACH (before the wall filter)."""
+        tr, w = self.truck, self.world
+        if not self.movers:
+            return np.zeros((0, 2))
+        ang = tr.yaw - LIDAR_FOV / 2 + (np.arange(SCAN_RAYS) + 0.5) * LIDAR_FOV / SCAN_RAYS
+        u = np.stack([np.sin(ang), np.cos(ang)], axis=1)  # (R, 2)
+        c = np.array([[m.x - tr.x, m.z - tr.z] for m in self.movers])  # (M, 2)
+        r = np.array([m.radius for m in self.movers])
+        proj = u @ c.T  # (R, M)
+        disc = proj**2 - (np.sum(c**2, axis=1) - r**2)[None]
+        t = np.where(disc >= 0, proj - np.sqrt(np.maximum(disc, 0)), np.inf)
+        t = np.where(t > 0, t, np.inf).min(axis=1)  # first mover along each ray
+        steps = np.arange(SCAN_STEP, OBSTACLE_REACH + SCAN_STEP, SCAN_STEP)
+        blocked = w.blocked_at(tr.x + u[:, :1] * steps[None], tr.z + u[:, 1:] * steps[None])
+        wall = np.where(blocked.any(axis=1), steps[blocked.argmax(axis=1)], np.inf)
+        keep = (t < wall) & (t < OBSTACLE_REACH)
+        return np.array([tr.x, tr.z]) + u[keep] * t[keep, None]
+
+    def scan_obstacles(self) -> np.ndarray:
+        """Mover points as brain.planning.driver.split_lidar returns them: wall hits dropped, rounded to 1 m."""
+        p = self.scan_hits()
+        if not len(p):
+            return np.zeros((0, 2))
+        wall = np.zeros(len(p), dtype=bool)
+        for ox, oz in ((0, 0), (WALL_SNAP_M, 0), (-WALL_SNAP_M, 0), (0, WALL_SNAP_M), (0, -WALL_SNAP_M)):
+            wall |= self.world.blocked_at(p[:, 0] + ox, p[:, 1] + oz)
+        p = p[~wall]
+        return np.unique(np.round(p), axis=0) if len(p) else np.zeros((0, 2))
 
     # ---- observation ----
     def lidar(self) -> np.ndarray:

@@ -64,6 +64,42 @@ def test_brain_features_equal_sim2d_observe(quarry, start, goal, ticks):
     assert np.array_equal(seen["mask"], ob["mask"])
 
 
+@pytest.mark.parametrize("seed,ticks", [(3, 40), (7, 120), (11, 200)])
+def test_lidar_movers_mask_equals_brain(quarry, seed, ticks):
+    """With movers="lidar", sim2d builds the mask and clearance from the same lidar hits as the brain."""
+    world, nav = quarry
+    env = sim.DriveEnv(world, n_movers=(3, 3), n_peds=(6, 6), seed=seed, movers="lidar")
+    env.reset("parking", "ore_1", load=0.4)
+    for _ in range(ticks):
+        env.step(env.expert_action())
+    ob = env.observe()
+    tr = env.truck
+    hits = env.scan_hits()
+    assert len(env.obstacles) or not len(hits)
+    # Lidar points in the sensor frame (right, up, forward), 1.5 m above the ground under them.
+    rel = sim.ego(hits, tr.x, tr.z, tr.yaw)
+    up = nav.ground_at(hits[:, 0], hits[:, 1]) - nav.ground_at(tr.x, tr.z) - driver.LIDAR_HEIGHT + 1.5
+    points = np.stack([rel[:, 1], up, rel[:, 0]], axis=1) if len(hits) else None
+    seen = {}
+
+    def capture(obs, cands, mask):
+        seen.update(cands=cands, mask=mask)
+        return np.zeros(len(cands))
+
+    decision, _ = driver.drive(
+        nav, env.route, env.route_idx, tr.x, tr.z, math.degrees(tr.yaw), tr.v, tr.steer, points, capture, load=tr.load
+    )
+    np.testing.assert_allclose(np.sort(decision.obstacles, axis=0), np.sort(env.obstacles, axis=0))
+    np.testing.assert_allclose(seen["cands"], ob["cands"], atol=1e-4)
+    assert np.array_equal(seen["mask"], ob["mask"])
+
+
+def test_oracle_is_the_default_mover_mode():
+    assert sim.DEFAULT_MOVERS == "oracle" or os.environ.get("SIM2D_MOVERS")
+    with pytest.raises(ValueError):
+        sim.DriveEnv(load("default"), movers="camera")
+
+
 def test_numpy_scorer_equals_torch(tmp_path):
     torch = pytest.importorskip("torch")
     from brain.planning.export_scorer import export
