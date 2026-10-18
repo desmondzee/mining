@@ -50,9 +50,10 @@ def main() -> None:
     with Pool(args.workers) as pool:
         parts = pool.map(episode, jobs)
     obs, cands, masks, labels = (np.concatenate(x) for x in zip(*parts))
+    trips = np.concatenate([np.full(len(part[3]), i, np.int32) for i, part in enumerate(parts)])
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     # Uncompressed: zlib on ~1M samples is single-threaded and takes minutes.
-    np.savez(args.out, obs=obs, cands=cands.astype(np.float16), masks=masks, labels=labels)
+    np.savez(args.out, obs=obs, cands=cands.astype(np.float16), masks=masks, labels=labels, trips=trips)
     print("saved %d samples from %d episodes to %s" % (len(labels), args.episodes, args.out))
 
 

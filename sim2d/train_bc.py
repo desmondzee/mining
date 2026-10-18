@@ -33,9 +33,18 @@ def main() -> None:
     masks = torch.from_numpy(d["masks"])
     labels = torch.from_numpy(d["labels"]).long()
     n = len(labels)
-    perm = torch.randperm(n, generator=torch.Generator().manual_seed(0))
-    n_val = max(1, n // 10)
-    val, tr = perm[:n_val], perm[n_val:]
+    gen = torch.Generator().manual_seed(0)
+    if "trips" in d:
+        # Hold out whole trips: ticks of one trip are near-identical, so a tick split leaks.
+        trips = torch.from_numpy(d["trips"]).long()
+        n_trips = int(trips.max()) + 1
+        held = torch.zeros(n_trips, dtype=torch.bool)
+        held[torch.randperm(n_trips, generator=gen)[: max(1, n_trips // 10)]] = True
+        val, tr = torch.nonzero(held[trips]).squeeze(1), torch.nonzero(~held[trips]).squeeze(1)
+    else:
+        perm = torch.randperm(n, generator=gen)
+        val, tr = perm[: max(1, n // 10)], perm[max(1, n // 10) :]
+    n_val = len(val)
 
     model = PathScorer(width=args.width).to(device)
     n_params = sum(p.numel() for p in model.parameters())
