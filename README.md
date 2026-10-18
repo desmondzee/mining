@@ -1,4 +1,52 @@
-# mining
+<p align="center"><img src="assets/brand/r2-logo.svg" alt="R² · Rocky Robotics" width="520"></p>
+
+# R² · Rocky Robotics: Mining autonomy
+
+**🥇 1st place, [Physical AI Hack London](https://luma.com/physicalaihack) (Reasoning Project), 17 Oct 2026**
+
+Retrofit autonomy for quarry haul trucks and excavators:
+
+- **Sensor pod (concept):** cameras, lidar and compute that bolt onto the trucks a quarry already owns
+- **Driving policy:** route planner with a rule-based or learned path scorer, using camera, depth and lidar
+- **Voice-radio operations:** say "Truck one, go unload at excavator one" and the machines act and answer back
+- **Sims from drone scans:** a drone scan of a real quarry becomes a simulator with haul roads, berms and loading points (Unity and NVIDIA Isaac Sim)
+
+## Demo
+
+| | |
+|---|---|
+| Final demo: sim, dashboard, trucks | [youtu.be/9VnViBXvA9Q](https://youtu.be/9VnViBXvA9Q) |
+| Pitch + voice-radio demo (1 min, recorded during the hack) | [youtu.be/mcdJXTuMu2Y](https://youtu.be/mcdJXTuMu2Y) |
+| Pitch deck | [presentation/deck.html](presentation/deck.html) (download and open in a browser) |
+
+### Try it locally (no hardware)
+
+```bash
+cd brain && uv sync && uv run brain     # terminal 1: brain + dashboard on http://localhost:8080
+cd brain && uv run fakesim              # terminal 2: simulated trucks
+radio/run.sh                            # terminal 3: voice radio on http://localhost:8090, 3D quarry view on /view
+```
+
+The radio needs an ElevenLabs key for speech (`zsh radio/add_keys.sh`); an OpenAI key enables free-form commands. Without the brain running, the radio falls back to its own mock trucks. Full setup: [radio/README.md](radio/README.md). Running the real stack on the GPU server: see [Run on watson](#run-on-watson) below and [isaac/sim/README.md](isaac/sim/README.md).
+
+## Team
+
+| | Owned |
+|---|---|
+| **Desmond Zee** ([@desmondzee](https://github.com/desmondzee)) | Brain server and driving policy, sim protocol, dashboard and video streaming, Unity project, Isaac Sim port, pedestrians, radio hardening |
+| **Meiru Zhang** ([@meiru-cam](https://github.com/meiru-cam)) | Learned planner (2D sim, BC + PPO), A* benchmark, point-of-no-return risk monitor |
+| **Pushkar Ambastha** ([@Pushkar1853](https://github.com/Pushkar1853)) | Object detection on the truck cameras |
+| **Vakhtang (Vato) Inasaridze** ([@termvato](https://github.com/termvato)) | Drone-scan → sim world generation and mine design spec, voice radio, 3D ops view, excavator and truck animation, branding, business case |
+
+Third-party assets (CC-BY 4.0): quarry scan by 3Dnovator, Komatsu HD465 by drcrazzie, excavator by Dioramass design; see [assets/models/CREDITS.md](assets/models/CREDITS.md).
+
+Side notes: market and unit economics in [reports/](reports/) (business case and sourced financials).
+
+License: proprietary, all rights reserved; see [LICENSE](LICENSE).
+
+---
+
+## Architecture
 
 Autonomous haul trucks in a simulated quarry, camera feeds streamed to a shared website. Parameters: [spec.md](spec.md). Rows with a `Source` are enforced by `brain/tests/test_spec.py`.
 
