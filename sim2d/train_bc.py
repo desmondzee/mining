@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .model import PathScorer, save
+from .model import PathScorer, save, stack_index
 
 
 def main() -> None:
@@ -24,6 +24,7 @@ def main() -> None:
     p.add_argument("--width", type=int, default=256)
     p.add_argument("--batch", type=int, default=512)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--stack", type=int, default=1, help="scene frames per sample, newest first (needs trip ids)")
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -46,7 +47,8 @@ def main() -> None:
         val, tr = perm[: max(1, n // 10)], perm[max(1, n // 10) :]
     n_val = len(val)
 
-    model = PathScorer(width=args.width).to(device)
+    frames = torch.from_numpy(stack_index(d["trips"], args.stack)) if args.stack > 1 else None
+    model = PathScorer(width=args.width, stack=args.stack).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print("samples %d (val %d), params %.2fM, device %s" % (n, n_val, n_params / 1e6, device))
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -58,7 +60,8 @@ def main() -> None:
             idx = idx[torch.randperm(len(idx))]
         for i in range(0, len(idx), args.batch):
             b = idx[i : i + args.batch]
-            yield obs[b].to(device), cands[b].to(device), masks[b].to(device), labels[b].to(device)
+            o = obs[frames[b]].flatten(1) if frames is not None else obs[b]
+            yield o.to(device), cands[b].to(device), masks[b].to(device), labels[b].to(device)
 
     for epoch in range(args.epochs):
         t0 = time.perf_counter()

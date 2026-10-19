@@ -126,3 +126,14 @@ def test_tracked_mode_estimates_cluster_velocity():
         v = env._track(np.vstack([blob + [0.3 * k, 0.0], still]))
     np.testing.assert_allclose(v[:3], [[3.0, 0.0]] * 3, atol=0.1)
     np.testing.assert_allclose(v[3], [0.0, 0.0])
+
+
+def test_stack_index_stays_inside_each_trip():
+    from sim2d.model import STACK_GAP, stack_index
+
+    trips = np.array([0] * 5 + [1] * 8)
+    idx = stack_index(trips, 3)
+    assert idx[0].tolist() == [0, 0, 0]
+    assert idx[4].tolist() == [4, 4 - STACK_GAP, 0]
+    assert idx[5].tolist() == [5, 5, 5]
+    assert idx[12].tolist() == [12, 12 - STACK_GAP, 12 - 2 * STACK_GAP]
