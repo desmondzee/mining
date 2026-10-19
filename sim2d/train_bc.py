@@ -34,6 +34,10 @@ def main() -> None:
     masks = torch.from_numpy(d["masks"])
     labels = torch.from_numpy(d["labels"]).long()
     n = len(labels)
+    # A label the mask rules out has a -1e9 logit and swamps the loss; drop such rows.
+    learnable = masks[torch.arange(n), labels] | ~masks.any(dim=1)
+    if not learnable.all():
+        print("dropped %d samples whose label is masked out" % int((~learnable).sum()))
     gen = torch.Generator().manual_seed(0)
     if "trips" in d:
         # Hold out whole trips: ticks of one trip are near-identical, so a tick split leaks.
@@ -41,9 +45,10 @@ def main() -> None:
         n_trips = int(trips.max()) + 1
         held = torch.zeros(n_trips, dtype=torch.bool)
         held[torch.randperm(n_trips, generator=gen)[: max(1, n_trips // 10)]] = True
-        val, tr = torch.nonzero(held[trips]).squeeze(1), torch.nonzero(~held[trips]).squeeze(1)
+        val, tr = torch.nonzero(held[trips] & learnable).squeeze(1), torch.nonzero(~held[trips] & learnable).squeeze(1)
     else:
         perm = torch.randperm(n, generator=gen)
+        perm = perm[learnable[perm]]
         val, tr = perm[: max(1, n // 10)], perm[max(1, n // 10) :]
     n_val = len(val)
 

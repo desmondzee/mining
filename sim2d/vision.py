@@ -97,7 +97,10 @@ def main() -> None:
     n_trips = int(trips.max()) + 1
     held = torch.zeros(n_trips, dtype=torch.bool)
     held[torch.randperm(n_trips, generator=gen)[: max(1, n_trips // 10)]] = True
-    val, tr = torch.nonzero(held[trips]).squeeze(1), torch.nonzero(~held[trips]).squeeze(1)
+    learnable = masks[torch.arange(len(labels)), labels] | ~masks.any(dim=1)
+    print("dropped %d samples whose label is masked out" % int((~learnable).sum()), flush=True)
+    val = torch.nonzero(held[trips] & learnable).squeeze(1)
+    tr = torch.nonzero(~held[trips] & learnable).squeeze(1)
 
     model = VisionScorer(width=args.width, stack=args.stack).to(device)
     n_params = sum(q.numel() for q in model.parameters())

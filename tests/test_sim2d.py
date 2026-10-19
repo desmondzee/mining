@@ -137,3 +137,17 @@ def test_stack_index_stays_inside_each_trip():
     assert idx[4].tolist() == [4, 4 - STACK_GAP, 0]
     assert idx[5].tolist() == [5, 5, 5]
     assert idx[12].tolist() == [12, 12 - STACK_GAP, 12 - 2 * STACK_GAP]
+
+
+def test_privileged_label_is_inside_the_mask():
+    from sim2d.env import DriveEnv
+    from sim2d.world import load
+
+    env = DriveEnv(load("quarry"), n_movers=(3, 3), n_peds=(6, 6), seed=5, movers="lidar")
+    ob = env.reset()
+    for _ in range(300):
+        a = env.privileged_action()
+        assert ob["mask"][a] or not ob["mask"].any()
+        ob, _, done, _ = env.step(a)
+        if done:
+            ob = env.reset()

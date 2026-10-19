@@ -361,10 +361,10 @@ class DriveEnv:
         # The privileged teacher: the same expert with true mover state, whatever the mask mode is.
         if self.mover_info != "oracle" and self.movers:
             o_hit, o_clear = self._oracle_movers(pts)
-            self.oracle_hit = o_hit
+            self.oracle_hit, self.oracle_clear = o_hit, o_clear
             self.oracle_score = base + 10 * np.maximum(0, 1 - o_clear / 10)
         else:
-            self.oracle_hit = np.zeros(N_CAND, dtype=bool)
+            self.oracle_hit, self.oracle_clear = np.zeros(N_CAND, dtype=bool), clear
             self.oracle_score = self.expert_score
 
     def _oracle_movers(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -433,9 +433,16 @@ class DriveEnv:
         return int(np.argmin(score)) if np.isfinite(score).any() else HOLD_ACTION
 
     def privileged_action(self) -> int:
-        """The expert's choice with true mover state, among options that the mode's own mask also allows."""
+        """The expert's choice with true mover state, among options that the mode's own mask also allows.
+
+        When the true state rules out every option the mask allows, take the allowed option that stays farthest
+        from the predicted movers: HOLD may itself be masked out, and a label outside the mask cannot be learned.
+        """
         score = np.where(self.cand_hit | self.oracle_hit, np.inf, self.oracle_score)
-        return int(np.argmin(score)) if np.isfinite(score).any() else HOLD_ACTION
+        if np.isfinite(score).any():
+            return int(np.argmin(score))
+        allowed = np.flatnonzero(~self.cand_hit)
+        return int(allowed[np.argmax(self.oracle_clear[allowed])]) if len(allowed) else HOLD_ACTION
 
     def scan_hits(self) -> np.ndarray:
         """World x/z of lidar rays that hit a mover before a wall, within OBSTACLE_REACH (before the wall filter)."""
