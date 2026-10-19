@@ -25,9 +25,10 @@ from .world import World, chaikin, load, resample
 DEFAULT_WORLDS = os.environ.get("SIM2D_WORLDS", "default,quarry")
 # What the safety mask and the clearance feature know about movers; worker processes inherit it.
 #   oracle: true positions and velocities, predicted 3 s ahead
-#   lidar:  only lidar hits on movers, treated as still obstacles, as the brain does
+#   lidar:   only lidar hits on movers, treated as still obstacles, as the brain does
+#   tracked: the same lidar hits, clustered and tracked across ticks, each cluster predicted 3 s ahead at its velocity
 DEFAULT_MOVERS = os.environ.get("SIM2D_MOVERS", "oracle")
-MOVER_MODES = ("oracle", "lidar")
+MOVER_MODES = ("oracle", "lidar", "tracked")
 # Episode seeds kept for tests: the 2026-10-17 rows (1000+) and evaluate.EVAL_SEED (900000+).
 TEST_SEEDS = (range(1000, 1100), range(900_000, 1_000_000))
 
@@ -90,6 +91,12 @@ SCAN_RAYS = 240  # Unity / Isaac lidar: 240 columns over 120 deg
 SCAN_STEP = 0.5  # m between wall samples along a ray
 WALL_SNAP_M = 1.0  # hits this close to a blocked cell are taken as wall, not as a mover
 OBSTACLE_RADIUS = 4.0  # truck reach around a still obstacle point
+CLUSTER_GAP = 2.5  # m: lidar points closer than this belong to one object
+TRACK_GATE = 3.0  # m: largest jump between ticks that still matches a cluster to a track
+TRACK_SMOOTH = 0.7  # weight of the old velocity in each update
+TRACK_MIN_V = 0.5  # m/s: slower tracks count as still; the visible face of a still object shifts as the truck moves
+TRACK_MAX_V = 8.0  # m/s
+TRACK_KEEP = 5  # ticks a lost track is kept
 OBSTACLE_REACH = MAX_V * HORIZON + OBSTACLE_RADIUS + 2.0
 
 
@@ -148,6 +155,8 @@ class DriveEnv:
         self.n_peds = n_peds
         self.mover_info = movers
         self.obstacles = np.zeros((0, 2))
+        self.obstacle_v = np.zeros((0, 2))
+        self._tracks: List[list] = []
         self.rng = np.random.default_rng(seed)
         self._roads = {w.name: [resample(r, 1.0) for r in w.roads if len(r) > 1] for w in self.worlds}
         self.world = self.worlds[0]
@@ -181,6 +190,7 @@ class DriveEnv:
         self.stops = 0
         self.replans = 0
         self._was_moving = False
+        self._tracks = []
         self._plan()
         return self.observe()
 
@@ -321,26 +331,24 @@ class DriveEnv:
         # over the edge is unsafe, so the only safe choice left is to stop.
         hit = self._off_road(fine[..., 0], fine[..., 1], fine_yaw, TRUCK_HALF_W + EDGE_MARGIN).any(axis=1)
         clear = np.full(N_CAND, np.inf)
-        if self.mover_info == "lidar":
+        if self.mover_info in ("lidar", "tracked"):
             self.obstacles = obs = self.scan_obstacles()
             if len(obs):
-                d = np.linalg.norm(pts[:, :, None, :] - obs[None, None], axis=-1)  # (C, T, P)
+                if self.mover_info == "tracked":
+                    self.obstacle_v = vel = self._track(obs)
+                    times = RDT * np.arange(1, N_ROLL + 1)
+                    fut = obs[None, :, :] + vel[None, :, :] * times[:, None, None]  # (T, P, 2)
+                    d = np.linalg.norm(pts[:, :, None, :] - fut[None], axis=-1)  # (C, T, P)
+                else:
+                    d = np.linalg.norm(pts[:, :, None, :] - obs[None, None], axis=-1)  # (C, T, P)
                 d0 = np.hypot(obs[:, 0] - tr.x, obs[:, 1] - tr.z) - OBSTACLE_RADIUS
                 # Still points: a path may not come closer than HIT_MARGIN, or than the point already is.
                 limit = OBSTACLE_RADIUS + np.minimum(HIT_MARGIN, d0 - 0.05)
                 hit |= (d < np.maximum(limit, 0.0)[None, None, :]).any(axis=(1, 2))
                 clear = d.min(axis=(1, 2)) - OBSTACLE_RADIUS
         elif self.movers:
-            times = RDT * np.arange(1, N_ROLL + 1)
-            mp = np.array([[m.x, m.z] for m in self.movers])
-            mv = np.array([[m.vx, m.vz] for m in self.movers])
-            fut = mp[:, None, :] + mv[:, None, :] * times[None, :, None]  # (M, T, 2)
-            reach = TRUCK_R + np.array([m.radius for m in self.movers])
-            d = np.linalg.norm(pts[:, None, :, :] - fut[None], axis=-1) - reach[None, :, None]  # (C, M, T)
-            d0 = np.linalg.norm(mp - [tr.x, tr.z], axis=1) - reach
-            # Too close and still closing in. Moving away from a near vehicle is allowed.
-            hit |= ((d < HIT_MARGIN) & (d < d0[None, :, None] - 0.05)).any(axis=(1, 2))
-            clear = d.min(axis=(1, 2))
+            o_hit, clear = self._oracle_movers(pts)
+            hit |= o_hit
         self.cand_pts, self.cand_hit, self.cand_clear = pts, hit, clear
 
         ni = self._nearest_idx()
@@ -348,13 +356,30 @@ class DriveEnv:
         end = pts[:, -1, :]
         window = self.route[ni : ni + 30]
         cross = np.linalg.norm(end[:, None, :] - window[None], axis=-1).min(axis=1)
-        self.expert_score = (
-            np.linalg.norm(end - tgt, axis=1)
-            + 1.5 * cross
-            + 4 * np.abs(CAND_STEER - tr.steer)
-            - 1.2 * CAND_SPEED
-            + 10 * np.maximum(0, 1 - clear / 10)
-        )
+        base = np.linalg.norm(end - tgt, axis=1) + 1.5 * cross + 4 * np.abs(CAND_STEER - tr.steer) - 1.2 * CAND_SPEED
+        self.expert_score = base + 10 * np.maximum(0, 1 - clear / 10)
+        # The privileged teacher: the same expert with true mover state, whatever the mask mode is.
+        if self.mover_info != "oracle" and self.movers:
+            o_hit, o_clear = self._oracle_movers(pts)
+            self.oracle_hit = o_hit
+            self.oracle_score = base + 10 * np.maximum(0, 1 - o_clear / 10)
+        else:
+            self.oracle_hit = np.zeros(N_CAND, dtype=bool)
+            self.oracle_score = self.expert_score
+
+    def _oracle_movers(self, pts: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Unsafe flag and clearance per candidate from the true mover positions and velocities, predicted ahead."""
+        tr = self.truck
+        times = RDT * np.arange(1, N_ROLL + 1)
+        mp = np.array([[m.x, m.z] for m in self.movers])
+        mv = np.array([[m.vx, m.vz] for m in self.movers])
+        fut = mp[:, None, :] + mv[:, None, :] * times[None, :, None]  # (M, T, 2)
+        reach = TRUCK_R + np.array([m.radius for m in self.movers])
+        d = np.linalg.norm(pts[:, None, :, :] - fut[None], axis=-1) - reach[None, :, None]  # (C, M, T)
+        d0 = np.linalg.norm(mp - [tr.x, tr.z], axis=1) - reach
+        # Too close and still closing in. Moving away from a near vehicle is allowed.
+        hit = ((d < HIT_MARGIN) & (d < d0[None, :, None] - 0.05)).any(axis=(1, 2))
+        return hit, d.min(axis=(1, 2))
 
     def _replan_around(self) -> bool:
         """The truck has waited too long: plan a new A* route that treats nearby movers as walls."""
@@ -363,7 +388,7 @@ class DriveEnv:
         yy, xx = np.mgrid[0 : w.n, 0 : w.n]
         cx, cz = w.ox + (xx + 0.5) * w.cell, w.oz + (yy + 0.5) * w.cell
         extra = np.zeros((w.n, w.n), dtype=bool)
-        if self.mover_info == "lidar":
+        if self.mover_info in ("lidar", "tracked"):
             for ox, oz in self.obstacles:
                 extra |= (cx - ox) ** 2 + (cz - oz) ** 2 < OBSTACLE_RADIUS**2
         else:
@@ -407,6 +432,11 @@ class DriveEnv:
         score = np.where(self.cand_hit, np.inf, self.expert_score)
         return int(np.argmin(score)) if np.isfinite(score).any() else HOLD_ACTION
 
+    def privileged_action(self) -> int:
+        """The expert's choice with true mover state, among options that the mode's own mask also allows."""
+        score = np.where(self.cand_hit | self.oracle_hit, np.inf, self.oracle_score)
+        return int(np.argmin(score)) if np.isfinite(score).any() else HOLD_ACTION
+
     def scan_hits(self) -> np.ndarray:
         """World x/z of lidar rays that hit a mover before a wall, within OBSTACLE_REACH (before the wall filter)."""
         tr, w = self.truck, self.world
@@ -436,6 +466,48 @@ class DriveEnv:
             wall |= self.world.blocked_at(p[:, 0] + ox, p[:, 1] + oz)
         p = p[~wall]
         return np.unique(np.round(p), axis=0) if len(p) else np.zeros((0, 2))
+
+    def _track(self, obs: np.ndarray) -> np.ndarray:
+        """Velocity per obstacle point: cluster the points, match clusters to last tick's tracks, smooth the motion."""
+        n = len(obs)
+        label = -np.ones(n, dtype=int)
+        near = np.linalg.norm(obs[:, None] - obs[None], axis=-1) < CLUSTER_GAP
+        k = 0
+        for i in range(n):
+            if label[i] >= 0:
+                continue
+            stack, label[i] = [i], k
+            while stack:
+                j = stack.pop()
+                for m in np.flatnonzero(near[j] & (label < 0)):
+                    label[m] = k
+                    stack.append(m)
+            k += 1
+        cents = np.array([obs[label == c].mean(axis=0) for c in range(k)])
+        tracks, used = [], set()
+        vel_c = np.zeros((k, 2))
+        for c in range(k):
+            best, best_d = None, TRACK_GATE
+            for t, (pos, v, _) in enumerate(self._tracks):
+                dist = float(np.hypot(*(cents[c] - (pos + v * DT))))
+                if t not in used and dist < best_d:
+                    best, best_d = t, dist
+            if best is None:
+                v = np.zeros(2)
+            else:
+                used.add(best)
+                pos, v_old, _ = self._tracks[best]
+                v = TRACK_SMOOTH * v_old + (1 - TRACK_SMOOTH) * (cents[c] - pos) / DT
+            speed = float(np.hypot(*v))
+            v = v * min(1.0, TRACK_MAX_V / speed) if speed > 0 else v
+            vel_c[c] = v if speed >= TRACK_MIN_V else 0.0
+            tracks.append([cents[c], v, 0])
+        # Keep unmatched tracks a few ticks, so a cluster hidden for a moment keeps its velocity.
+        for t, (pos, v, age) in enumerate(self._tracks):
+            if t not in used and age < TRACK_KEEP:
+                tracks.append([pos + v * DT, v, age + 1])
+        self._tracks = tracks
+        return vel_c[label]
 
     # ---- observation ----
     def lidar(self) -> np.ndarray:

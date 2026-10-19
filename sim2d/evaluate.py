@@ -1,6 +1,6 @@
 """Run a driver on fixed scenarios and report the comparison metrics.
 
-Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|model.pt|model.npz] [--seed 900000] [--movers oracle|lidar]
+Usage: python -m sim2d.evaluate [--episodes 20] [--policy expert|privileged|random|straight|greedy|model.pt|model.npz] [--seed 900000] [--movers oracle|lidar]
 
 Evaluation seeds start at EVAL_SEED, far from the training seeds: datagen uses
 --seed + 0..episodes-1 (bc_v1/bc_v2: 0-1999, bc_v3: 50000-55999) and PPO
@@ -17,7 +17,10 @@ from typing import Callable, Dict
 
 import numpy as np
 
-from .env import DEFAULT_MOVERS, DEFAULT_WORLDS, HOLD_ACTION, MOVER_MODES, DriveEnv, make_env
+from .env import (
+    CAND_SPEED, CAND_STEER, DEFAULT_MOVERS, DEFAULT_WORLDS, HOLD_ACTION, HORIZON, MAX_V, MOVER_MODES, ROUTE_STEP, DriveEnv,
+    make_env,
+)
 
 Driver = Callable[[DriveEnv, Dict[str, np.ndarray]], int]
 
@@ -26,6 +29,35 @@ EVAL_SEED = 900000
 
 def expert_driver(env: DriveEnv, ob) -> int:
     return env.expert_action()
+
+
+def picker_driver(kind: str) -> Driver:
+    """Learning-free pickers over the same safe set, to measure what the route and the mask do alone.
+
+    random:   a random safe option
+    straight: the fastest safe option, then the one with the least steering
+    greedy:   the safe option whose 3 s end point is nearest the route point MAX_V * HORIZON ahead
+    """
+    rng = np.random.default_rng(0)
+    straight_key = -CAND_SPEED * 10.0 + np.abs(CAND_STEER)
+    ahead = int(round(MAX_V * HORIZON / ROUTE_STEP))
+
+    def drive(env: DriveEnv, ob) -> int:
+        safe = np.flatnonzero(ob["mask"])
+        if not len(safe):
+            return HOLD_ACTION
+        if kind == "random":
+            return int(rng.choice(safe))
+        if kind == "straight":
+            return int(safe[np.argmin(straight_key[safe])])
+        target = env.route[min(env.route_idx + ahead, len(env.route) - 1)]
+        ends = env.cand_pts[safe, -1]
+        return int(safe[np.argmin(np.hypot(ends[:, 0] - target[0], ends[:, 1] - target[1]))])
+
+    return drive
+
+
+PICKERS = ("random", "straight", "greedy")
 
 
 def npz_driver(path: str) -> Driver:
@@ -85,6 +117,10 @@ def main() -> None:
     args = p.parse_args()
     if args.policy == "expert":
         driver = expert_driver
+    elif args.policy == "privileged":
+        driver = lambda env, ob: env.privileged_action()  # noqa: E731
+    elif args.policy in PICKERS:
+        driver = picker_driver(args.policy)
     elif args.policy.endswith(".npz"):
         driver = npz_driver(args.policy)
     else:

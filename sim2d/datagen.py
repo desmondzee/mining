@@ -19,14 +19,14 @@ from .env import check_train_seeds, make_env
 
 
 def episode(args):
-    seed, explore = args
+    seed, explore, label_by = args
     env = make_env(seed)
     rng = np.random.default_rng(seed + 1)
     ob = env.reset()
     obs, cands, masks, labels = [], [], [], []
     done = False
     while not done:
-        label = env.expert_action()
+        label = env.privileged_action() if label_by == "privileged" else env.expert_action()
         obs.append(ob["obs"])
         cands.append(ob["cands"])
         masks.append(ob["mask"])
@@ -45,8 +45,12 @@ def main() -> None:
     p.add_argument("--workers", type=int, default=os.cpu_count())
     p.add_argument("--seed", type=int, default=10000)
     p.add_argument("--out", default="data/bc.npz")
+    p.add_argument(
+        "--label", default="expert", choices=("expert", "privileged"),
+        help="privileged: the expert with true mover state labels, while the truck drives with SIM2D_MOVERS",
+    )
     args = p.parse_args()
-    jobs = [(args.seed + i, args.explore) for i in range(args.episodes)]
+    jobs = [(args.seed + i, args.explore, args.label) for i in range(args.episodes)]
     check_train_seeds([j[0] for j in jobs])
     with Pool(args.workers) as pool:
         parts = pool.map(episode, jobs)

@@ -112,3 +112,17 @@ def test_training_seeds_must_not_overlap_test_seeds():
     for seeds in (range(0, 2000), range(1000, 1030), [950000]):
         with pytest.raises(ValueError):
             check_train_seeds(seeds)
+
+
+def test_tracked_mode_estimates_cluster_velocity():
+    from sim2d.env import DriveEnv
+    from sim2d.world import load
+
+    env = DriveEnv(load("default"), n_movers=(0, 0), n_peds=(0, 0), seed=0, movers="tracked")
+    env.reset()
+    blob = np.array([[0.0, 0.0], [1.0, 0.0], [0.0, 1.0]])
+    still = np.array([[40.0, 40.0]])
+    for k in range(30):
+        v = env._track(np.vstack([blob + [0.3 * k, 0.0], still]))
+    np.testing.assert_allclose(v[:3], [[3.0, 0.0]] * 3, atol=0.1)
+    np.testing.assert_allclose(v[3], [0.0, 0.0])
