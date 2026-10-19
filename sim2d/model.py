@@ -11,7 +11,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .env import CAND_DIM, HOLD_ACTION, OBS_DIM
+from .env import CAND_DIM, HOLD_ACTION, N_RAYS, OBS_DIM
 
 STACK_GAP = 3  # ticks between stacked scene frames (0.3 s)
 
@@ -24,12 +24,25 @@ def stack_index(trips: np.ndarray, stack: int) -> np.ndarray:
     return np.stack([np.maximum(i - k * STACK_GAP, first) for k in range(stack)], axis=1)
 
 
+def scene_dim(inputs: str) -> int:
+    """obs: lidar rays + route + state. objects: route + state + a detector object list (no lidar rays)."""
+    from .env import N_OBJECTS
+
+    return OBS_DIM if inputs == "obs" else OBS_DIM - N_RAYS + 4 * N_OBJECTS
+
+
+def scene_input(inputs: str, obs: np.ndarray, objs: np.ndarray = None) -> np.ndarray:
+    return obs if inputs == "obs" else np.concatenate([obs[..., N_RAYS:], objs], axis=-1)
+
+
 class PathScorer(nn.Module):
-    def __init__(self, width: int = 256, stack: int = 1):
+    def __init__(self, width: int = 256, stack: int = 1, inputs: str = "obs"):
         super().__init__()
         self.config = {"width": width} if stack == 1 else {"width": width, "stack": stack}
-        self.stack = stack
-        self.scene = nn.Sequential(nn.Linear(OBS_DIM * stack, width), nn.ReLU(), nn.Linear(width, width), nn.ReLU())
+        if inputs != "obs":
+            self.config["inputs"] = inputs
+        self.stack, self.inputs = stack, inputs
+        self.scene = nn.Sequential(nn.Linear(scene_dim(inputs) * stack, width), nn.ReLU(), nn.Linear(width, width), nn.ReLU())
         self.path = nn.Sequential(nn.Linear(CAND_DIM, width // 2), nn.ReLU(), nn.Linear(width // 2, width // 2), nn.ReLU())
         self.head = nn.Sequential(nn.Linear(width + width // 2, width), nn.ReLU(), nn.Linear(width, 1))
 
@@ -61,7 +74,7 @@ def load_driver(path: str):
     def drive(env, ob) -> int:
         if env.ticks == 0:
             hist.clear()
-        hist.append(ob["obs"])
+        hist.append(scene_input(model.inputs, ob["obs"], env.object_list() if model.inputs == "objects" else None))
         if not ob["mask"].any():
             return HOLD_ACTION
         obs = np.concatenate([hist[max(0, len(hist) - 1 - k * STACK_GAP)] for k in range(model.stack)])

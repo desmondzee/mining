@@ -13,7 +13,7 @@ import numpy as np
 import torch
 from torch import nn
 
-from .model import PathScorer, save, stack_index
+from .model import PathScorer, save, scene_input, stack_index
 
 
 def main() -> None:
@@ -24,12 +24,13 @@ def main() -> None:
     p.add_argument("--width", type=int, default=256)
     p.add_argument("--batch", type=int, default=512)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--inputs", default="obs", choices=("obs", "objects"), help="objects: detector list, no lidar rays")
     p.add_argument("--stack", type=int, default=1, help="scene frames per sample, newest first (needs trip ids)")
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(args.data)
-    obs = torch.from_numpy(d["obs"]).float()
+    obs = torch.from_numpy(scene_input(args.inputs, d["obs"], d["objs"] if args.inputs == "objects" else None)).float()
     cands = torch.from_numpy(d["cands"].astype(np.float32))
     masks = torch.from_numpy(d["masks"])
     labels = torch.from_numpy(d["labels"]).long()
@@ -53,7 +54,7 @@ def main() -> None:
     n_val = len(val)
 
     frames = torch.from_numpy(stack_index(d["trips"], args.stack)) if args.stack > 1 else None
-    model = PathScorer(width=args.width, stack=args.stack).to(device)
+    model = PathScorer(width=args.width, stack=args.stack, inputs=args.inputs).to(device)
     n_params = sum(p.numel() for p in model.parameters())
     print("samples %d (val %d), params %.2fM, device %s" % (n, n_val, n_params / 1e6, device))
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)

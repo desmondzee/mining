@@ -91,6 +91,7 @@ SCAN_RAYS = 240  # Unity / Isaac lidar: 240 columns over 120 deg
 SCAN_STEP = 0.5  # m between wall samples along a ray
 WALL_SNAP_M = 1.0  # hits this close to a blocked cell are taken as wall, not as a mover
 OBSTACLE_RADIUS = 4.0  # truck reach around a still obstacle point
+N_OBJECTS = 8  # objects in a detector list (sim2d object_list)
 CLUSTER_GAP = 2.5  # m: lidar points closer than this belong to one object
 TRACK_GATE = 3.0  # m: largest jump between ticks that still matches a cluster to a track
 TRACK_SMOOTH = 0.7  # weight of the old velocity in each update
@@ -517,6 +518,25 @@ class DriveEnv:
         return vel_c[label]
 
     # ---- observation ----
+    def object_list(self) -> np.ndarray:
+        """What a perfect detector reports: the N_OBJECTS nearest movers in the lidar view, no velocity.
+
+        Per object (forward / 30 m, right / 30 m, is pedestrian, present), nearest first, zero-padded; flat.
+        """
+        tr = self.truck
+        rows = []
+        for m in self.movers:
+            dx, dz = m.x - tr.x, m.z - tr.z
+            rel = (math.atan2(dx, dz) - tr.yaw + math.pi) % (2 * math.pi) - math.pi
+            dist = math.hypot(dx, dz)
+            if abs(rel) < LIDAR_FOV / 2 and dist < LIDAR_RANGE:
+                f, r = ego(np.array([m.x, m.z]), tr.x, tr.z, tr.yaw)
+                rows.append((dist, [f / 30.0, r / 30.0, float(m.pedestrian), 1.0]))
+        out = np.zeros((N_OBJECTS, 4), dtype=np.float32)
+        for i, (_, row) in enumerate(sorted(rows, key=lambda t: t[0])[:N_OBJECTS]):
+            out[i] = row
+        return out.ravel()
+
     def lidar(self) -> np.ndarray:
         tr = self.truck
         ang = tr.yaw - LIDAR_FOV / 2 + (np.arange(N_RAYS) + 0.5) * LIDAR_FOV / N_RAYS
