@@ -33,12 +33,14 @@ IMAGE_PIXELS = 128 * 128  # 16 tokens per frame after the 2x2 merge
 class Head(nn.Module):
     def __init__(self, feat: int, width: int = 512):
         super().__init__()
+        # VLM hidden states run to large magnitudes; unnormalised they swamp the route and candidate inputs.
+        self.norm = nn.LayerNorm(feat)
         self.scene = nn.Sequential(nn.Linear(feat + VEC_DIM, width), nn.ReLU())
         self.path = nn.Sequential(nn.Linear(CAND_DIM, width // 2), nn.ReLU(), nn.Linear(width // 2, width // 2), nn.ReLU())
         self.head = nn.Sequential(nn.Linear(width + width // 2, width), nn.ReLU(), nn.Linear(width, 1))
 
     def forward(self, feat, vec, cands, mask):
-        s = self.scene(torch.cat([feat, vec], dim=1)).unsqueeze(1).expand(-1, cands.shape[1], -1)
+        s = self.scene(torch.cat([self.norm(feat), vec], dim=1)).unsqueeze(1).expand(-1, cands.shape[1], -1)
         logits = self.head(torch.cat([s, self.path(cands)], dim=-1)).squeeze(-1)
         any_safe = mask.any(dim=1, keepdim=True)
         return torch.where(mask | ~any_safe, logits, torch.full_like(logits, -1e9))
