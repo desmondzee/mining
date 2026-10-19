@@ -82,6 +82,7 @@ def main() -> None:
     p.add_argument("--epochs", type=int, default=10)
     p.add_argument("--batch", type=int, default=256)
     p.add_argument("--lr", type=float, default=1e-3)
+    p.add_argument("--samples", type=int, default=0, help="train on this many random training samples (0 = all)")
     args = p.parse_args()
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -101,6 +102,9 @@ def main() -> None:
     print("dropped %d samples whose label is masked out" % int((~learnable).sum()), flush=True)
     val = torch.nonzero(held[trips] & learnable).squeeze(1)
     tr = torch.nonzero(~held[trips] & learnable).squeeze(1)
+    if args.samples and args.samples < len(tr):
+        # Same subsample rule as qwen_student, for a data-matched comparison.
+        tr = torch.from_numpy(np.random.default_rng(0).choice(tr.numpy(), size=args.samples, replace=False))
 
     model = VisionScorer(width=args.width, stack=args.stack).to(device)
     n_params = sum(q.numel() for q in model.parameters())
