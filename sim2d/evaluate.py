@@ -113,6 +113,7 @@ def main() -> None:
     p.add_argument("--policy", default="expert")
     p.add_argument("--worlds", default=DEFAULT_WORLDS)
     p.add_argument("--movers", default=DEFAULT_MOVERS, choices=MOVER_MODES, help="what the safety mask knows about movers")
+    p.add_argument("--device", default="cpu", help="torch device for vision students")
     p.add_argument("--seed", type=int, default=EVAL_SEED, help="first episode seed; use 1000 to reproduce the 2026-10-17 rows")
     args = p.parse_args()
     if args.policy == "expert":
@@ -123,6 +124,10 @@ def main() -> None:
         driver = picker_driver(args.policy)
     elif args.policy.endswith(".npz"):
         driver = npz_driver(args.policy)
+    elif "vision" in args.policy:
+        from .vision import load_vision_driver
+
+        driver = load_vision_driver(args.policy, args.device)
     else:
         from .model import load_driver
 

@@ -16,18 +16,21 @@ from multiprocessing import Pool
 import numpy as np
 
 from .env import check_train_seeds, make_env
+from .render import render
 
 
 def episode(args):
-    seed, explore, label_by = args
+    seed, explore, label_by, images = args
     env = make_env(seed)
     rng = np.random.default_rng(seed + 1)
     ob = env.reset()
-    obs, cands, masks, labels = [], [], [], []
+    obs, cands, masks, labels, imgs = [], [], [], [], []
     done = False
     while not done:
         label = env.privileged_action() if label_by == "privileged" else env.expert_action()
         obs.append(ob["obs"])
+        if images:
+            imgs.append(render(env))
         cands.append(ob["cands"])
         masks.append(ob["mask"])
         labels.append(label)
@@ -35,7 +38,7 @@ def episode(args):
         if rng.random() < explore and ob["mask"].any():
             act = int(rng.choice(np.flatnonzero(ob["mask"])))
         ob, _, done, _ = env.step(act)
-    return np.array(obs), np.array(cands), np.array(masks), np.array(labels)
+    return np.array(obs), np.array(cands), np.array(masks), np.array(labels), np.array(imgs, dtype=np.uint8)
 
 
 def main() -> None:
@@ -49,16 +52,18 @@ def main() -> None:
         "--label", default="expert", choices=("expert", "privileged"),
         help="privileged: the expert with true mover state labels, while the truck drives with SIM2D_MOVERS",
     )
+    p.add_argument("--images", action="store_true", help="also save a top-down image per tick (sim2d/render.py)")
     args = p.parse_args()
-    jobs = [(args.seed + i, args.explore, args.label) for i in range(args.episodes)]
+    jobs = [(args.seed + i, args.explore, args.label, args.images) for i in range(args.episodes)]
     check_train_seeds([j[0] for j in jobs])
     with Pool(args.workers) as pool:
         parts = pool.map(episode, jobs)
-    obs, cands, masks, labels = (np.concatenate(x) for x in zip(*parts))
+    obs, cands, masks, labels, imgs = (np.concatenate(x) for x in zip(*parts))
     trips = np.concatenate([np.full(len(part[3]), i, np.int32) for i, part in enumerate(parts)])
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     # Uncompressed: zlib on ~1M samples is single-threaded and takes minutes.
-    np.savez(args.out, obs=obs, cands=cands.astype(np.float16), masks=masks, labels=labels, trips=trips)
+    extra = {"imgs": imgs} if args.images else {}
+    np.savez(args.out, obs=obs, cands=cands.astype(np.float16), masks=masks, labels=labels, trips=trips, **extra)
     print("saved %d samples from %d episodes to %s" % (len(labels), args.episodes, args.out))
 
 
