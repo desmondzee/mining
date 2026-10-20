@@ -1,4 +1,7 @@
-"""Vision student: a ResNet-18 over stacked top-down frames (sim2d/render.py) scores the same 44 options.
+"""Vision student: a ResNet-18 over stacked camera frames scores the same 44 options.
+
+The frames are perfect top-down masks (sim2d/render.py) or front camera views (sim2d/front.py); the view
+comes from the data file and is stored in the checkpoint.
 
 The student sees images, the route and its own speed, but no lidar rays. The safety mask still comes from the
 deploy-time sensor (SIM2D_MOVERS). Train it on datagen --images data, usually with --label privileged.
@@ -19,18 +22,23 @@ from torch import nn
 
 from .env import CAND_DIM, HOLD_ACTION, N_RAYS, OBS_DIM
 from .model import STACK_GAP, stack_index
+from .front import COLOURS, front
 from .render import render
 
 VEC_DIM = OBS_DIM - N_RAYS  # route points + state
 
 
 class VisionScorer(nn.Module):
-    def __init__(self, width: int = 512, stack: int = 3):
+    def __init__(self, width: int = 512, stack: int = 3, view: str = "top"):
         super().__init__()
         self.config = {"kind": "vision", "width": width, "stack": stack}
-        self.stack = stack
+        self.stack, self.view = stack, view
+        if view == "front":
+            # Front frames arrive as class ids and become RGB here, so datasets stay small.
+            self.config["view"] = view
+            self.register_buffer("lut", torch.from_numpy(COLOURS))
         net = torchvision.models.resnet18(num_classes=width)
-        # 64 px inputs: a 3x3 stride-1 stem keeps enough resolution for 1 m movers.
+        # 64 px inputs: a 3x3 stride-1 stem keeps enough resolution for 1 m movers and far pedestrians.
         net.conv1 = nn.Conv2d(3 * stack, 64, kernel_size=3, stride=1, padding=1, bias=False)
         self.image = net
         self.scene = nn.Sequential(nn.Linear(width + VEC_DIM, width), nn.ReLU())
@@ -38,7 +46,10 @@ class VisionScorer(nn.Module):
         self.head = nn.Sequential(nn.Linear(width + width // 2, width), nn.ReLU(), nn.Linear(width, 1))
 
     def forward(self, imgs: torch.Tensor, vec: torch.Tensor, cands: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """imgs (B, 3*stack, H, W) uint8, newest frame first; vec (B, VEC_DIM); cands (B, C, CAND_DIM) -> (B, C)."""
+        """imgs (B, 3*stack, H, W) uint8, or (B, stack, H, W) class ids for the front view, newest frame first;
+        vec (B, VEC_DIM); cands (B, C, CAND_DIM) -> (B, C)."""
+        if self.view == "front":
+            imgs = self.lut[imgs.long()].permute(0, 1, 4, 2, 3).flatten(1, 2)
         s = self.scene(torch.cat([self.image(imgs.float() / 255.0), vec], dim=1))
         s = s.unsqueeze(1).expand(-1, cands.shape[1], -1)
         logits = self.head(torch.cat([s, self.path(cands)], dim=-1)).squeeze(-1)
@@ -58,10 +69,11 @@ def load_vision_driver(path: str, device: str = "cpu"):
     def drive(env, ob) -> int:
         if env.ticks == 0:
             hist.clear()
-        hist.append(render(env))
+        hist.append(front(env) if model.view == "front" else render(env))
         if not ob["mask"].any():
             return HOLD_ACTION
-        imgs = np.concatenate([hist[max(0, len(hist) - 1 - k * STACK_GAP)] for k in range(model.stack)])
+        frames = [hist[max(0, len(hist) - 1 - k * STACK_GAP)] for k in range(model.stack)]
+        imgs = np.stack(frames) if model.view == "front" else np.concatenate(frames)
         logits = model(
             torch.from_numpy(imgs)[None].to(device),
             torch.from_numpy(ob["obs"][N_RAYS:])[None].to(device),
@@ -87,7 +99,8 @@ def main() -> None:
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     d = np.load(args.data)
-    imgs = torch.from_numpy(d["imgs"])  # (N, 3, H, W) uint8, kept on the CPU
+    view = str(d["view"]) if "view" in d.files else "top"
+    imgs = torch.from_numpy(d["imgs"])  # (N, 3, H, W) uint8 or (N, H, W) class ids, kept on the CPU
     vec = torch.from_numpy(d["obs"][:, N_RAYS:]).float()
     cands = torch.from_numpy(d["cands"].astype(np.float32))
     masks = torch.from_numpy(d["masks"])
@@ -106,9 +119,12 @@ def main() -> None:
         # Same subsample rule as qwen_student, for a data-matched comparison.
         tr = torch.from_numpy(np.random.default_rng(0).choice(tr.numpy(), size=args.samples, replace=False))
 
-    model = VisionScorer(width=args.width, stack=args.stack).to(device)
+    model = VisionScorer(width=args.width, stack=args.stack, view=view).to(device)
     n_params = sum(q.numel() for q in model.parameters())
-    print("samples %d (val %d), params %.2fM, device %s" % (len(labels), len(val), n_params / 1e6, device), flush=True)
+    print(
+        "view %s, samples %d (val %d), params %.2fM, device %s" % (view, len(labels), len(val), n_params / 1e6, device),
+        flush=True,
+    )
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     sched = torch.optim.lr_scheduler.CosineAnnealingLR(opt, args.epochs)
     loss_fn = nn.CrossEntropyLoss()
@@ -118,7 +134,9 @@ def main() -> None:
             idx = idx[torch.randperm(len(idx))]
         for i in range(0, len(idx), args.batch):
             b = idx[i : i + args.batch]
-            x = imgs[frames[b]].flatten(1, 2)  # (B, 3*stack, H, W)
+            x = imgs[frames[b]]
+            if view != "front":
+                x = x.flatten(1, 2)  # (B, 3*stack, H, W)
             yield (
                 x.to(device, non_blocking=True), vec[b].to(device), cands[b].to(device), masks[b].to(device),
                 labels[b].to(device),

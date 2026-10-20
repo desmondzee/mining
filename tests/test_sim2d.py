@@ -151,3 +151,49 @@ def test_privileged_label_is_inside_the_mask():
         ob, _, done, _ = env.step(a)
         if done:
             ob = env.reset()
+
+
+def _front_env(*movers):
+    from sim2d.env import VEHICLE_R
+
+    env = DriveEnv(load("default"), n_movers=(0, 0), n_peds=(0, 0), seed=0)
+    env.reset("parking", "pit_floor")
+    tr = env.truck
+    env.movers = [
+        Mover(pts=env.route, s=0.0, direction=1, speed=0.0, static=True, radius=VEHICLE_R, x=float(x), z=float(z))
+        for x, z in movers
+    ]
+    return env, tr
+
+
+def test_front_view_shows_a_vehicle_on_the_route_ahead():
+    from sim2d.front import COLOURS, GROUND, H, ROUTE, SKY, VEHICLE, W, front, to_rgb
+
+    env, _ = _front_env()
+    empty = front(env)
+    assert empty.shape == (H, W) and empty.dtype == np.uint8
+    assert {SKY, GROUND, ROUTE} <= set(np.unique(empty).tolist()) and VEHICLE not in empty
+    assert to_rgb(empty).shape == (3, H, W) and (to_rgb(empty)[:, 0, 0] == COLOURS[SKY]).all()
+    env, _ = _front_env(tuple(env.route[8]))  # 16 m along the route
+    assert (front(env) == VEHICLE).sum() > 20
+
+
+def test_front_view_hides_vehicles_behind_the_truck_and_behind_walls():
+    from sim2d.front import CAM_FWD, VEHICLE, _MARCH, front
+
+    env, tr = _front_env()
+    s, c = math.sin(tr.yaw), math.cos(tr.yaw)
+    behind = (tr.x - 20 * s, tr.z - 20 * c)
+    # The first wall straight ahead of the camera, then a vehicle 15 m beyond it.
+    cx, cz = tr.x + CAM_FWD * s, tr.z + CAM_FWD * c
+    for turn in np.radians(np.arange(-40, 41, 5)):
+        ds, dc = math.sin(tr.yaw + turn), math.cos(tr.yaw + turn)
+        hit = env.world.blocked_at(cx + ds * _MARCH, cz + dc * _MARCH)
+        if hit.any() and _MARCH[hit.argmax()] < 60:
+            d = _MARCH[hit.argmax()] + 15
+            hidden = (cx + ds * d, cz + dc * d)
+            break
+    else:
+        pytest.skip("no wall within 60 m of this start")
+    env, _ = _front_env(behind, hidden)
+    assert (front(env) == VEHICLE).sum() == 0

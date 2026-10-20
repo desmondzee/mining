@@ -16,6 +16,7 @@ from multiprocessing import Pool
 import numpy as np
 
 from .env import check_train_seeds, make_env
+from .front import front
 from .render import render
 
 
@@ -30,7 +31,7 @@ def episode(args):
         label = env.privileged_action() if label_by == "privileged" else env.expert_action()
         obs.append(ob["obs"])
         if images:
-            imgs.append(render(env))
+            imgs.append(front(env) if images == "front" else render(env))
         if objects:
             objs.append(env.object_list())
         cands.append(ob["cands"])
@@ -57,10 +58,15 @@ def main() -> None:
         "--label", default="expert", choices=("expert", "privileged"),
         help="privileged: the expert with true mover state labels, while the truck drives with SIM2D_MOVERS",
     )
-    p.add_argument("--images", action="store_true", help="also save a top-down image per tick (sim2d/render.py)")
+    p.add_argument("--images", action="store_true", help="also save an image per tick, from --view")
+    p.add_argument(
+        "--view", default="top", choices=("top", "front"),
+        help="top: perfect top-down masks (sim2d/render.py); front: front camera class ids (sim2d/front.py)",
+    )
     p.add_argument("--objects", action="store_true", help="also save a detector object list per tick (env.object_list)")
     args = p.parse_args()
-    jobs = [(args.seed + i, args.explore, args.label, args.images, args.objects) for i in range(args.episodes)]
+    images = args.view if args.images else None
+    jobs = [(args.seed + i, args.explore, args.label, images, args.objects) for i in range(args.episodes)]
     check_train_seeds([j[0] for j in jobs])
     with Pool(args.workers) as pool:
         parts = pool.map(episode, jobs)
@@ -68,7 +74,7 @@ def main() -> None:
     trips = np.concatenate([np.full(len(part[3]), i, np.int32) for i, part in enumerate(parts)])
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
     # Uncompressed: zlib on ~1M samples is single-threaded and takes minutes.
-    extra = {"imgs": imgs} if args.images else {}
+    extra = {"imgs": imgs, "view": np.array(args.view)} if args.images else {}
     if args.objects:
         extra["objs"] = objs
     np.savez(args.out, obs=obs, cands=cands.astype(np.float16), masks=masks, labels=labels, trips=trips, **extra)
