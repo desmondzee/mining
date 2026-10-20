@@ -27,7 +27,7 @@ PROMPT = (
     "Top-down views around a haul truck, now, 0.3 s ago and 0.6 s ago. Green: drivable ground. "
     "Red: vehicles and people. Blue: the route. Choose a safe path."
 )
-IMAGE_PIXELS = 128 * 128  # 16 tokens per frame after the 2x2 merge
+IMAGE_PX = 128  # image side; 128 gives 16 tokens per frame after the 2x2 merge, 256 gives 64
 
 
 class Head(nn.Module):
@@ -51,12 +51,12 @@ class Head(nn.Module):
         return torch.where(mask | ~any_safe, logits, torch.full_like(logits, -1e9))
 
 
-def build(model_dir: str, adapter: str = None, targets=("q_proj", "v_proj")):
+def build(model_dir: str, adapter: str = None, targets=("q_proj", "v_proj"), image_px: int = IMAGE_PX):
     from peft import LoraConfig, PeftModel, get_peft_model
     from transformers import AutoModelForImageTextToText, AutoProcessor
 
     proc = AutoProcessor.from_pretrained(model_dir)
-    proc.image_processor.size = {"shortest_edge": IMAGE_PIXELS, "longest_edge": IMAGE_PIXELS}
+    proc.image_processor.size = {"shortest_edge": image_px * image_px, "longest_edge": image_px * image_px}
     vlm = AutoModelForImageTextToText.from_pretrained(model_dir, dtype=torch.bfloat16)
     if adapter:
         vlm = PeftModel.from_pretrained(vlm, adapter)
@@ -68,12 +68,17 @@ def build(model_dir: str, adapter: str = None, targets=("q_proj", "v_proj")):
 
 
 def features(proc, vlm, text, frames: np.ndarray, device, pool: str = "last") -> torch.Tensor:
-    """frames (B, 3 stacked, 3, H, W) uint8 -> (B, hidden) float: the last token's final hidden state, or the mean."""
+    """frames (B, 3 stacked, 3, H, W) uint8 -> (B, hidden) float.
+
+    pool: last = the last token's final hidden state; mean = the mean over all tokens; image = the mean over the
+    image tokens only, so the prompt does not dilute them.
+    """
     images = [[f.transpose(1, 2, 0) for f in sample] for sample in frames]
     batch = proc(text=[text] * len(images), images=images, return_tensors="pt", padding=True).to(device)
     h = vlm(**batch, output_hidden_states=True).hidden_states[-1].float()
-    if pool == "mean":
-        w = batch["attention_mask"].unsqueeze(-1).float()
+    if pool in ("mean", "image"):
+        w = batch["attention_mask"] if pool == "mean" else batch["input_ids"] == vlm.config.image_token_id
+        w = w.unsqueeze(-1).float()
         return (h * w).sum(1) / w.sum(1)
     return h[:, -1]
 
@@ -97,7 +102,7 @@ def train(args) -> None:
     imgs, obs, cands, masks, labels = d["imgs"], d["obs"], d["cands"], d["masks"], d["labels"]
     print("train %d, val %d samples" % (len(tr_idx), len(val_idx)), flush=True)
 
-    proc, vlm, text = build(args.model, targets=args.lora_targets.split(","))
+    proc, vlm, text = build(args.model, targets=args.lora_targets.split(","), image_px=args.image_px)
     vlm.to(device).train()
     head = Head(vlm.config.get_text_config().hidden_size).to(device)
     opt = torch.optim.AdamW(
@@ -155,6 +160,8 @@ def train(args) -> None:
     os.makedirs(args.out, exist_ok=True)
     with open(os.path.join(args.out, "pool.txt"), "w") as f:
         f.write(args.pool)
+    with open(os.path.join(args.out, "image_px.txt"), "w") as f:
+        f.write(str(args.image_px))
     vlm.save_pretrained(os.path.join(args.out, "lora"))
     torch.save(head.state_dict(), os.path.join(args.out, "head.pt"))
     print("saved " + args.out)
@@ -163,7 +170,9 @@ def train(args) -> None:
 def evaluate(args) -> None:
     """Run args.envs trips in lockstep so each tick is one batched VLM call; same metrics as sim2d.evaluate."""
     device = "cuda"
-    proc, vlm, text = build(args.model, os.path.join(args.out, "lora"))
+    px_file = os.path.join(args.out, "image_px.txt")
+    image_px = int(open(px_file).read()) if os.path.exists(px_file) else IMAGE_PX
+    proc, vlm, text = build(args.model, os.path.join(args.out, "lora"), image_px=image_px)
     vlm.to(device).eval()
     head = Head(vlm.config.get_text_config().hidden_size).to(device).eval()
     head.load_state_dict(torch.load(os.path.join(args.out, "head.pt"), map_location=device))
@@ -238,7 +247,8 @@ def main() -> None:
     p.add_argument("--val-samples", type=int, default=5_000)
     p.add_argument("--batch", type=int, default=32)
     p.add_argument("--epochs", type=int, default=1)
-    p.add_argument("--pool", default="last", choices=("last", "mean"))
+    p.add_argument("--pool", default="last", choices=("last", "mean", "image"))
+    p.add_argument("--image-px", type=int, default=IMAGE_PX, help="image side fed to the VLM, in pixels")
     p.add_argument("--lora-targets", default="q_proj,v_proj")
     p.add_argument("--lr-lora", type=float, default=2e-4)
     p.add_argument("--lr-head", type=float, default=1e-3)
