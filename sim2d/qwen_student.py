@@ -130,19 +130,23 @@ def train(args) -> None:
             order = rng.permutation(tr_idx)
         k = step % per_epoch
         b = np.sort(order[k * args.batch : (k + 1) * args.batch])
-        v, c, m, y = tensors(b)
-        logits = head(features(proc, vlm, text, imgs[frames_idx[b]], device, args.pool), v, c, m)
-        loss = loss_fn(logits, y)
-        hits += (logits.argmax(1) == y).sum().item()
-        seen += len(y)
         opt.zero_grad()
-        loss.backward()
+        loss = 0.0
+        # Gradient accumulation over args.accum slices gives the same update as one batch of args.batch.
+        for part in np.array_split(b, args.accum):
+            v, c, m, y = tensors(part)
+            logits = head(features(proc, vlm, text, imgs[frames_idx[part]], device, args.pool), v, c, m)
+            part_loss = loss_fn(logits, y) * len(part) / len(b)
+            part_loss.backward()
+            loss += part_loss.item()
+            hits += (logits.argmax(1) == y).sum().item()
+            seen += len(y)
         opt.step()
         sched.step()
         if step % 50 == 0:
             print(
                 "step %5d/%d  loss %.3f  train acc %.3f  %.0fs"
-                % (step, steps, loss.item(), hits / max(seen, 1), time.perf_counter() - t0),
+                % (step, steps, loss, hits / max(seen, 1), time.perf_counter() - t0),
                 flush=True,
             )
             hits = seen = 0
@@ -246,6 +250,7 @@ def main() -> None:
     p.add_argument("--samples", type=int, default=100_000)
     p.add_argument("--val-samples", type=int, default=5_000)
     p.add_argument("--batch", type=int, default=32)
+    p.add_argument("--accum", type=int, default=1, help="split each batch into this many slices to save memory")
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--pool", default="last", choices=("last", "mean", "image"))
     p.add_argument("--image-px", type=int, default=IMAGE_PX, help="image side fed to the VLM, in pixels")
