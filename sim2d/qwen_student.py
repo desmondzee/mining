@@ -31,14 +31,19 @@ IMAGE_PX = 128  # image side; 128 gives 16 tokens per frame after the 2x2 merge,
 
 
 class Head(nn.Module):
-    def __init__(self, feat: int, width: int = 512):
+    def __init__(self, feat: int, width: int = 512, act: str = "relu"):
         super().__init__()
         # VLM states are large and mostly shared across samples. Concatenated with the route input they pushed the
         # shared ReLU layer dead and the head stalled at 25-43% even on its training set. The image now has its own
         # branch, added to the route embedding through a zero-initialised last layer: at the start the head acts
         # as if the image were blank, and the route path never shares ReLUs with the image.
+        # With a ReLU in that branch, every one of its 512 units ended up negative for every input in all the runs
+        # up to 2026-10-21, so those students ignored the image (act="relu" keeps loading them). GELU still passes a
+        # gradient below zero, but on cached base-model features the GELU branch also shrank to near zero: the
+        # dead units are a symptom of features that add nothing over the route input, not the cause.
         self.scene = nn.Sequential(nn.Linear(VEC_DIM, width), nn.ReLU())
-        self.image = nn.Sequential(nn.LayerNorm(feat), nn.Linear(feat, width), nn.ReLU(), nn.Linear(width, width))
+        mid = nn.GELU() if act == "gelu" else nn.ReLU()
+        self.image = nn.Sequential(nn.LayerNorm(feat), nn.Linear(feat, width), mid, nn.Linear(width, width))
         nn.init.zeros_(self.image[3].weight)
         nn.init.zeros_(self.image[3].bias)
         self.path = nn.Sequential(nn.Linear(CAND_DIM, width // 2), nn.ReLU(), nn.Linear(width // 2, width // 2), nn.ReLU())
@@ -104,7 +109,7 @@ def train(args) -> None:
 
     proc, vlm, text = build(args.model, targets=args.lora_targets.split(","), image_px=args.image_px)
     vlm.to(device).train()
-    head = Head(vlm.config.get_text_config().hidden_size).to(device)
+    head = Head(vlm.config.get_text_config().hidden_size, act=args.act).to(device)
     opt = torch.optim.AdamW(
         [{"params": [q for q in vlm.parameters() if q.requires_grad], "lr": args.lr_lora},
          {"params": head.parameters(), "lr": args.lr_head}],
@@ -135,7 +140,8 @@ def train(args) -> None:
         # Gradient accumulation over args.accum slices gives the same update as one batch of args.batch.
         for part in np.array_split(b, args.accum):
             v, c, m, y = tensors(part)
-            logits = head(features(proc, vlm, text, imgs[frames_idx[part]], device, args.pool), v, c, m)
+            feat = features(proc, vlm, text, imgs[frames_idx[part]], device, args.pool)
+            logits = head(feat, v, c, m)
             part_loss = loss_fn(logits, y) * len(part) / len(b)
             part_loss.backward()
             loss += part_loss.item()
@@ -144,9 +150,12 @@ def train(args) -> None:
         opt.step()
         sched.step()
         if step % 50 == 0:
+            with torch.no_grad():
+                # Spread of the image branch across the batch; 0 means the head ignores the image.
+                img_std = head.image(feat).std(0).mean().item()
             print(
-                "step %5d/%d  loss %.3f  train acc %.3f  %.0fs"
-                % (step, steps, loss, hits / max(seen, 1), time.perf_counter() - t0),
+                "step %5d/%d  loss %.3f  train acc %.3f  image std %.4f  %.0fs"
+                % (step, steps, loss, hits / max(seen, 1), img_std, time.perf_counter() - t0),
                 flush=True,
             )
             hits = seen = 0
@@ -166,6 +175,8 @@ def train(args) -> None:
         f.write(args.pool)
     with open(os.path.join(args.out, "image_px.txt"), "w") as f:
         f.write(str(args.image_px))
+    with open(os.path.join(args.out, "act.txt"), "w") as f:
+        f.write(args.act)
     vlm.save_pretrained(os.path.join(args.out, "lora"))
     torch.save(head.state_dict(), os.path.join(args.out, "head.pt"))
     print("saved " + args.out)
@@ -178,7 +189,9 @@ def evaluate(args) -> None:
     image_px = int(open(px_file).read()) if os.path.exists(px_file) else IMAGE_PX
     proc, vlm, text = build(args.model, os.path.join(args.out, "lora"), image_px=image_px)
     vlm.to(device).eval()
-    head = Head(vlm.config.get_text_config().hidden_size).to(device).eval()
+    act_file = os.path.join(args.out, "act.txt")
+    act = open(act_file).read().strip() if os.path.exists(act_file) else "relu"
+    head = Head(vlm.config.get_text_config().hidden_size, act=act).to(device).eval()
     head.load_state_dict(torch.load(os.path.join(args.out, "head.pt"), map_location=device))
     pool_file = os.path.join(args.out, "pool.txt")
     pool = open(pool_file).read().strip() if os.path.exists(pool_file) else "last"
@@ -253,6 +266,7 @@ def main() -> None:
     p.add_argument("--accum", type=int, default=1, help="split each batch into this many slices to save memory")
     p.add_argument("--epochs", type=int, default=1)
     p.add_argument("--pool", default="last", choices=("last", "mean", "image"))
+    p.add_argument("--act", default="gelu", choices=("relu", "gelu"), help="activation inside the head's image branch")
     p.add_argument("--image-px", type=int, default=IMAGE_PX, help="image side fed to the VLM, in pixels")
     p.add_argument("--lora-targets", default="q_proj,v_proj")
     p.add_argument("--lr-lora", type=float, default=2e-4)
